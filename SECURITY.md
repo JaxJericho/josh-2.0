@@ -20,6 +20,7 @@ These rules are mandatory and apply to all contributors and tools.
 All secrets must be supplied via environment variables.
 
 If a secret is accidentally committed:
+
 1. Assume it is compromised.
 2. Rotate it immediately.
 3. Remove it from Git history if required.
