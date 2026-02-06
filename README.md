@@ -66,7 +66,8 @@ High-level staging setup:
 - `SMS_BODY_ENCRYPTION_KEY` (pgcrypto passphrase; keep secret and rotate via `key_version`)
 - `PROJECT_REF` (Supabase project ref, required for Twilio signature validation)
 - `TWILIO_STATUS_CALLBACK_URL` (optional; defaults to `https://<project-ref>.supabase.co/functions/v1/twilio-status-callback`)
-- `QSTASH_RUNNER_SECRET` (shared secret for QStash runner auth)
+- `QSTASH_CURRENT_SIGNING_KEY` (Upstash QStash signing key)
+- `QSTASH_NEXT_SIGNING_KEY` (Upstash QStash signing key; rotation support)
 
 ---
 
@@ -122,9 +123,11 @@ supabase functions serve twilio-outbound-runner --no-verify-jwt
 ```
 
 ```bash
-curl -X POST \"http://127.0.0.1:54321/functions/v1/twilio-outbound-runner?limit=5\" \\
-  -H \"x-runner-secret: ${QSTASH_RUNNER_SECRET}\"
+curl -X POST \"http://127.0.0.1:54321/functions/v1/twilio-outbound-runner?limit=5\"
 ```
+
+Unsigned requests are rejected with `401 Unauthorized`. To run the runner
+locally end-to-end, invoke it through QStash with a valid signature.
 
 ### Idempotency Replay
 
@@ -148,18 +151,19 @@ Expected: `403 Forbidden` (invalid signature).
 
 ## Outbound SMS Scheduler (Ticket 2.3)
 
-The outbound runner is invoked by QStash (cron). The runner requires a shared
-secret header and will reject unauthenticated requests.
+The outbound runner is invoked by QStash (cron). The runner requires a valid
+QStash signature and will reject unauthenticated requests.
 
 Required env vars:
 
-- `QSTASH_RUNNER_SECRET` (shared secret used as `x-runner-secret`)
+- `QSTASH_CURRENT_SIGNING_KEY`
+- `QSTASH_NEXT_SIGNING_KEY`
 
 Manual QStash setup (staging/prod):
 
 1. Create a cron schedule to `POST` the runner endpoint:
    `https://<project-ref>.supabase.co/functions/v1/twilio-outbound-runner?limit=5`
-2. Add header `x-runner-secret: <QSTASH_RUNNER_SECRET>`.
+2. Do not add custom auth headers; QStash will sign the request automatically.
 3. Set the schedule cadence (e.g., every minute) based on desired throughput.
 
 ## Opt-Out Reconciliation (Deferred)
