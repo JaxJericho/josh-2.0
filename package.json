@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "db:reset": "supabase db reset",
+    "db:seed": "psql \"${SUPABASE_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54422/postgres}\" -f supabase/seed.sql",
     "db:migrate": "supabase migration up",
     "db:gen-types": "supabase gen types typescript --local > supabase/types/database.ts",
     "build": "echo \"build placeholder (no app yet)\""
