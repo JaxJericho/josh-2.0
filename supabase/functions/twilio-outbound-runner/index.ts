@@ -447,17 +447,36 @@ function requireEnv(name: string): string {
 }
 
 async function verifyQstashRequest(req: Request): Promise<Response | null> {
-  const signature = req.headers.get("Upstash-Signature");
+  const signature = req.headers.get("Upstash-Signature") ??
+    req.headers.get("upstash-signature");
+  const currentKey = Deno.env.get("QSTASH_CURRENT_SIGNING_KEY") ?? "";
+  const nextKey = Deno.env.get("QSTASH_NEXT_SIGNING_KEY") ?? "";
+  const projectRef = Deno.env.get("PROJECT_REF") ?? "";
+  const expectedUrl = projectRef
+    ? `https://${projectRef}.supabase.co/functions/v1/twilio-outbound-runner`
+    : "";
+
   if (!signature) {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return unauthorizedResponse({
+      hasSignature: false,
+      hasProjectRef: Boolean(projectRef),
+      hasCurrentKey: Boolean(currentKey),
+      hasNextKey: Boolean(nextKey),
+      expectedUrl,
+    });
+  }
+
+  if (!currentKey || !nextKey || !projectRef) {
+    return unauthorizedResponse({
+      hasSignature: true,
+      hasProjectRef: Boolean(projectRef),
+      hasCurrentKey: Boolean(currentKey),
+      hasNextKey: Boolean(nextKey),
+      expectedUrl,
+    });
   }
 
   const body = await req.text();
-  const currentKey = requireEnv("QSTASH_CURRENT_SIGNING_KEY");
-  const nextKey = requireEnv("QSTASH_NEXT_SIGNING_KEY");
-  const projectRef = requireEnv("PROJECT_REF");
-  const expectedUrl = `https://${projectRef}.supabase.co/functions/v1/twilio-outbound-runner`;
-
   const receiver = new Receiver({
     currentSigningKey: currentKey,
     nextSigningKey: nextKey,
@@ -470,15 +489,52 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
       url: expectedUrl,
     });
   } catch {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return unauthorizedResponse({
+      hasSignature: true,
+      hasProjectRef: true,
+      hasCurrentKey: true,
+      hasNextKey: true,
+      expectedUrl,
+    });
   }
 
   const subject = decodeJwtSubject(signature);
   if (!subject || subject !== expectedUrl) {
-    return jsonResponse({ error: "Unauthorized" }, 401);
+    return unauthorizedResponse({
+      hasSignature: true,
+      hasProjectRef: true,
+      hasCurrentKey: true,
+      hasNextKey: true,
+      expectedUrl,
+    });
   }
 
   return null;
+}
+
+function unauthorizedResponse(input: {
+  hasSignature: boolean;
+  hasProjectRef: boolean;
+  hasCurrentKey: boolean;
+  hasNextKey: boolean;
+  expectedUrl: string;
+}): Response {
+  if (Deno.env.get("QSTASH_AUTH_DEBUG") === "1") {
+    return jsonResponse(
+      {
+        error: "Unauthorized",
+        debug: {
+          has_signature: input.hasSignature,
+          has_project_ref: input.hasProjectRef,
+          has_current_key: input.hasCurrentKey,
+          has_next_key: input.hasNextKey,
+          expected_url: input.expectedUrl,
+        },
+      },
+      401
+    );
+  }
+  return jsonResponse({ error: "Unauthorized" }, 401);
 }
 
 function decodeJwtSubject(token: string): string | null {
