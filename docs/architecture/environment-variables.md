@@ -63,6 +63,7 @@ Example:
 - TWILIO_MESSAGING_SERVICE_SID
 - TWILIO_FROM_NUMBER
 - TWILIO_STATUS_CALLBACK_URL
+- QSTASH_RUNNER_SECRET
 - SMS_BODY_ENCRYPTION_KEY
 - PROJECT_REF
 
@@ -72,6 +73,7 @@ Notes:
 - `PROJECT_REF` is required for Twilio signature validation when `x-forwarded-host` is missing.
 - `TWILIO_FROM_NUMBER` is required if `TWILIO_MESSAGING_SERVICE_SID` is not set.
 - `TWILIO_STATUS_CALLBACK_URL` is optional (defaults to `https://<project-ref>.supabase.co/functions/v1/twilio-status-callback`).
+- `QSTASH_RUNNER_SECRET` must be supplied to QStash as the `x-runner-secret` header when invoking the outbound runner.
 
 ---
 

@@ -35,6 +35,13 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "Method Not Allowed" }, 405);
     }
 
+    phase = "auth";
+    const runnerSecret = requireEnv("QSTASH_RUNNER_SECRET");
+    const providedSecret = req.headers.get("x-runner-secret");
+    if (!providedSecret || !timingSafeEqual(providedSecret, runnerSecret)) {
+      return jsonResponse({ error: "Unauthorized" }, 401);
+    }
+
     const url = new URL(req.url);
     const limit = clampLimit(url.searchParams.get("limit"));
 
@@ -429,6 +436,17 @@ function jsonResponse(payload: Record<string, unknown>, status = 200): Response 
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let result = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
 
 function requireEnv(name: string): string {
