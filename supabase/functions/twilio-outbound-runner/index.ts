@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+import { Receiver } from "https://esm.sh/@upstash/qstash@2.7.4?target=deno";
 
 type SmsOutboundJob = {
   id: string;
@@ -36,10 +37,9 @@ Deno.serve(async (req) => {
     }
 
     phase = "auth";
-    const runnerSecret = requireEnv("QSTASH_RUNNER_SECRET");
-    const providedSecret = req.headers.get("x-runner-secret");
-    if (!providedSecret || !timingSafeEqual(providedSecret, runnerSecret)) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+    const authResponse = await verifyQstashRequest(req);
+    if (authResponse) {
+      return authResponse;
     }
 
     const url = new URL(req.url);
@@ -438,21 +438,72 @@ function jsonResponse(payload: Record<string, unknown>, status = 200): Response 
   });
 }
 
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  let result = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}
-
 function requireEnv(name: string): string {
   const value = Deno.env.get(name);
   if (!value) {
     throw new Error(`Missing required env var: ${name}`);
   }
   return value;
+}
+
+async function verifyQstashRequest(req: Request): Promise<Response | null> {
+  const signature = req.headers.get("Upstash-Signature");
+  if (!signature) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  const body = await req.text();
+  const currentKey = requireEnv("QSTASH_CURRENT_SIGNING_KEY");
+  const nextKey = requireEnv("QSTASH_NEXT_SIGNING_KEY");
+  const projectRef = requireEnv("PROJECT_REF");
+  const expectedUrl = `https://${projectRef}.supabase.co/functions/v1/twilio-outbound-runner`;
+
+  const receiver = new Receiver({
+    currentSigningKey: currentKey,
+    nextSigningKey: nextKey,
+  });
+
+  try {
+    await receiver.verify({
+      signature,
+      body,
+      url: expectedUrl,
+    });
+  } catch {
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  const subject = decodeJwtSubject(signature);
+  if (!subject || subject !== expectedUrl) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  return null;
+}
+
+function decodeJwtSubject(token: string): string | null {
+  const parts = token.split(".");
+  if (parts.length < 2) {
+    return null;
+  }
+  const payload = decodeBase64Url(parts[1]);
+  if (!payload) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(payload) as { sub?: string };
+    return typeof parsed.sub === "string" ? parsed.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+function decodeBase64Url(value: string): string | null {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
+  try {
+    return atob(padded + padding);
+  } catch {
+    return null;
+  }
 }
