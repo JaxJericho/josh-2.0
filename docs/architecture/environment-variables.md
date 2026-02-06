@@ -77,12 +77,12 @@ Notes:
 - `TWILIO_FROM_NUMBER` is required if `TWILIO_MESSAGING_SERVICE_SID` is not set.
 - `TWILIO_STATUS_CALLBACK_URL` is optional (defaults to `https://<project-ref>.supabase.co/functions/v1/twilio-status-callback`).
 - `QSTASH_CURRENT_SIGNING_KEY` and `QSTASH_NEXT_SIGNING_KEY` are used to verify QStash signatures (supporting key rotation).
-- `QSTASH_RUNNER_SECRET` is required for body-token fallback auth when the signature header is missing.
+- `QSTASH_RUNNER_SECRET` is required for body-token auth when signature headers are missing.
 - `QSTASH_AUTH_DEBUG` is an optional temporary flag; set to `1` to include auth diagnostics in 401 responses from the outbound runner.
 
 Deprecated:
 
-- `QSTASH_RUNNER_SECRET` is no longer used by the outbound runner; remove any schedules that still send `x-runner-secret`.
+- `QSTASH_RUNNER_SECRET` is no longer used as an `x-runner-secret` header; schedules must not send that header.
 
 ---
 

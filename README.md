@@ -151,20 +151,22 @@ Expected: `403 Forbidden` (invalid signature).
 
 ## Outbound SMS Scheduler (Ticket 2.3)
 
-The outbound runner is invoked by QStash (cron). The runner requires a valid
-QStash signature and will reject unauthenticated requests.
+The outbound runner is invoked by QStash (cron). The runner authenticates using
+a body token and rejects unauthenticated requests.
 
 Required env vars:
 
-- `QSTASH_CURRENT_SIGNING_KEY`
-- `QSTASH_NEXT_SIGNING_KEY`
+- `QSTASH_RUNNER_SECRET`
 
 Manual QStash setup (staging/prod):
 
-1. Create a cron schedule to `POST` the runner endpoint:
-   `https://<project-ref>.supabase.co/functions/v1/twilio-outbound-runner?limit=5`
-2. Do not add custom auth headers; QStash will sign the request automatically.
-3. Set the schedule cadence (e.g., every minute) based on desired throughput.
+1. Use the schedule script:
+   `/Users/dorienmichaels/Tech Projects/josh-2.0/scripts/qstash-schedule-runner.mjs`
+2. Ensure the destination has no query params:
+   `https://<project-ref>.supabase.co/functions/v1/twilio-outbound-runner`
+3. Set the cadence to every minute (`*/1 * * * *`).
+
+See `/Users/dorienmichaels/Tech Projects/josh-2.0/docs/runbooks/qstash-scheduling.md`.
 
 ## Opt-Out Reconciliation (Deferred)
 
