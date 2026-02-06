@@ -14,8 +14,7 @@ Deno.serve(async (req) => {
   const bodyLength = bodyBytes.length;
 
   const echoSecret = Deno.env.get("QSTASH_ECHO_SECRET");
-  const querySecret = url.searchParams.get("secret") ??
-    url.searchParams.get("echo_secret");
+  const querySecret = getQuerySecret(url);
   const bodySecret = parseEchoSecret(bodyText);
   const providedSecret = querySecret ?? bodySecret;
 
@@ -66,6 +65,52 @@ function parseEchoSecret(bodyText: string): string | null {
   } catch {
     return null;
   }
+}
+
+function getQuerySecret(url: URL): string | null {
+  const rawSecret = getRawQueryParam(url.search, "secret") ??
+    getRawQueryParam(url.search, "echo_secret");
+  const fallbackSecret = url.searchParams.get("secret") ??
+    url.searchParams.get("echo_secret");
+  const value = rawSecret ?? fallbackSecret;
+  if (!value || value.trim().length === 0) {
+    return null;
+  }
+  return value;
+}
+
+function getRawQueryParam(search: string, key: string): string | null {
+  if (!search || search.length <= 1) {
+    return null;
+  }
+  const trimmed = search.startsWith("?") ? search.slice(1) : search;
+  const pairs = trimmed.split("&");
+  for (const pair of pairs) {
+    if (!pair) {
+      continue;
+    }
+    const [rawKey, ...rest] = pair.split("=");
+    if (!rawKey) {
+      continue;
+    }
+    try {
+      if (decodeURIComponent(rawKey) !== key) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    const rawValue = rest.join("=");
+    if (rawValue.length === 0) {
+      return "";
+    }
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+  return null;
 }
 
 function isSensitiveHeader(name: string): boolean {
