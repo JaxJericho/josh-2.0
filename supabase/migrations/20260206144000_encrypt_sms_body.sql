@@ -5,5 +5,5 @@ returns bytea
 language sql
 volatile
 as $$
-  select pgp_sym_encrypt(plaintext, key, 'cipher-algo=aes256, compress-algo=0');
+  select pgp_sym_encrypt(plaintext, key, 'cipher-algo=aes256, compress-algo=0'::text);
 $$;
