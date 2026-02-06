@@ -284,6 +284,10 @@ verify_jwt = false
 [functions.twilio-outbound-runner]
 verify_jwt = false
 
+# Allow unauthenticated QStash echo diagnostics
+[functions.qstash-echo]
+verify_jwt = false
+
 # Multi-factor-authentication is available to Supabase Pro plan.
 [auth.mfa]
 # Control how many MFA factors can be enrolled at once per user.
