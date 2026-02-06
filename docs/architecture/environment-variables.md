@@ -61,6 +61,11 @@ Example:
 - TWILIO_ACCOUNT_SID
 - TWILIO_AUTH_TOKEN
 - TWILIO_MESSAGING_SERVICE_SID
+- SMS_BODY_ENCRYPTION_KEY
+
+Notes:
+
+- `SMS_BODY_ENCRYPTION_KEY` is the passphrase used by pgcrypto (`pgp_sym_encrypt`) for SMS body encryption.
 
 ---
 
