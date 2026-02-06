@@ -447,6 +447,8 @@ function requireEnv(name: string): string {
 }
 
 async function verifyQstashRequest(req: Request): Promise<Response | null> {
+  const headerKeys = Array.from(req.headers.keys());
+  const headerKeysLower = headerKeys.map((key) => key.toLowerCase());
   const signature = req.headers.get("Upstash-Signature") ??
     req.headers.get("upstash-signature");
   const currentKey = Deno.env.get("QSTASH_CURRENT_SIGNING_KEY") ?? "";
@@ -463,6 +465,7 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
       hasCurrentKey: Boolean(currentKey),
       hasNextKey: Boolean(nextKey),
       expectedUrl,
+      headerKeys: headerKeysLower,
     });
   }
 
@@ -473,6 +476,7 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
       hasCurrentKey: Boolean(currentKey),
       hasNextKey: Boolean(nextKey),
       expectedUrl,
+      headerKeys: headerKeysLower,
     });
   }
 
@@ -495,6 +499,7 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
       hasCurrentKey: true,
       hasNextKey: true,
       expectedUrl,
+      headerKeys: headerKeysLower,
     });
   }
 
@@ -506,6 +511,7 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
       hasCurrentKey: true,
       hasNextKey: true,
       expectedUrl,
+      headerKeys: headerKeysLower,
     });
   }
 
@@ -518,8 +524,10 @@ function unauthorizedResponse(input: {
   hasCurrentKey: boolean;
   hasNextKey: boolean;
   expectedUrl: string;
+  headerKeys: string[];
 }): Response {
   if (Deno.env.get("QSTASH_AUTH_DEBUG") === "1") {
+    const headerKeySet = new Set(input.headerKeys);
     return jsonResponse(
       {
         error: "Unauthorized",
@@ -529,6 +537,17 @@ function unauthorizedResponse(input: {
           has_current_key: input.hasCurrentKey,
           has_next_key: input.hasNextKey,
           expected_url: input.expectedUrl,
+          header_keys: input.headerKeys,
+          upstash_headers_present: {
+            "upstash-signature": headerKeySet.has("upstash-signature"),
+            "upstash-message-id": headerKeySet.has("upstash-message-id"),
+            "upstash-schedule-id": headerKeySet.has("upstash-schedule-id"),
+            "upstash-topic-name": headerKeySet.has("upstash-topic-name"),
+          },
+          forwarded_headers_present: {
+            "x-runner-secret": headerKeySet.has("x-runner-secret"),
+            authorization: headerKeySet.has("authorization"),
+          },
         },
       },
       401
