@@ -276,6 +276,14 @@ auth_token = "env(SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN)"
 [functions.twilio-inbound]
 verify_jwt = false
 
+# Allow unauthenticated Twilio status callbacks
+[functions.twilio-status-callback]
+verify_jwt = false
+
+# Allow unauthenticated local runner invocation
+[functions.twilio-outbound-runner]
+verify_jwt = false
+
 # Multi-factor-authentication is available to Supabase Pro plan.
 [auth.mfa]
 # Control how many MFA factors can be enrolled at once per user.

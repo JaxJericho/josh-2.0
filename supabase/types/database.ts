@@ -1315,10 +1315,12 @@ export type Database = {
           body_tag: string | null
           correlation_id: string | null
           created_at: string
+          from_e164: string | null
           id: string
           idempotency_key: string
           key_version: number
           last_error: string | null
+          last_status_at: string | null
           next_attempt_at: string | null
           purpose: string
           status: string
@@ -1334,10 +1336,12 @@ export type Database = {
           body_tag?: string | null
           correlation_id?: string | null
           created_at?: string
+          from_e164?: string | null
           id?: string
           idempotency_key: string
           key_version?: number
           last_error?: string | null
+          last_status_at?: string | null
           next_attempt_at?: string | null
           purpose: string
           status?: string
@@ -1353,10 +1357,12 @@ export type Database = {
           body_tag?: string | null
           correlation_id?: string | null
           created_at?: string
+          from_e164?: string | null
           id?: string
           idempotency_key?: string
           key_version?: number
           last_error?: string | null
+          last_status_at?: string | null
           next_attempt_at?: string | null
           purpose?: string
           status?: string
@@ -1692,7 +1698,44 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      claim_sms_outbound_jobs: {
+        Args: { lease_seconds?: number; max_jobs: number; now_ts?: string }
+        Returns: {
+          attempts: number
+          body_ciphertext: string | null
+          body_iv: string | null
+          body_tag: string | null
+          correlation_id: string | null
+          created_at: string
+          from_e164: string | null
+          id: string
+          idempotency_key: string
+          key_version: number
+          last_error: string | null
+          last_status_at: string | null
+          next_attempt_at: string | null
+          purpose: string
+          status: string
+          to_e164: string
+          twilio_message_sid: string | null
+          updated_at: string
+          user_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "sms_outbound_jobs"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      decrypt_sms_body: {
+        Args: { ciphertext: string; key: string }
+        Returns: string
+      }
+      encrypt_sms_body: {
+        Args: { key: string; plaintext: string }
+        Returns: string
+      }
     }
     Enums: {
       conversation_mode:
@@ -1957,3 +2000,4 @@ export const Constants = {
     },
   },
 } as const
+
