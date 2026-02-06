@@ -14,7 +14,8 @@ Deno.serve(async (req) => {
   const bodyLength = bodyBytes.length;
 
   const echoSecret = Deno.env.get("QSTASH_ECHO_SECRET");
-  const querySecret = url.searchParams.get("secret");
+  const querySecret = url.searchParams.get("secret") ??
+    url.searchParams.get("echo_secret");
   const bodySecret = parseEchoSecret(bodyText);
   const providedSecret = querySecret ?? bodySecret;
 
