@@ -61,6 +61,8 @@ Example:
 - TWILIO_ACCOUNT_SID
 - TWILIO_AUTH_TOKEN
 - TWILIO_MESSAGING_SERVICE_SID
+- TWILIO_FROM_NUMBER
+- TWILIO_STATUS_CALLBACK_URL
 - SMS_BODY_ENCRYPTION_KEY
 - PROJECT_REF
 
@@ -68,6 +70,8 @@ Notes:
 
 - `SMS_BODY_ENCRYPTION_KEY` is the passphrase used by pgcrypto (`pgp_sym_encrypt`) for SMS body encryption.
 - `PROJECT_REF` is required for Twilio signature validation when `x-forwarded-host` is missing.
+- `TWILIO_FROM_NUMBER` is required if `TWILIO_MESSAGING_SERVICE_SID` is not set.
+- `TWILIO_STATUS_CALLBACK_URL` is optional (defaults to `https://<project-ref>.supabase.co/functions/v1/twilio-status-callback`).
 
 ---
 

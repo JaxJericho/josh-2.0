@@ -60,9 +60,12 @@ High-level staging setup:
 
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
+- `TWILIO_ACCOUNT_SID`
 - `TWILIO_AUTH_TOKEN`
+- `TWILIO_MESSAGING_SERVICE_SID` (or `TWILIO_FROM_NUMBER`)
 - `SMS_BODY_ENCRYPTION_KEY` (pgcrypto passphrase; keep secret and rotate via `key_version`)
 - `PROJECT_REF` (Supabase project ref, required for Twilio signature validation)
+- `TWILIO_STATUS_CALLBACK_URL` (optional; defaults to `https://<project-ref>.supabase.co/functions/v1/twilio-status-callback`)
 
 ---
 
@@ -78,6 +81,66 @@ node scripts/verify/twilio_inbound_replay.mjs
 ```
 
 ---
+
+## Outbound SMS Runner (Ticket 2.2)
+
+### Local Seed (Outbound Job)
+
+```sql
+insert into public.sms_outbound_jobs (
+  user_id,
+  to_e164,
+  from_e164,
+  body_ciphertext,
+  key_version,
+  purpose,
+  status,
+  attempts,
+  next_attempt_at,
+  idempotency_key,
+  correlation_id
+) values (
+  null,
+  '+15555550111',
+  '+15555551234',
+  public.encrypt_sms_body('Hello from JOSH', '<SMS_BODY_ENCRYPTION_KEY>'),
+  1,
+  'invite',
+  'pending',
+  0,
+  now(),
+  'demo-idem-key-001',
+  gen_random_uuid()
+);
+```
+
+### Run Outbound Runner (Local)
+
+```bash
+supabase functions serve twilio-outbound-runner --no-verify-jwt
+```
+
+```bash
+curl -X POST \"http://127.0.0.1:54321/functions/v1/twilio-outbound-runner?limit=5\"
+```
+
+### Idempotency Replay
+
+Run the same runner call twice. The second run should not send a second SMS
+for the same `idempotency_key`, and `sms_messages` should have one row
+for the Twilio SID.
+
+### Status Callback Simulation
+
+Unsigned requests are rejected (fail-closed). Example:
+
+```bash
+curl -X POST \"http://127.0.0.1:54321/functions/v1/twilio-status-callback\" \\
+  -H \"content-type: application/x-www-form-urlencoded\" \\
+  --data \"MessageSid=SM00000000000000000000000000000001&MessageStatus=delivered\"
+```
+
+Expected: `403 Forbidden` (invalid signature).
 
 ## Opt-Out Reconciliation (Deferred)
 

@@ -1,0 +1,255 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+
+const encoder = new TextEncoder();
+
+Deno.serve(async (req) => {
+  const requestId = crypto.randomUUID();
+  let phase = "start";
+
+  try {
+    phase = "method";
+    if (req.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    phase = "content_type";
+    const contentType = req.headers.get("content-type") ?? "";
+    if (!contentType.toLowerCase().includes("application/x-www-form-urlencoded")) {
+      return new Response("Unsupported Media Type", { status: 415 });
+    }
+
+    phase = "parse";
+    const rawBody = await req.text();
+    const params = new URLSearchParams(rawBody);
+
+    phase = "signature";
+    const signature = req.headers.get("x-twilio-signature");
+    if (!signature) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    const authToken = requireEnv("TWILIO_AUTH_TOKEN");
+    const signatureUrls = buildSignatureUrls(req);
+    const signatureResults = await verifySignatureCandidates(
+      authToken,
+      signature,
+      signatureUrls,
+      params
+    );
+    const isValidSignature = signatureResults.some((result) => result.ok);
+
+    if (!isValidSignature) {
+      const hostSource = (buildSignatureUrls as { lastHostSource?: string })
+        .lastHostSource ?? "unknown";
+      console.warn("twilio.status_callback_signature_failed", {
+        request_id: requestId,
+        method: req.method,
+        url: req.url,
+        headers: {
+          host: req.headers.get("host"),
+          "x-forwarded-host": req.headers.get("x-forwarded-host"),
+          "x-forwarded-proto": req.headers.get("x-forwarded-proto"),
+        },
+        host_source: hostSource,
+        candidates: signatureResults.map((result) => result.url),
+        results: signatureResults.map((result) => result.ok),
+      });
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    phase = "normalize";
+    const messageSid =
+      params.get("MessageSid")?.trim() ?? params.get("SmsSid")?.trim() ?? "";
+    const messageStatus =
+      params.get("MessageStatus")?.trim() ??
+      params.get("SmsStatus")?.trim() ??
+      "";
+
+    if (!messageSid || !messageStatus) {
+      return new Response("Bad Request", { status: 400 });
+    }
+
+    const errorCode = params.get("ErrorCode")?.trim() ?? null;
+    const errorMessage = params.get("ErrorMessage")?.trim() ?? null;
+
+    phase = "db_init";
+    const supabaseUrl = requireEnv("SUPABASE_URL");
+    const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+
+    const supabase = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false },
+    });
+
+    const now = new Date().toISOString();
+
+    phase = "update_sms_messages";
+    const { error: messageUpdateError } = await supabase
+      .from("sms_messages")
+      .update({
+        status: messageStatus,
+        last_status_at: now,
+      })
+      .eq("twilio_message_sid", messageSid);
+
+    if (messageUpdateError) {
+      console.error("twilio.status_callback_message_update_failed", {
+        request_id: requestId,
+        message_sid: messageSid,
+        error: messageUpdateError.message,
+      });
+    }
+
+    phase = "update_jobs";
+    const jobStatus = mapJobStatus(messageStatus);
+    const jobUpdate: Record<string, unknown> = {
+      status: jobStatus,
+      last_status_at: now,
+    };
+
+    if (jobStatus === "failed") {
+      const errorDetails = [errorCode, errorMessage]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      if (errorDetails) {
+        jobUpdate.last_error = errorDetails;
+      }
+    }
+
+    const { error: jobUpdateError } = await supabase
+      .from("sms_outbound_jobs")
+      .update(jobUpdate)
+      .eq("twilio_message_sid", messageSid)
+      .neq("status", "canceled");
+
+    if (jobUpdateError) {
+      console.error("twilio.status_callback_job_update_failed", {
+        request_id: requestId,
+        message_sid: messageSid,
+        error: jobUpdateError.message,
+      });
+    }
+
+    return new Response("OK", { status: 200 });
+  } catch (error) {
+    const err = error as Error;
+    console.error("twilio.status_callback_unhandled_error", {
+      request_id: requestId,
+      phase,
+      name: err?.name ?? "Error",
+      message: err?.message ?? String(error),
+      stack: err?.stack ?? null,
+    });
+    return new Response("Internal error", { status: 500 });
+  }
+});
+
+function mapJobStatus(messageStatus: string): string {
+  const status = messageStatus.toLowerCase();
+  if (status === "delivered" || status === "sent" || status === "queued") {
+    return "sent";
+  }
+  if (status === "failed" || status === "undelivered") {
+    return "failed";
+  }
+  return "sending";
+}
+
+function buildSignatureUrls(req: Request): string[] {
+  const url = new URL(req.url);
+  const forwardedHost = req.headers.get("x-forwarded-host");
+  const forwardedProto = req.headers.get("x-forwarded-proto");
+
+  let hostSource: "forwarded" | "host" | "fallback_env" = "host";
+  let host = forwardedHost ?? req.headers.get("host");
+  if (forwardedHost) {
+    hostSource = "forwarded";
+  }
+
+  if (!host || host === "edge-runtime.supabase.com") {
+    const projectRef = requireEnv("PROJECT_REF");
+    host = `${projectRef}.supabase.co`;
+    hostSource = "fallback_env";
+  }
+
+  const proto = forwardedProto ?? "https";
+  let path = url.pathname;
+  if (!path.startsWith("/functions/v1/")) {
+    path = `/functions/v1${path.startsWith("/") ? "" : "/"}${path}`;
+  }
+
+  const canonicalUrl = `${proto}://${host}${path}`;
+  const withTrailingSlash = canonicalUrl.endsWith("/")
+    ? canonicalUrl
+    : `${canonicalUrl}/`;
+
+  const urls = canonicalUrl === withTrailingSlash
+    ? [canonicalUrl]
+    : [canonicalUrl, withTrailingSlash];
+
+  (buildSignatureUrls as { lastHostSource?: string }).lastHostSource =
+    hostSource;
+
+  return urls;
+}
+
+function buildSignatureBase(url: string, params: URLSearchParams): string {
+  const keys = Array.from(new Set(params.keys())).sort();
+  let base = url;
+  for (const key of keys) {
+    const values = params.getAll(key);
+    for (const value of values) {
+      base += key + value;
+    }
+  }
+  return base;
+}
+
+async function verifySignatureCandidates(
+  token: string,
+  signature: string,
+  urls: string[],
+  params: URLSearchParams
+): Promise<Array<{ url: string; ok: boolean }>> {
+  const results: Array<{ url: string; ok: boolean }> = [];
+  for (const url of urls) {
+    const baseString = buildSignatureBase(url, params);
+    const expectedSignature = await computeSignature(token, baseString);
+    results.push({
+      url,
+      ok: timingSafeEqual(signature, expectedSignature),
+    });
+  }
+  return results;
+}
+
+async function computeSignature(token: string, base: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(token),
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(base));
+  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let result = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+function requireEnv(name: string): string {
+  const value = Deno.env.get(name);
+  if (!value) {
+    throw new Error(`Missing required env var: ${name}`);
+  }
+  return value;
+}
