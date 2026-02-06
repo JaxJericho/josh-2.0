@@ -449,16 +449,67 @@ function requireEnv(name: string): string {
 async function verifyQstashRequest(req: Request): Promise<Response | null> {
   const headerKeys = Array.from(req.headers.keys());
   const headerKeysLower = headerKeys.map((key) => key.toLowerCase());
+  const body = await req.text();
   const signature = req.headers.get("Upstash-Signature") ??
     req.headers.get("upstash-signature");
   const currentKey = Deno.env.get("QSTASH_CURRENT_SIGNING_KEY") ?? "";
   const nextKey = Deno.env.get("QSTASH_NEXT_SIGNING_KEY") ?? "";
   const projectRef = Deno.env.get("PROJECT_REF") ?? "";
+  const runnerSecret = Deno.env.get("QSTASH_RUNNER_SECRET") ?? "";
   const expectedUrl = projectRef
     ? `https://${projectRef}.supabase.co/functions/v1/twilio-outbound-runner`
     : "";
 
-  if (!signature) {
+  if (signature) {
+    if (!currentKey || !nextKey || !projectRef) {
+      return unauthorizedResponse({
+        hasSignature: true,
+        hasProjectRef: Boolean(projectRef),
+        hasCurrentKey: Boolean(currentKey),
+        hasNextKey: Boolean(nextKey),
+        expectedUrl,
+        headerKeys: headerKeysLower,
+      });
+    }
+
+    const receiver = new Receiver({
+      currentSigningKey: currentKey,
+      nextSigningKey: nextKey,
+    });
+
+    try {
+      await receiver.verify({
+        signature,
+        body,
+        url: expectedUrl,
+      });
+    } catch {
+      return unauthorizedResponse({
+        hasSignature: true,
+        hasProjectRef: true,
+        hasCurrentKey: true,
+        hasNextKey: true,
+        expectedUrl,
+        headerKeys: headerKeysLower,
+      });
+    }
+
+    const subject = decodeJwtSubject(signature);
+    if (!subject || subject !== expectedUrl) {
+      return unauthorizedResponse({
+        hasSignature: true,
+        hasProjectRef: true,
+        hasCurrentKey: true,
+        hasNextKey: true,
+        expectedUrl,
+        headerKeys: headerKeysLower,
+      });
+    }
+
+    return null;
+  }
+
+  if (!runnerSecret) {
     return unauthorizedResponse({
       hasSignature: false,
       hasProjectRef: Boolean(projectRef),
@@ -469,47 +520,13 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
     });
   }
 
-  if (!currentKey || !nextKey || !projectRef) {
+  const providedSecret = parseRunnerSecret(body);
+  if (!providedSecret || !timingSafeEqual(providedSecret, runnerSecret)) {
     return unauthorizedResponse({
-      hasSignature: true,
+      hasSignature: false,
       hasProjectRef: Boolean(projectRef),
       hasCurrentKey: Boolean(currentKey),
       hasNextKey: Boolean(nextKey),
-      expectedUrl,
-      headerKeys: headerKeysLower,
-    });
-  }
-
-  const body = await req.text();
-  const receiver = new Receiver({
-    currentSigningKey: currentKey,
-    nextSigningKey: nextKey,
-  });
-
-  try {
-    await receiver.verify({
-      signature,
-      body,
-      url: expectedUrl,
-    });
-  } catch {
-    return unauthorizedResponse({
-      hasSignature: true,
-      hasProjectRef: true,
-      hasCurrentKey: true,
-      hasNextKey: true,
-      expectedUrl,
-      headerKeys: headerKeysLower,
-    });
-  }
-
-  const subject = decodeJwtSubject(signature);
-  if (!subject || subject !== expectedUrl) {
-    return unauthorizedResponse({
-      hasSignature: true,
-      hasProjectRef: true,
-      hasCurrentKey: true,
-      hasNextKey: true,
       expectedUrl,
       headerKeys: headerKeysLower,
     });
@@ -581,4 +598,29 @@ function decodeBase64Url(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+function parseRunnerSecret(body: string): string | null {
+  if (!body || body.trim().length === 0) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(body) as { runner_secret?: unknown };
+    return typeof parsed.runner_secret === "string"
+      ? parsed.runner_secret
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let result = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
 }
