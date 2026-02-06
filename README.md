@@ -62,6 +62,7 @@ High-level staging setup:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `TWILIO_AUTH_TOKEN`
 - `SMS_BODY_ENCRYPTION_KEY` (pgcrypto passphrase; keep secret and rotate via `key_version`)
+- `PROJECT_REF` (Supabase project ref, required for Twilio signature validation)
 
 ---
 

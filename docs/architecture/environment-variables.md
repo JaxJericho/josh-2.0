@@ -62,10 +62,12 @@ Example:
 - TWILIO_AUTH_TOKEN
 - TWILIO_MESSAGING_SERVICE_SID
 - SMS_BODY_ENCRYPTION_KEY
+- PROJECT_REF
 
 Notes:
 
 - `SMS_BODY_ENCRYPTION_KEY` is the passphrase used by pgcrypto (`pgp_sym_encrypt`) for SMS body encryption.
+- `PROJECT_REF` is required for Twilio signature validation when `x-forwarded-host` is missing.
 
 ---
 
