@@ -40,3 +40,6 @@ supabase/.temp/
 # Misc
 .tmp/
 temp/
+
+# Codex
+.codex/
