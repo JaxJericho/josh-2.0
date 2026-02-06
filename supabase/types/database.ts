@@ -1286,6 +1286,27 @@ export type Database = {
           },
         ]
       }
+      sms_opt_outs: {
+        Row: {
+          created_at: string
+          opted_out_at: string
+          phone_e164: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          opted_out_at?: string
+          phone_e164: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          opted_out_at?: string
+          phone_e164?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       sms_outbound_jobs: {
         Row: {
           attempts: number
@@ -1936,4 +1957,3 @@ export const Constants = {
     },
   },
 } as const
-
