@@ -65,6 +65,7 @@ Example:
 - TWILIO_STATUS_CALLBACK_URL
 - QSTASH_CURRENT_SIGNING_KEY
 - QSTASH_NEXT_SIGNING_KEY
+- QSTASH_RUNNER_SECRET
 - QSTASH_AUTH_DEBUG
 - SMS_BODY_ENCRYPTION_KEY
 - PROJECT_REF
@@ -76,6 +77,7 @@ Notes:
 - `TWILIO_FROM_NUMBER` is required if `TWILIO_MESSAGING_SERVICE_SID` is not set.
 - `TWILIO_STATUS_CALLBACK_URL` is optional (defaults to `https://<project-ref>.supabase.co/functions/v1/twilio-status-callback`).
 - `QSTASH_CURRENT_SIGNING_KEY` and `QSTASH_NEXT_SIGNING_KEY` are used to verify QStash signatures (supporting key rotation).
+- `QSTASH_RUNNER_SECRET` is required for body-token fallback auth when the signature header is missing.
 - `QSTASH_AUTH_DEBUG` is an optional temporary flag; set to `1` to include auth diagnostics in 401 responses from the outbound runner.
 
 Deprecated:
