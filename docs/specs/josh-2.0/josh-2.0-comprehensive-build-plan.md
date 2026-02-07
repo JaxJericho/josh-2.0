@@ -1,66 +1,112 @@
 # JOSH 2.0 Comprehensive Build Plan
 
-## **Purpose**
+## Purpose
 
-This is a ticket-based build plan for JOSH 2.0 that starts with local \+ account/CLI setup and ends with E2E testing on staging, ready for production deployment. It is optimized for stability and minimal rework by sequencing “foundations first” (schema/contracts/queues) before UI and polish.
+This is the single, authoritative, ticket-based build plan for JOSH 2.0. It starts with foundations and ends with staged E2E validation and production cutover. It is optimized for stability and minimal rework by sequencing “foundations first” (contracts, schema, reliability, scheduler proof) before feature breadth and UI polish.
+
+This plan assumes:
+
+* Vercel for web and API hosting.  
+* Supabase for Postgres, Auth, Storage (if used), and Edge Functions.  
+* Twilio for SMS.  
+* Stripe for billing.  
+* A scheduler path that is explicitly proven early (Vercel Cron is the default).  
+* Production-grade correctness: least privilege, secure-by-default auth, idempotency, retry safety, and minimal scoped changes per ticket.
 
 Key constraints:
 
-* Not time-bound. Task/ticket-bound.  
-* QStash is the job runner.  
-* Cursor should handle as much of the coding/docs/migrations as possible.  
-* You will complete manual steps that require dashboards, secrets, and external service configuration.  
-* Before commit/merge, you run a verification checklist including any manual steps required for that ticket.  
-* JOSH “personality” is a first-class build deliverable (prompt library \+ response constraints \+ guardrails), not a vibe you bolt on later.
+* Not time-bound. Ticket-bound.  
+* One ticket per PR.  
+* Avoid broad refactors.  
+* Manual work is limited to dashboards, secrets, and external service configuration.  
+* JOSH personality is a first-class deliverable (prompt library, constraints, guardrails, fixtures).
+
+Source plan consolidation notes:
+
+* This plan incorporates the full scope and sequencing intent of the original plan and the revised plan.  
+* QStash-specific scheduling is removed as a hard dependency due to operational friction; the default scheduler path is Vercel Cron calling a protected Next.js endpoint, which invokes Supabase Edge Functions.
 
 ---
 
-## **A. Repo Layout To Support Build \+ Ops**
+## Global Operating Rules
 
-Create a predictable place for specs, runbooks, prompts, and test harnesses so Cursor can “find the truth” quickly.
+### One Ticket Per PR
 
-### **Recommended Folder Tree (Add To Repo)**
+* Every ticket is one branch and one PR.  
+* Never commit to main.  
+* Every PR includes:  
+  * Verification commands run and results.  
+  * Migrations applied (if any) and filenames.  
+  * Env vars added/changed (names only, no values).  
+  * Rollback notes.
+
+### Environment Separation
+
+Maintain strict separation for:
+
+* Supabase: staging vs production projects.  
+* Vercel: staging vs production projects (or equivalent environment separation).  
+* Twilio: staging vs production Messaging Service and numbers.  
+* Stripe: staging vs production endpoints and Price IDs.
+
+### Reliability Rules
+
+* All webhook handlers must validate signatures.  
+* All inbound message processing must be idempotent.  
+* All outbound sends must be idempotent.  
+* All runners and schedulers must be retry safe under concurrency.  
+* Scheduled work must be explicitly proven early in staging before downstream orchestration.
+
+### Secrets Rules
+
+* Never paste secrets into PRs, docs, issues, or logs.  
+* If a secret is pasted anywhere, rotate it.  
+* Secret rotation steps must be documented.
+
+---
+
+## Repository Layout To Support Build And Ops
+
+Ensure the repo contains predictable locations for specs, runbooks, prompts, and test harnesses so Claude Code and Codex can “find the truth” quickly.
+
+### Recommended Folder Tree
 
 ```
 .
 ├─ apps/
 │  ├─ web/                        # Next.js app (public site + dashboard + admin)
-│  └─ api/                        # (Optional) if you split API from web; otherwise keep in web
+│  └─ api/                        # Optional: split API from web; otherwise keep in web
 ├─ packages/
 │  ├─ shared/                     # shared types, utils, domain logic
 │  ├─ db/                         # db helpers, migrations helpers, generated types
 │  ├─ messaging/                  # Twilio templates + helpers
 │  └─ ai/                         # LLM client, prompt library, output validators, eval harness
 ├─ prompts/
-│  ├─ josh/                        # prompt source files (versioned, human-readable)
-│  └─ README.md                    # what prompts exist + how to change safely
+│  ├─ josh/                       # prompt source files (versioned, human-readable)
+│  └─ README.md                   # what prompts exist + how to change safely
 ├─ supabase/
-│  ├─ migrations/                  # canonical migrations (tracked)
-│  ├─ seed/                        # seed scripts + fixtures
+│  ├─ migrations/                 # canonical migrations (tracked)
+│  ├─ seed/                       # seed scripts + fixtures
 │  └─ config.toml
 ├─ docs/
-│  ├─ specs/josh-2.0/              # exported buildable specs (Docs 01–15 + Personality)
-│  ├─ setup/                       # CLI + environment setup
-│  ├─ runbooks/                    # ops playbooks: region activation, incidents, billing, etc.
-│  ├─ testing/                     # E2E plan + manual testing checklist
-│  └─ architecture/                # diagrams, ADRs, integration contracts
+│  ├─ specs/josh-2.0/             # buildable specs (exported authoritative docs)
+│  ├─ setup/                      # CLI + environment setup
+│  ├─ runbooks/                   # ops playbooks: incidents, billing, regions, etc.
+│  ├─ testing/                    # E2E plan + manual testing checklist
+│  └─ architecture/               # diagrams, ADRs, integration contracts
 ├─ scripts/
-│  ├─ dev/                         # local helpers (reset db, seed, gen types)
-│  ├─ staging/                     # guarded scripts for staging (seed, reconcile)
-│  └─ ops/                         # safe operational scripts (rebuild derived state)
-├─ .cursor/
-│  ├─ rules/                       # Cursor Rules (.mdc) - scoped instructions
-│  └─ snippets/                    # (Optional) reusable prompt snippets
+│  ├─ dev/                        # local helpers (reset db, seed, gen types)
+│  ├─ staging/                    # guarded scripts for staging (seed, reconcile)
+│  └─ ops/                        # safe operational scripts (rebuild derived state)
+├─ .github/
+│  ├─ pull_request_template.md
+│  └─ copilot-instructions.md     # optional; keep aligned with agent rules
 ├─ .vscode/
 │  ├─ settings.json
 │  ├─ extensions.json
 │  ├─ tasks.json
 │  └─ launch.json
-├─ .github/
-│  ├─ pull_request_template.md
-│  └─ copilot-instructions.md      # optional; keep aligned with Cursor Rules
 ├─ .editorconfig
-├─ .cursorignore
 ├─ .env.example
 ├─ README.md
 └─ SECURITY.md
@@ -68,619 +114,581 @@ Create a predictable place for specs, runbooks, prompts, and test harnesses so C
 
 Notes:
 
-* If your repo is already monorepo/non-monorepo, keep your structure—just ensure these directories exist somewhere consistent.  
-* `/docs/specs/josh-2.0/` is the single source of truth for the system build.  
-* `/prompts/` is the single source of truth for the JOSH personality prompt text. Code consumes prompts from here (or compiles them at build time).
+* If your repo is already monorepo or not, keep your structure. Ensure these directories exist somewhere consistent.  
+* `docs/specs/josh-2.0/` is the single source of truth for system behavior.  
+* `prompts/` is the single source of truth for personality prompt text.
 
 ---
 
-## **B. VS Code \+ Cursor Context And Consistency System**
+## AI Coding Assistant Toolkit
 
-This section answers: “What files should I create to optimize context & memory, write consistent code across all tickets, and get the most out of Cursor?”
+This section defines the files, templates, and procedures that make Claude Code and Codex reliable and consistent.
 
-### **1\) Cursor Rules (Project Instructions)**
+### Required Files
 
-Create scoped rule files in:
+* `.github/pull_request_template.md`  
+* `docs/ai/README.md`  
+* `docs/ai/definitions.md` (glossary: LinkUp, Runner, Holds, Entitlements, SafeChat)  
+* `docs/ai/ticket-template.md`  
+* `docs/ai/prompt-template.md` (your canonical prompt template)  
+* `docs/ai/claude-code-template.md`  
+* `docs/ai/codex-template.md`
 
-* `.cursor/rules/*.mdc`
+### Required Runbooks
 
-Recommended rule files:
+* `docs/runbooks/environment-contract.md`  
+* `docs/runbooks/secrets-and-rotation.md`  
+* `docs/runbooks/schema-and-types.md`  
+* `docs/runbooks/vercel-cron-runner.md`  
+* `docs/runbooks/webhooks-twilio.md`  
+* `docs/runbooks/webhooks-stripe.md`  
+* `docs/runbooks/backups-and-restore.md`  
+* `docs/runbooks/staging-soak.md`  
+* `docs/runbooks/production-cutover-and-rollback.md`
 
-* `.cursor/rules/00-project-overview.mdc`  
-  * One-paragraph product summary  
-  * Tech stack \+ key integrations  
-  * Environments: local/staging/prod separation rules  
-  * “Source of truth” pointers (docs/specs/josh-2.0)  
-* `.cursor/rules/01-build-loop-workflow.mdc`  
-  * Build Loop (plan → implement → verify → commit/PR → merge)  
-  * One-ticket-per-PR, branch naming conventions  
-  * “Stop and ask” rules  
-* `.cursor/rules/02-database-and-migrations.mdc`  
-  * Migration rules \+ naming  
-  * “No schema drift”: regenerate types after migrations  
-  * RLS defaults and service-role usage  
-* `.cursor/rules/03-queues-and-idempotency.mdc`  
-  * Job runner: QStash  
-  * Idempotency key patterns  
-  * Retry safety rules  
-* `.cursor/rules/04-api-contracts-and-validation.mdc`  
-  * Request validation patterns  
-  * Error envelope conventions  
-  * Observability tagging requirements  
-* `.cursor/rules/05-style-and-consistency.mdc`  
-  * Formatting (Prettier), lint rules  
-  * File naming conventions  
-  * Logging conventions  
-* `.cursor/rules/06-llm-personality-and-prompts.mdc`  
-  * Prompts must be versioned and referenced by ID  
-  * Output constraints (SMS length, one question, no therapy talk, no “AI-speak”)  
-  * Safety overrides (STOP/HELP \+ crisis)  
-  * Never leak contact/PII in SMS  
-  * Prompt change checklist (evals \+ fixtures)
+### Required Testing Docs
 
-Keep these rules directive and high signal.
+* `docs/testing/e2e-harness.md`  
+* `docs/testing/simulator.md`
 
-### **2\) Cursor Ignore**
+### Required Utility Scripts
 
-Create:
+* `scripts/doctor.mjs` (safe diagnostics, no secret values)  
+* `scripts/print-env-fingerprint.mjs` (presence, length, sha256 prefix)  
+* `scripts/simulate-twilio-inbound.mjs` (local/staging testing helper)  
+* `scripts/simulate-twilio-status.mjs` (local/staging testing helper)
 
-* `.cursorignore`
+---
 
-Use it to exclude:
+## VS Code Agent Context System
 
-* secrets files and local env files  
-* build artifacts  
-* huge vendor folders  
-* logs  
-* any directory where random untrusted content lands (downloads, exports)
+### VS Code Settings
 
-### **3\) VS Code Workspace And Editor Consistency**
-
-Create:
-
-* `.vscode/settings.json`  
+* `.vscode/settings.json`:  
   * format on save  
   * ESLint integration  
   * TypeScript SDK: workspace  
-  * search excludes aligned to `.cursorignore`  
-* `.vscode/extensions.json`  
-  * recommend ESLint, Prettier, SQL tooling, Sentry, etc.  
-* `.vscode/tasks.json`  
-  * tasks: lint, typecheck, test, build, gen types, reset+seed local  
-* `.vscode/launch.json`  
-  * debug configs for Next.js server \+ API routes
+  * search excludes aligned to ignores  
+* `.vscode/extensions.json`: ESLint, Prettier, SQL tooling, etc.  
+* `.vscode/tasks.json`:  
+  * tasks: lint, typecheck, test, build, gen types, reset and seed local  
+* `.vscode/launch.json`: debug configs for Next.js server and API routes
 
-Optional but useful:
+### AI Instruction Files
 
-* `josh.code-workspace`  
-  * multi-folder setups (apps/web \+ packages \+ docs)
-
-### **4\) Standard Code Style And “One True Way” Files**
-
-* `.editorconfig`  
-* `.prettierrc` (or `prettier.config.js`)  
-* `.eslintrc.*`  
-* `tsconfig.json` and `tsconfig.base.json` (if monorepo)  
-* `package.json` scripts for lint/typecheck/test/build
-
-### **5\) AI Instruction Files For VS Code Ecosystem**
-
-If you also use GitHub Copilot-style instruction loading, add:
-
-* `.github/copilot-instructions.md`
-
-Keep it aligned with your Cursor Rules.
-
-### **6\) Context Index Files (The Big Win)**
-
-Create short “index” docs that act like table-of-contents for Cursor:
-
-* `docs/README.md`  
-* `docs/specs/josh-2.0/README.md`  
-* `docs/runbooks/README.md`  
-* `docs/testing/README.md`  
-* `prompts/README.md` (lists prompt IDs, owners, and safe-change procedure)
-
-### **7\) Security And Prompt Injection Guardrails**
-
-Add:
-
-* `SECURITY.md`  
-  * no secrets in repo  
-  * key rotation playbook  
-  * suspicious file/PR handling
-
-Ensure `.cursorignore` excludes any directory where untrusted content lands.
+* Keep your prompt template in `docs/ai/prompt-template.md`.  
+* Keep your PR template in `.github/pull_request_template.md`.
 
 ---
 
-## **C. Ticket Plan (Setup → E2E Ready For Production)**
+## Standard Ticket Format
 
-Each ticket includes: Cursor work, your manual work, and a pre-commit verification checklist. Prompts for Cursor should instruct it to: implement the ticket, summarize deliverables, list your manual tasks (env vars, dashboards, migrations), then provide PR title \+ summary.
+Every ticket must include:
 
-### **Phase 0: Foundations And Tooling**
-
-#### **Ticket 0.1: Repository Baseline And PR Workflow**
-
-Cursor does
-
-* Add PR template checklist (migrations, env vars, verification commands).  
-* Add minimal docs structure (docs/setup, docs/runbooks, docs/testing).
-
-You do (manual)
-
-* Confirm GitHub branch protections and required CI checks.
-
-Verify before merge
-
-* `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
+* Goal  
+* Scope  
+* Dependencies  
+* Agent Work (Claude Code and Codex)  
+* Manual Work (You)  
+* Acceptance Criteria  
+* Verification Checklist  
+* Artifacts Updated Or Created  
+* Risk Notes  
+* PR Requirements
 
 ---
 
-#### **Ticket 0.2: CLI Setup And Environment Linking**
+# Phase 0: Additive Foundation Improvements (Do Not Redo Prior Work)
 
-Cursor does
+## Ticket 0.3: Rebaseline Inventory And Project Map (Docs \+ Doctor Script)
 
-* Write `/docs/setup/cli.md` with exact commands.  
-* Add `.env.example` with all required keys (no secrets).
+* Goal: Stop guessing. Create an authoritative map of environments \+ a safe diagnostics script.  
+* Scope: Docs and scripts only. No runtime behavior changes.  
+* Dependencies: None.  
+* Agent Work:  
+  * Create `docs/runbooks/environment-contract.md` with:  
+    * Staging vs production: Supabase refs, Vercel base URLs  
+    * Twilio inbound webhook \+ status callback URLs per env  
+    * Stripe webhook URLs per env  
+    * Scheduler path (Vercel Cron route → Supabase runner endpoint)  
+    * Required env vars (names only)  
+  * Add `scripts/doctor.mjs` that checks (no secret values):  
+    * env var presence (set/unset)  
+    * runner URL contains no query params  
+    * webhook route files exist  
+    * build scripts exist  
+    * outputs PASS/FAIL with next-step hints  
+  * Create `docs/runbooks/rebaseline-findings.md`.  
+* Manual Work (You):  
+  * Fill in any missing URL names you know (no secrets).  
+* Acceptance Criteria:  
+  * `node scripts/doctor.mjs` provides a clean PASS/FAIL output and exits non-zero on FAIL.  
+* Verification Checklist:  
+  * `node scripts/doctor.mjs`  
+* Artifacts Updated/Created:  
+  * `docs/runbooks/environment-contract.md`  
+  * `scripts/doctor.mjs`  
+  * `docs/runbooks/rebaseline-findings.md`
 
-You do (manual)
+## Ticket 0.4: AI Assistant Toolkit Scaffolding (Templates)
 
-* Login/link:  
-  * Supabase CLI: link staging \+ prod  
-  * Vercel CLI: link staging \+ prod  
-  * Stripe CLI (for webhook testing)  
-  * Twilio console access confirmed  
-  * QStash account/project created
+* Goal: Make Claude Code and Codex execution consistent.  
+* Scope: Templates and docs only.  
+* Dependencies: None.  
+* Agent Work:  
+  * Add:  
+    * `.github/pull_request_template.md`  
+    * `docs/ai/README.md`  
+    * `docs/ai/definitions.md`  
+    * `docs/ai/ticket-template.md`  
+    * `docs/ai/prompt-template.md` (your canonical template)  
+    * `docs/ai/claude-code-template.md`  
+    * `docs/ai/codex-template.md`  
+* Manual Work (You): None.  
+* Acceptance Criteria:  
+  * Templates exist and are referenced from `docs/ai/README.md`.
 
-Verify before merge
+## Ticket 0.5: Secrets And Rotation \+ Env Fingerprints
 
-* `supabase status` runs  
-* Local dev boots with placeholder env
+* Goal: Verify “which token is active” without ever printing secrets.  
+* Scope: Runbook \+ helper script.  
+* Dependencies: None.  
+* Agent Work:  
+  * Create `docs/runbooks/secrets-and-rotation.md`.  
+  * Add `scripts/print-env-fingerprint.mjs` (presence, length, sha256 prefix only).  
+  * Add `pnpm env:fingerprint`.  
+* Manual Work (You):  
+  * Decide where local env vars live (shell vs `.env.local`).  
+* Acceptance Criteria:  
+  * You can confirm mismatched tokens via fingerprint output.
+
+## Ticket 0.6: Scheduler Baseline Swap (QStash → Vercel Cron) For Staging
+
+* Goal: Replace the fragile scheduler path with a proven one that you own.  
+* Scope: Vercel cron config \+ protected cron route \+ runbook. Does not change the runner logic.  
+* Dependencies: None.  
+* Agent Work:  
+  * Add `vercel.json` cron:  
+    * Path: `/api/cron/twilio-outbound-runner`  
+    * Schedule: start with `*/5 * * * *`  
+  * Add protected cron route that:  
+    * Requires `Authorization: Bearer ${CRON_SECRET}`  
+    * Calls Supabase runner endpoint using `STAGING_RUNNER_URL` and `STAGING_RUNNER_SECRET`  
+    * Hard-fails if runner URL contains `?`  
+    * Returns upstream status and body  
+  * Create `docs/runbooks/vercel-cron-runner.md`.  
+* Manual Work (You):  
+  * In Vercel staging env vars set:  
+    * `CRON_SECRET`  
+    * `STAGING_RUNNER_URL` (no query params)  
+    * `STAGING_RUNNER_SECRET`  
+  * Redeploy staging.  
+* Acceptance Criteria:  
+  * Cron route returns 200 with correct auth.  
+  * Supabase Edge Function logs show scheduled invocations.  
+    ---
+
+# Phase 1: Additive Database Readiness (Do Not Redo Existing Schema)
+
+## Ticket 1.2: Schema Drift Guardrails (If Not Already Enforced)
+
+* Goal: Prevent schema/type mismatches from breaking builds.  
+* Scope: scripts \+ CI only.  
+* Dependencies: None.  
+* Agent Work:  
+  * Add scripts:  
+    * `pnpm db:gen-types`  
+    * `pnpm db:verify-types` (fails if types are stale)  
+  * Document in `docs/runbooks/schema-and-types.md`.  
+  * Add CI check if feasible in this repo.  
+* Manual Work (You):  
+  * Ensure Supabase CLI is linked for type generation (already done for staging).  
+* Acceptance Criteria:  
+  * CI (or local) fails when types are stale.
+
+## Ticket 1.5: Backups, Restore, Retention, Data Classification (Docs \+ Verification)
+
+* Goal: Production ops safety for data.  
+* Scope: docs \+ checklist.  
+* Dependencies: None.  
+* Agent Work:  
+  * Create:  
+    * `docs/runbooks/backups-and-restore.md`  
+    * `docs/architecture/data-classification.md`  
+    * `docs/architecture/retention-policy.md`  
+* Manual Work (You):  
+  * Confirm backup settings for staging \+ production.  
+    ---
+
+# Phase 2: Messaging Core (Outstanding)
+
+## Ticket 2.3: Twilio Status Callback Handler
+
+* Goal: Track delivery outcomes and reconcile message state.  
+* Scope: Callback endpoint, idempotency, status history.  
+* Dependencies: Phase 2.2 complete.  
+* Agent Work:  
+  * Implement status callback endpoint.  
+  * Idempotent update of last status.  
+  * Store status history rows.  
+  * Update `docs/runbooks/webhooks-twilio.md` with exact callback configuration.  
+* Manual Work (You):  
+  * Configure Twilio status callback URL for staging.  
+* Acceptance Criteria:  
+  * Duplicate callbacks do not corrupt state.  
+  * Message status transitions are visible in logs/DB.
+
+## Ticket 2.4: Messaging Simulator And Golden Tests
+
+* Goal: Test messaging flows without needing many real phones.  
+* Scope: simulator scripts \+ fixtures \+ docs.  
+* Dependencies: Ticket 2.3.  
+* Agent Work:  
+  * Add:  
+    * `scripts/simulate-twilio-inbound.mjs`  
+    * `scripts/simulate-twilio-status.mjs`  
+  * Add fixtures.  
+  * Create `docs/testing/simulator.md`.  
+* Manual Work (You): None.  
+* Acceptance Criteria:  
+  * You can simulate inbound \+ status callbacks against staging.
 
 ---
 
-### **Phase 1: Database Baseline**
+# Phase 3: Conversation Router, Interview, And Personality
 
-#### **Ticket 1.1: Schema Migrations (Docs 03, 08–13)**
+## Ticket 3.1: Intent Routing Contract
 
-Cursor does
+* Goal: Deterministically route inbound messages into the correct flow.  
+* Scope: Local parsers, LLM classifier fallback, one-clarifier rule.  
+* Dependencies: Ticket 2.1.  
+* Agent Work:  
+  * Implement deterministic routing for common intents.  
+  * Add LLM fallback for ambiguous cases.  
+  * Enforce one-clarifier rule.  
+  * Add tests for representative messages.  
+* Manual Work:  
+  * Add LLM provider keys in staging.  
+* Acceptance Criteria:  
+  * Deterministic routing for representative messages.
 
-* Implement migrations for canonical schema \+ indexes \+ unique idempotency constraints.  
-* Add scripts: `db:reset`, `db:migrate`, `db:gen-types`.
+## Ticket 3.2: Interview And Signal Extraction
 
-You do (manual)
+* Goal: Complete onboarding via SMS and store a usable profile.  
+* Scope: Step catalog, extractor contract, persistence mapping, resume behavior.  
+* Dependencies: Ticket 3.1.  
+* Agent Work:  
+  * Implement interview flow.  
+  * Persist extracted signals.  
+  * Resume after interruption.  
+* Manual Work:  
+  * Confirm onboarding copy.  
+* Acceptance Criteria:  
+  * Full interview creates complete profile.  
+  * Partial interview resumes correctly.
 
-* Apply migrations to staging.
+## Ticket 3.3: JOSH Personality Prompt Library And Output Guardrails
 
-Verify before merge
+* Goal: A versioned prompt library that shapes user-facing SMS with hard constraints.  
+* Scope: Prompt runtime, prompt sources, validators, eval harness, wiring into SMS paths.  
+* Dependencies: Ticket 3.1.  
+* Agent Work:  
+  * Add `packages/ai/` prompt runtime:  
+    * Prompt registry (IDs, versions)  
+    * Rendering helpers  
+    * Output validators and normalizers:  
+      * SMS length cap  
+      * Exactly one question or bounded choice list  
+      * Deny-list for AI-speak phrases  
+      * No therapy framing  
+      * No contact sharing in SMS  
+  * Add prompt sources under `prompts/josh/`:  
+    * Conversation management prompt  
+    * Follow-up question prompt  
+    * Clarifier prompt  
+  * Add lightweight eval harness:  
+    * `scripts/dev/eval-personality` runs fixture conversations  
+    * Asserts outputs meet constraints  
+  * Wire personality layer into SMS response paths:  
+    * Interview messages  
+    * Post-event prompts  
+    * General support responses (non-HELP)  
+* Manual Work:  
+  * Pick initial model and routing defaults per environment.  
+  * Review and approve prompt text.  
+* Acceptance Criteria:  
+  * Eval harness passes fixtures.  
+  * SMS outputs are short, one question, aligned tone, no contact info.
 
-* Fresh local DB migrate succeeds  
-* `db:gen-types` then `pnpm build`
+## Ticket 3.4: Deterministic Fallback Messaging For Critical Paths
 
----
-
-#### **Ticket 1.2: RLS And Access Patterns**
-
-Cursor does
-
-* Implement deny-by-default RLS with user-owned access and admin/service-role access patterns.
-
-You do (manual)
-
-* Set service role secrets in Vercel staging/prod.
-
-Verify before merge
-
-* User can only access their own rows  
-* Admin routes blocked without admin auth
-
----
-
-#### **Ticket 1.3: Seed \+ Synthetic Test Data**
-
-Cursor does
-
-* Seed scripts and fixtures for regions, users, profiles, LinkUps.
-
-You do (manual)
-
-* Run seed once on staging.
-
-Verify before merge
-
-* Seeded data visible in dashboard and admin
-
----
-
-### **Phase 2: Messaging Core**
-
-#### **Ticket 2.1: Twilio Inbound Webhook (Router Entry)**
-
-Cursor does
-
-* Signature validation, message persistence, strict idempotency, STOP/HELP precedence.
-
-You do (manual)
-
-* Configure Twilio Messaging Service webhooks for staging.
-
-Verify before merge
-
-* Replay same MessageSid → no duplicate processing  
-* STOP immediately opts out
-
----
-
-#### **Ticket 2.2: Outbound Jobs \+ Status Callbacks**
-
-Cursor does
-
-* Outbound job runner \+ retries \+ idempotency keys \+ status tracking.
-
-You do (manual)
-
-* Configure Twilio status callback URLs.
-
-Verify before merge
-
-* Same outbound idempotency\_key sends once  
-* Failures retry and settle
+* Goal: Critical responses work even if the LLM is unavailable.  
+* Scope: Deterministic templates for STOP, HELP, billing status, outages.  
+* Dependencies: Ticket 3.1.  
+* Agent Work:  
+  * Implement fallback templates and routing.  
+* Manual Work:  
+  * Approve template copy.  
+* Acceptance Criteria:  
+  * Critical paths never require LLM availability.
 
 ---
 
-### **Phase 3: Conversation Router \+ Interview \+ Personality**
+# Phase 4: Matching And LinkUp Orchestration
 
-#### **Ticket 3.1: Intent Routing Contract (Doc 04\)**
+## Ticket 4.1: Eligibility And Region Gating
 
-Cursor does
+* Goal: Gate participation by region status and eligibility rules.  
+* Scope: Region states, waitlist handling, eligibility enforcement.  
+* Dependencies: Ticket 3.2.  
+* Agent Work:  
+  * Implement region gating states.  
+  * Implement waitlist behavior.  
+* Manual Work:  
+  * Confirm which regions are open and closed.  
+* Acceptance Criteria:  
+  * Users in closed regions are waitlisted and handled consistently.
 
-* Local parsers, LLM classifier fallback, one-clarifier rule.
+## Ticket 4.2: Matching Engine And Explainability
 
-You do (manual)
+* Goal: Produce candidate sets and ranked matches with explainability metadata.  
+* Scope: Filters, scoring, tie-breakers, match runs storage, deterministic output.  
+* Dependencies: Ticket 4.1.  
+* Agent Work:  
+  * Implement matching run pipeline.  
+  * Store match run output.  
+  * Ensure deterministic output for same run key.  
+* Manual Work:  
+  * Ensure staging has enough seeded users.  
+* Acceptance Criteria:  
+  * Same run key produces same results.  
+  * Holds and blocks exclude candidates.
 
-* Add LLM provider keys in staging.
+## Ticket 4.3: LinkUp Orchestration And Scheduling
 
-Verify before merge
-
-* Deterministic routing for representative messages
-
----
-
-#### **Ticket 3.2: Interview \+ Signal Extraction (Doc 06\)**
-
-Cursor does
-
-* Step catalog \+ extractor contract \+ persistence mapping \+ resume behavior.
-
-You do (manual)
-
-* Confirm onboarding copy if needed.
-
-Verify before merge
-
-* Full interview creates complete profile  
-* Partial resumes correctly
-
----
-
-#### **Ticket 3.3: JOSH Personality Prompt Library \+ Output Guardrails (Personality & Reasoning spec)**
-
-This is the “conversation engine” layer: the tone rules, question style, and response constraints that shape every user-facing SMS beyond simple intent routing.
-
-Cursor does
-
-* Add `packages/ai/` prompt runtime:  
-  * Prompt registry (prompt IDs, versions, templates)  
-  * Prompt rendering helpers (inject user profile \+ short history)  
-  * Output validators/normalizers:  
-    * SMS length cap (configurable; default \~220 chars)  
-    * Exactly one question (or a bounded choice list)  
-    * No “AI-speak” phrases (configurable deny-list)  
-    * No therapy/dating-app framing  
-    * No contact sharing in SMS (hard block)  
-* Add prompt sources under `prompts/josh/` (versioned):  
-  * Conversation management prompt  
-  * “Follow-up question” prompt (one question, energy-following)  
-  * “Clarifier message” prompt (max one clarifier)  
-  * (Optional) “Summarize progress” internal prompt used only for storage/debug  
-* Add lightweight evaluation harness (no fancy infra):  
-  * `scripts/dev/eval-personality.ts` runs curated fixture conversations  
-  * Asserts outputs meet constraints (length, question count, banned phrases)  
-* Wire the personality layer into the SMS response path(s):  
-  * Interview messages (when using LLM text)  
-  * Post-event prompts  
-  * General “chatty” support responses (non-HELP)
-
-You do (manual)
-
-* Pick the initial model \+ temperature/routing defaults per environment (documented values; set env vars).  
-* Review and approve the initial prompt text in `prompts/josh/` (this is “product copy,” treat like UX).
-
-Verify before merge
-
-* Eval harness passes on fixtures  
-* Real SMS simulation outputs are:  
-  * short  
-  * one question  
-  * aligned tone  
-  * never contain contact or unsafe content
-
-Notes
-
-* This ticket should not change compatibility scoring/matching logic.  
-* Prefer code-level versioning for MVP (prompt files \+ hash), rather than storing prompts in DB.
+* Goal: Create LinkUps, run invite waves, lock quorum, and schedule reminders.  
+* Scope: Idempotent creation, invites, lock transaction, reminders.  
+* Dependencies: Ticket 4.2 and Ticket 2.2.  
+* Agent Work:  
+  * Implement LinkUp orchestration state machine.  
+  * Ensure create key idempotency.  
+  * Implement quorum lock transaction.  
+  * Schedule reminders via runner-driven jobs.  
+* Manual Work:  
+  * None beyond existing scheduler baseline.  
+* Acceptance Criteria:  
+  * Duplicate create does not duplicate LinkUp.  
+  * Lock happens once.  
+  * Reminders schedule and are idempotent.
 
 ---
 
-### **Phase 4: Matching And LinkUps**
+# Phase 5: Post-Event And Contact Exchange
 
-#### **Ticket 4.1: Matching Engine (Doc 09\) \+ Explainability**
+## Ticket 5.1: Post-Event Outcome Capture
 
-Cursor does
+* Goal: Collect outcomes after a LinkUp and store results.  
+* Scope: Prompts, parsing, persistence, schedule triggers.  
+* Dependencies: Ticket 4.3.  
+* Agent Work:  
+  * Implement post-event prompts and outcome storage.  
+  * Ensure replies are idempotent under retries.  
+* Manual Work:  
+  * Approve post-event copy.  
+* Acceptance Criteria:  
+  * Simulated past event triggers prompts.  
+  * Replies do not double-apply.
 
-* Filters, scoring, tie-breakers, match\_runs storage, deterministic output.
+## Ticket 5.2: Mutual Consent Contact Exchange With Safety Gates
 
-You do (manual)
-
-* Ensure staging has enough seeded users.
-
-Verify before merge
-
-* Same run\_key → same results  
-* Blocks/holds exclude candidates
-
----
-
-#### **Ticket 4.2: LinkUp Orchestration (Doc 07\) \+ Scheduling**
-
-Cursor does
-
-* create\_key idempotency, invite waves, lock transaction, reminders.  
-* Schedule via QStash.
-
-You do (manual)
-
-* Create QStash topics and set env vars for staging/prod.
-
-Verify before merge
-
-* Duplicate create doesn’t duplicate LinkUp  
-* Lock happens once  
-* Reminders schedule correctly
+* Goal: Exchange contact info only after mutual consent and safety checks.  
+* Scope: Choices upsert, mutual detection, reveal messaging, suppression on holds and blocks.  
+* Dependencies: Ticket 5.1 and Ticket 7.1.  
+* Agent Work:  
+  * Implement consent capture.  
+  * Implement mutual detection.  
+  * Implement reveal messaging guarded by safety.  
+* Manual Work:  
+  * Approve reveal copy.  
+* Acceptance Criteria:  
+  * Mutual yes creates one exchange record.  
+  * Holds and blocks suppress reveal.
 
 ---
 
-### **Phase 5: Post-Event And Contact Exchange**
+# Phase 6: Billing And Entitlements
 
-#### **Ticket 5.1: Post-Event Outcome Capture (Doc 08\)**
+## Ticket 6.1: Stripe Webhooks And Subscription Snapshot
 
-Cursor does
+* Goal: Reliably process Stripe events and maintain subscription snapshot.  
+* Scope: Signature validation, idempotent billing events, out-of-order safety.  
+* Dependencies: Ticket 1.1.  
+* Agent Work:  
+  * Implement Stripe webhook endpoint.  
+  * Signature validation.  
+  * Idempotent processing.  
+  * Snapshot mapping safe under out-of-order events.  
+  * Create `docs/runbooks/webhooks-stripe.md`.  
+* Manual Work:  
+  * Configure Stripe webhooks for staging and production.  
+  * Set Stripe secrets in Vercel.  
+* Acceptance Criteria:  
+  * Duplicate events do not double-process.  
+  * Snapshot stays correct under replays.
 
-* Post-event prompts, parsing, persistence, QStash scheduling.
+## Ticket 6.2: Entitlements Reconcile And Enforcement
 
-You do (manual)
-
-* Confirm QStash is delivering jobs to staging endpoints.
-
-Verify before merge
-
-* Simulated past event triggers prompts  
-* Replies are idempotent under retries
-
----
-
-#### **Ticket 5.2: Mutual Consent Contact Exchange (Doc 08\)**
-
-Cursor does
-
-* Choices upsert, mutual detection, reveal messaging guarded by safety/blocks.
-
-You do (manual)
-
-* Review reveal template copy.
-
-Verify before merge
-
-* Mutual yes creates one exchange row  
-* Holds/blocks suppress reveal
-
----
-
-### **Phase 6: Billing And Entitlements**
-
-#### **Ticket 6.1: Stripe Webhooks \+ Subscription Snapshot**
-
-Cursor does
-
-* Signature validation, idempotent billing\_events, snapshot mapping.
-
-You do (manual)
-
-* Configure Stripe webhooks for staging/prod.  
-* Set Stripe secrets in Vercel.
-
-Verify before merge
-
-* Duplicate event doesn’t double process  
-* Snapshot stays correct with out-of-order events
+* Goal: Enforce subscription eligibility across key actions.  
+* Scope: Entitlements ledger, enforcement hooks across SMS, matching, LinkUps, contact exchange, dashboard.  
+* Dependencies: Ticket 6.1.  
+* Agent Work:  
+  * Implement entitlements ledger.  
+  * Implement enforcement.  
+  * Implement reconcile job to repair missed events.  
+* Manual Work:  
+  * Map Stripe Price IDs per environment.  
+* Acceptance Criteria:  
+  * Paid user allowed; unpaid denied with reason codes.  
+  * Grace window behavior correct.
 
 ---
 
-#### **Ticket 6.2: Entitlements Reconcile \+ Enforcement (Doc 11\)**
+# Phase 7: Safety And Admin
 
-Cursor does
+## Ticket 7.1: Safety System
 
-* entitlements table \+ ledger \+ reconcile job.  
-* evaluateEligibility enforced at SMS, matching, LinkUps, contact exchange, dashboard.
+* Goal: Detect abuse, create holds, and enforce safety gates.  
+* Scope: Keyword detection, incidents, holds, blocks and reports, enforcement hooks.  
+* Dependencies: Ticket 3.1 and Ticket 1.1.  
+* Agent Work:  
+  * Implement incidents and holds.  
+  * Enforce holds across messaging, LinkUps, and contact exchange.  
+* Manual Work:  
+  * Confirm crisis resource message content.  
+* Acceptance Criteria:  
+  * High severity triggers hold and suppresses product actions.
 
-You do (manual)
+## Ticket 7.2: Admin Dashboard
 
-* Confirm Stripe Price IDs mapped per env.
-
-Verify before merge
-
-* Paid user allowed; unpaid denied with reason code  
-* Grace window behavior correct
-
----
-
-### **Phase 7: Safety \+ Admin**
-
-#### **Ticket 7.1: Safety System (Doc 13\)**
-
-Cursor does
-
-* Keyword detection, incidents, holds, blocks/reports, enforcement hooks.
-
-You do (manual)
-
-* Confirm crisis resource message content.
-
-Verify before merge
-
-* High severity triggers hold and suppresses product actions
+* Goal: Admin tooling to monitor and intervene safely.  
+* Scope: RBAC, core pages, audit log, safe error states.  
+* Dependencies: Ticket 7.1.  
+* Agent Work:  
+  * Implement admin RBAC.  
+  * Implement audit log.  
+  * Implement core admin pages.  
+* Manual Work:  
+  * Create admin users and claims.  
+* Acceptance Criteria:  
+  * Role restrictions enforced.  
+  * All mutations audited.
 
 ---
 
-#### **Ticket 7.2: Admin Dashboard (Doc 14\)**
+# Phase 8: Website And User Dashboard
 
-Cursor does
+## Ticket 8.1: Registration, OTP, Region Entry
 
-* RBAC, core pages, audit log, safe error states.
+* Goal: Users can register, verify OTP, and be routed into onboarding.  
+* Scope: Registration capture, OTP verification, consent capture, region gating states.  
+* Dependencies: Ticket 4.1.  
+* Agent Work:  
+  * Implement registration and OTP flow.  
+  * Implement region gating entry behavior.  
+* Manual Work:  
+  * Configure OTP provider settings for staging and production.  
+* Acceptance Criteria:  
+  * Full flow works in open and closed region cases.
 
-You do (manual)
+## Ticket 8.2: Dashboard Surfaces
 
-* Create admin users/claims.
-
-Verify before merge
-
-* Role restrictions enforced  
-* All mutations audited
-
----
-
-### **Phase 8: Website \+ User Dashboard**
-
-#### **Ticket 8.1: Registration \+ OTP \+ Region Gating (Doc 15\)**
-
-Cursor does
-
-* Public site, registration, OTP verification, gating states.
-
-You do (manual)
-
-* Configure OTP provider settings for staging/prod.
-
-Verify before merge
-
-* Full flow works in open and closed region cases
+* Goal: Provide user-facing dashboard features that mirror SMS state.  
+* Scope: Profile editor, LinkUp views, post-event fallback, contact exchange UI, subscription entry.  
+* Dependencies: Ticket 3.2 and Ticket 4.3.  
+* Agent Work:  
+  * Implement dashboard pages.  
+  * Ensure safe error states.  
+* Manual Work:  
+  * Validate copy.  
+* Acceptance Criteria:  
+  * Core flows are completable even if SMS is missed.
 
 ---
 
-#### **Ticket 8.2: Dashboard Surfaces (Doc 15\)**
+# Phase 9: Observability And Readiness
 
-Cursor does
+## Ticket 9.1: Observability Stack
 
-* Profile editor, LinkUps views, post-event fallback, contact exchange UI, subscription entry.
+* Goal: Trace user actions end-to-end and debug failures quickly.  
+* Scope: Correlation IDs, Sentry instrumentation, structured logs, key metrics.  
+* Dependencies: Ticket 2.1.  
+* Agent Work:  
+  * Add correlation IDs across inbound, processing, outbound.  
+  * Add structured logging.  
+  * Add Sentry instrumentation.  
+* Manual Work:  
+  * Create Sentry projects for staging and production; set DSNs.  
+* Acceptance Criteria:  
+  * Forced error shows in Sentry with context tags.
 
-You do (manual)
+## Ticket 9.2: Alerts And Operational Dashboards
 
-* Validate copy.
-
-Verify before merge
-
-* Every core flow completable even if SMS missed
-
----
-
-### **Phase 9: Observability \+ Readiness**
-
-#### **Ticket 9.1: Observability Stack (Doc 05\)**
-
-Cursor does
-
-* Correlation IDs everywhere, Sentry instrumentation, structured logs, key metrics.
-
-You do (manual)
-
-* Create Sentry projects for staging/prod and set DSNs.
-
-Verify before merge
-
-* Forced error shows in Sentry with context tags
+* Goal: Alert on failures that break user experience.  
+* Scope: Alerts for Twilio webhook failures, runner failures, Stripe webhook failures.  
+* Dependencies: Ticket 9.1.  
+* Agent Work:  
+  * Define alert conditions.  
+  * Document dashboards.  
+* Manual Work:  
+  * Configure alert destinations.  
+* Acceptance Criteria:  
+  * Test alerts fire.
 
 ---
 
-### **Phase 10: E2E Testing And Go-Live Prep**
+# Phase 10: E2E Testing And Go-Live Prep
 
-#### **Ticket 10.1: Automated E2E Harness \+ Fixtures**
+## Ticket 10.1: Automated E2E Harness And Fixtures
 
-Cursor does
+* Goal: Run E2E tests against staging with minimal human input.  
+* Scope: Harness for web, API, simulated SMS posts; fixtures for deterministic cohorts.  
+* Dependencies: Ticket 8.2 and Ticket 2.4.  
+* Agent Work:  
+  * Implement E2E harness.  
+  * Add seed fixtures for test cohorts.  
+  * Add personality regression fixtures.  
+  * Integrate into CI where feasible.  
+* Manual Work:  
+  * Provide 10 to 15 real phone numbers for final manual validation.  
+* Acceptance Criteria:  
+  * E2E suite passes against staging.
 
-* E2E harness (web \+ API \+ simulated SMS webhook posts).  
-* Seed fixtures for predictable test cohorts.  
-* Add “personality regression” fixtures (outputs must meet constraints).
+## Ticket 10.2: Manual E2E Runbook, Staging Soak, Production Checklist
 
-You do (manual)
-
-* Provide 10–15 real phone numbers for final manual validation.
-
-Verify before merge
-
-* E2E suite passes in CI against staging
-
----
-
-#### **Ticket 10.2: Manual E2E Runbook \+ Production Readiness Checklist**
-
-Cursor does
-
-* Manual E2E runbook with real-phone steps.  
-* Go/no-go checklist: env diff, webhook endpoints, QStash topics, region activation.
-
-You do (manual)
-
-* Run staging soak with real phones.  
-* Confirm deliverability and ops readiness.
-
-Verify before production deploy
-
-* No critical errors in Sentry for soak window  
-* Runbook \+ checklist fully complete
+* Goal: A repeatable manual run with real phones plus readiness checklist.  
+* Scope: Manual runbook, staging soak procedure, go/no-go checklist.  
+* Dependencies: Ticket 10.1.  
+* Agent Work:  
+  * Create `docs/testing/manual-e2e-runbook.md`.  
+  * Create `docs/runbooks/staging-soak.md`.  
+  * Create `docs/runbooks/production-cutover-and-rollback.md`.  
+* Manual Work:  
+  * Run staging soak with real phones.  
+  * Confirm deliverability and ops readiness.  
+* Acceptance Criteria:  
+  * No critical errors during soak window.  
+  * Runbook and checklist complete.
 
 ---
 
-## **D. QStash Setup Checklist (Manual)**
+## Definition Of Done
 
-For any ticket that schedules jobs, you will:
+You are production ready when:
 
-* Create required QStash topics  
-* Add env vars for each environment  
-* Verify delivery to staging endpoint  
-* Ensure each job has:  
-  * stable `idempotency_key`  
-  * retry-safe handler  
-  * correlation ID logging
-
----
-
-## **E. Does The Schema Need To Change For Personality?**
-
-For MVP, you can ship personality without any schema changes by keeping prompts in `prompts/` and logging prompt versions via:
-
-* structured logs \+ Sentry tags (prompt\_id, prompt\_version\_hash)  
-* existing domain event/audit mechanisms
-
-Only add schema if you want any of these MVP+ features:
-
-* Admin-editable prompt text  
-* A/B prompt experiments stored server-side  
-* Long-term prompt performance analytics by version
-
-If you want that later, add a small table pair:
-
-* `llm_prompt_versions` (id, prompt\_id, version, hash, created\_at)  
-* `llm_call_traces` (id, prompt\_version\_id, model, tokens, latency\_ms, outcome, created\_at, plus encrypted payload fields)
-
-Keep it out of the critical path for launch unless you truly need it.
+* Staging passes automated E2E and manual runbook.  
+* Scheduled runner invocations are reliable and visible.  
+* Twilio inbound, outbound, and status callbacks are idempotent and retry-safe.  
+* Billing and entitlements are correct under replay.  
+* Safety holds reliably suppress risky actions.  
+* Alerts exist for the most user-impacting failures.  
+* Backups and restore steps are written and verified.
