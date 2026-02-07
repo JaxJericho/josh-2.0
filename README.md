@@ -160,13 +160,12 @@ Required env vars:
 
 Manual QStash setup (staging/prod):
 
-1. Use the schedule script:
-   `/Users/dorienmichaels/Tech Projects/josh-2.0/scripts/qstash-schedule-runner.mjs`
+1. Use the schedule script: `scripts/qstash-schedule-runner.mjs`
 2. Ensure the destination has no query params:
    `https://<project-ref>.supabase.co/functions/v1/twilio-outbound-runner`
 3. Set the cadence to every minute (`*/1 * * * *`).
 
-See `/Users/dorienmichaels/Tech Projects/josh-2.0/docs/runbooks/qstash-scheduling.md`.
+See `docs/runbooks/qstash-scheduling.md`.
 
 ## Opt-Out Reconciliation (Deferred)
 
