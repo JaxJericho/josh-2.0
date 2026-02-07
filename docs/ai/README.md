@@ -36,9 +36,7 @@ Read these in order before making changes:
 
 * Twilio: `docs/runbooks/` (see Twilio-related runbooks)  
 * Stripe: `docs/runbooks/` (see Stripe-related runbooks)  
-* Scheduling:  
-  * Legacy: `docs/runbooks/qstash-scheduling.md` and `scripts/qstash-schedule-runner.mjs`  
-  * Current direction: follow the build plan (Vercel Cron). Do not add new QStash work unless a ticket explicitly requires it.
+* Scheduling: follow the build plan (Vercel Cron). Do not introduce alternative schedulers unless a ticket explicitly requires it.
 
 ## Safety And Secrets
 
@@ -61,3 +59,22 @@ Every ticket PR must include:
 * Local verification commands run  
 * Staging verification steps (if applicable)  
 * Manual dashboard steps (if applicable)
+
+## Templates (Use These)
+
+Use these templates to keep agent work consistent and low-risk:
+
+* `docs/ai/definitions.md` — glossary for core terms  
+* `docs/ai/ticket-template.md` — standard ticket format  
+* `docs/ai/prompt-template.md` — canonical prompt template  
+* `docs/ai/claude-code-template.md` — Claude Code prompt scaffold  
+* `docs/ai/codex-template.md` — Codex prompt scaffold  
+* `.github/pull_request_template.md` — required PR format
+
+## Which Template To Use When
+
+* Starting a new ticket: `docs/ai/prompt-template.md`  
+* Writing a ticket brief: `docs/ai/ticket-template.md`  
+* Defining terms: `docs/ai/definitions.md`  
+* Running Claude Code: `docs/ai/claude-code-template.md`  
+* Running Codex: `docs/ai/codex-template.md`

@@ -20,6 +20,15 @@
 - [ ] pnpm test
 - [ ] pnpm build
 
+## Env Vars (Names Only)
+
+- Added/changed:
+
+## Migrations (If Any)
+
+- Added (filenames):
+- Applied: staging / prod / not applied
+
 ## Manual Tasks Required (If Any)
 
 - [ ] None
