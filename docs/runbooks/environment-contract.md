@@ -5,6 +5,8 @@ It focuses on endpoints, wiring, and where configuration lives.
 
 For the full environment variable catalog and rules, see:
 - docs/architecture/environment-variables.md
+For secrets handling and rotation rules, see:
+- docs/runbooks/secrets-and-rotation.md
 
 ## Environments
 
