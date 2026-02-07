@@ -21,6 +21,7 @@ Constraints:
 - Minimal scoped changes only
 - No broad refactors
 - Do not print secrets
+- Use safe env fingerprints only (set/unset, length, sha256 prefix)
 - Docs/templates only (if applicable)
 - No external dependencies
 

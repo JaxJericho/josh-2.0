@@ -37,6 +37,7 @@ Read these in order before making changes:
 * Twilio: `docs/runbooks/` (see Twilio-related runbooks)  
 * Stripe: `docs/runbooks/` (see Stripe-related runbooks)  
 * Scheduling: follow the build plan (Vercel Cron). Do not introduce alternative schedulers unless a ticket explicitly requires it.
+* Secrets and rotation: `docs/runbooks/secrets-and-rotation.md`
 
 ## Safety And Secrets
 
