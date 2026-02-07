@@ -2,10 +2,14 @@
   "name": "josh-2-0",
   "private": true,
   "scripts": {
+    "db:diff": "supabase db diff",
+    "db:pull": "supabase db pull",
+    "db:push": "supabase db push",
     "db:reset": "supabase db reset",
     "db:seed": "psql \"${SUPABASE_DB_URL:-postgresql://postgres:postgres@127.0.0.1:54422/postgres}\" -f supabase/seed.sql",
     "db:migrate": "supabase migration up",
     "db:gen-types": "supabase gen types typescript --local > supabase/types/database.ts",
+    "db:verify-types": "node scripts/verify-types.mjs",
     "doctor": "node scripts/doctor.mjs",
     "env:fingerprint": "node scripts/print-env-fingerprint.mjs",
     "build": "echo \"build placeholder (no app yet)\""

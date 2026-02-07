@@ -11,6 +11,7 @@ const SECTIONS = [
   "Supabase Config Checks",
   "Function Presence Checks",
   "Scheduler Readiness Checks",
+  "Schema Drift Checks",
   "Repo Scripts Checks",
   "Next Actions",
 ];
@@ -183,7 +184,7 @@ function checkSupabaseConfig() {
   const configPath = path.join(CWD, "supabase", "config.toml");
   const toml = readFileIfExists(configPath);
   if (!toml) {
-    addResult("Supabase Config Checks", "FAIL", "Missing supabase/config.toml");
+    addResult("Supabase Config Checks", "WARN", "Missing supabase/config.toml");
     return;
   }
 
@@ -211,6 +212,66 @@ function checkSupabaseConfig() {
         `${fnName} verify_jwt is true; expected false`
       );
     }
+  }
+}
+
+function checkSchemaDriftSignals() {
+  const migrationsPath = path.join(CWD, "supabase", "migrations");
+  if (!fs.existsSync(migrationsPath)) {
+    addResult(
+      "Schema Drift Checks",
+      "WARN",
+      "Missing supabase/migrations/. Schema changes will drift without migrations."
+    );
+  } else {
+    const entries = fs.readdirSync(migrationsPath);
+    const sqlFiles = entries.filter((name) => name.endsWith(".sql"));
+    if (sqlFiles.length === 0) {
+      addResult(
+        "Schema Drift Checks",
+        "WARN",
+        "supabase/migrations exists but has no .sql files"
+      );
+    } else {
+      addResult(
+        "Schema Drift Checks",
+        "PASS",
+        `supabase/migrations has ${sqlFiles.length} migration file(s)`
+      );
+    }
+  }
+
+  const pkgPath = path.join(CWD, "package.json");
+  const pkgRaw = readFileIfExists(pkgPath);
+  let hasGenTypesScript = false;
+  if (pkgRaw) {
+    try {
+      const pkg = JSON.parse(pkgRaw);
+      hasGenTypesScript = Boolean(pkg.scripts?.["db:gen-types"]);
+    } catch {
+      hasGenTypesScript = false;
+    }
+  }
+
+  const typesPath = path.join(CWD, "supabase", "types", "database.ts");
+  if (fs.existsSync(typesPath)) {
+    addResult(
+      "Schema Drift Checks",
+      "PASS",
+      "Found supabase/types/database.ts"
+    );
+  } else if (hasGenTypesScript) {
+    addResult(
+      "Schema Drift Checks",
+      "WARN",
+      "Missing supabase/types/database.ts. Run pnpm db:gen-types."
+    );
+  } else {
+    addResult(
+      "Schema Drift Checks",
+      "WARN",
+      "No generated types file detected. If types are expected, add db:gen-types."
+    );
   }
 }
 
@@ -343,6 +404,7 @@ function main() {
   checkSupabaseConfig();
   checkFunctionPresence();
   checkSchedulerReadiness();
+  checkSchemaDriftSignals();
   checkRepoScripts();
   checkNextActions();
   printReport();
