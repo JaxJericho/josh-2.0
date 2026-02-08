@@ -100,6 +100,19 @@ Deprecated:
 
 ---
 
+## Observability (Sentry)
+
+### Server Runtime
+
+- SENTRY_DSN
+- SENTRY_ENVIRONMENT
+
+### Public (Build-Time)
+
+- NEXT_PUBLIC_SENTRY_DSN
+
+---
+
 ## Local Development Rules
 
 - Local uses sandbox credentials only

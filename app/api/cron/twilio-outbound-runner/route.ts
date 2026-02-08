@@ -1,4 +1,10 @@
 import crypto from "crypto";
+import * as Sentry from "@sentry/nextjs";
+import {
+  generateRequestId,
+  isStaging,
+  logEvent,
+} from "../../../lib/observability";
 
 type ErrorBody = { error: string };
 
@@ -23,23 +29,65 @@ function jsonResponse(body: ErrorBody, status: number): Response {
 }
 
 async function handleCron(request: Request): Promise<Response> {
+  const start = Date.now();
+  const requestId = request.headers.get("x-request-id") ?? generateRequestId();
+  const handler = "api/cron/twilio-outbound-runner";
+
   const cronSecret = process.env.CRON_SECRET;
   if (!isSet(cronSecret)) {
+    logEvent({
+      level: "error",
+      event: "cron.missing_secret",
+      handler,
+      request_id: requestId,
+    });
     return jsonResponse({ error: "Missing CRON_SECRET" }, 500);
   }
 
   const authHeader = request.headers.get("authorization") ?? "";
   const expected = `Bearer ${cronSecret}`;
   if (!timingSafeEqual(authHeader, expected)) {
+    logEvent({
+      level: "warn",
+      event: "cron.unauthorized",
+      handler,
+      request_id: requestId,
+    });
     return jsonResponse({ error: "Unauthorized" }, 401);
+  }
+
+  if (isStaging() && request.headers.get("x-sentry-test") === "1") {
+    const error = new Error("Sentry test event (staging only)");
+    Sentry.captureException(error, {
+      tags: { category: "sms_outbound" },
+    });
+    logEvent({
+      level: "warn",
+      event: "cron.sentry_test",
+      handler,
+      request_id: requestId,
+    });
+    return jsonResponse({ error: "Sentry test event sent" }, 500);
   }
 
   const runnerUrl = process.env.STAGING_RUNNER_URL;
   if (!isSet(runnerUrl)) {
+    logEvent({
+      level: "error",
+      event: "cron.missing_runner_url",
+      handler,
+      request_id: requestId,
+    });
     return jsonResponse({ error: "Missing STAGING_RUNNER_URL" }, 500);
   }
 
   if (runnerUrl.includes("?")) {
+    logEvent({
+      level: "warn",
+      event: "cron.runner_url_invalid",
+      handler,
+      request_id: requestId,
+    });
     return jsonResponse(
       { error: "Runner URL must not include query params" },
       400
@@ -48,6 +96,12 @@ async function handleCron(request: Request): Promise<Response> {
 
   const runnerSecret = process.env.STAGING_RUNNER_SECRET;
   if (!isSet(runnerSecret)) {
+    logEvent({
+      level: "error",
+      event: "cron.missing_runner_secret",
+      handler,
+      request_id: requestId,
+    });
     return jsonResponse({ error: "Missing STAGING_RUNNER_SECRET" }, 500);
   }
 
@@ -59,6 +113,15 @@ async function handleCron(request: Request): Promise<Response> {
       body: JSON.stringify({ runner_secret: runnerSecret }),
     });
   } catch {
+    logEvent({
+      level: "error",
+      event: "cron.runner_unreachable",
+      handler,
+      request_id: requestId,
+    });
+    Sentry.captureException(new Error("Failed to reach runner"), {
+      tags: { category: "sms_outbound" },
+    });
     return jsonResponse({ error: "Failed to reach runner" }, 502);
   }
 
@@ -66,11 +129,21 @@ async function handleCron(request: Request): Promise<Response> {
     upstreamResponse.headers.get("content-type") ?? "text/plain; charset=utf-8";
   const bodyText = await upstreamResponse.text();
 
+  logEvent({
+    level: "info",
+    event: "cron.runner_response",
+    handler,
+    request_id: requestId,
+    status_code: upstreamResponse.status,
+    duration_ms: Date.now() - start,
+  });
+
   return new Response(bodyText, {
     status: upstreamResponse.status,
     headers: {
       "content-type": contentType,
       "cache-control": "no-store",
+      "x-request-id": requestId,
     },
   });
 }
