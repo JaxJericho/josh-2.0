@@ -43,3 +43,5 @@ temp/
 
 # Codex
 .codex/
+.vercel
+.env*.local
