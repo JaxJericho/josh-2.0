@@ -75,7 +75,7 @@ Notes:
 - `SMS_BODY_ENCRYPTION_KEY` is the passphrase used by pgcrypto (`pgp_sym_encrypt`) for SMS body encryption.
 - `PROJECT_REF` is required for Twilio signature validation when `x-forwarded-host` is missing.
 - `TWILIO_FROM_NUMBER` is required if `TWILIO_MESSAGING_SERVICE_SID` is not set.
-- `TWILIO_STATUS_CALLBACK_URL` is optional (defaults to `https://<project-ref>.supabase.co/functions/v1/twilio-status-callback`).
+- `TWILIO_STATUS_CALLBACK_URL` must point to the active status callback endpoint (recommended: `https://<vercel-base-url>/api/webhooks/twilio/status`).
 - `QSTASH_CURRENT_SIGNING_KEY` and `QSTASH_NEXT_SIGNING_KEY` are used to verify QStash signatures (supporting key rotation).
 - `QSTASH_RUNNER_SECRET` is required for body-token auth when signature headers are missing.
 - `QSTASH_AUTH_DEBUG` is an optional temporary flag; set to `1` to include auth diagnostics in 401 responses from the outbound runner.
