@@ -34,6 +34,80 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_users: {
+        Row: {
+          created_at: string
+          email: string
+          id: string
+          role: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          id?: string
+          role: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          id?: string
+          role?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      audit_log: {
+        Row: {
+          action: string
+          admin_user_id: string | null
+          correlation_id: string | null
+          created_at: string
+          id: string
+          idempotency_key: string | null
+          payload: Json
+          reason: string | null
+          target_id: string | null
+          target_type: string
+          updated_at: string
+        }
+        Insert: {
+          action: string
+          admin_user_id?: string | null
+          correlation_id?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string | null
+          payload?: Json
+          reason?: string | null
+          target_id?: string | null
+          target_type: string
+          updated_at?: string
+        }
+        Update: {
+          action?: string
+          admin_user_id?: string | null
+          correlation_id?: string | null
+          created_at?: string
+          id?: string
+          idempotency_key?: string | null
+          payload?: Json
+          reason?: string | null
+          target_id?: string | null
+          target_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_admin_user_id_fkey"
+            columns: ["admin_user_id"]
+            isOneToOne: false
+            referencedRelation: "admin_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_exchange_choices: {
         Row: {
           captured_at: string
@@ -179,12 +253,81 @@ export type Database = {
           },
         ]
       }
+      conversation_events: {
+        Row: {
+          conversation_session_id: string
+          correlation_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          idempotency_key: string | null
+          payload: Json
+          profile_id: string | null
+          step_token: string | null
+          twilio_message_sid: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          conversation_session_id: string
+          correlation_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          idempotency_key?: string | null
+          payload?: Json
+          profile_id?: string | null
+          step_token?: string | null
+          twilio_message_sid?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          conversation_session_id?: string
+          correlation_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          idempotency_key?: string | null
+          payload?: Json
+          profile_id?: string | null
+          step_token?: string | null
+          twilio_message_sid?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_events_conversation_session_id_fkey"
+            columns: ["conversation_session_id"]
+            isOneToOne: false
+            referencedRelation: "conversation_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_events_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversation_events_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation_sessions: {
         Row: {
           created_at: string
+          current_step_id: string | null
           expires_at: string | null
           id: string
           last_inbound_message_sid: string | null
+          linkup_id: string | null
           mode: Database["public"]["Enums"]["conversation_mode"]
           state_token: string
           updated_at: string
@@ -192,9 +335,11 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          current_step_id?: string | null
           expires_at?: string | null
           id?: string
           last_inbound_message_sid?: string | null
+          linkup_id?: string | null
           mode?: Database["public"]["Enums"]["conversation_mode"]
           state_token?: string
           updated_at?: string
@@ -202,9 +347,11 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          current_step_id?: string | null
           expires_at?: string | null
           id?: string
           last_inbound_message_sid?: string | null
+          linkup_id?: string | null
           mode?: Database["public"]["Enums"]["conversation_mode"]
           state_token?: string
           updated_at?: string
@@ -212,9 +359,66 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "conversation_sessions_linkup_id_fkey"
+            columns: ["linkup_id"]
+            isOneToOne: false
+            referencedRelation: "linkups"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "conversation_sessions_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: true
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      entitlement_events: {
+        Row: {
+          created_at: string
+          entitlement_type: string
+          event_type: string
+          id: string
+          idempotency_key: string
+          metadata: Json
+          occurred_at: string
+          quantity: number | null
+          source: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          entitlement_type: string
+          event_type: string
+          id?: string
+          idempotency_key: string
+          metadata?: Json
+          occurred_at?: string
+          quantity?: number | null
+          source?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          entitlement_type?: string
+          event_type?: string
+          id?: string
+          idempotency_key?: string
+          metadata?: Json
+          occurred_at?: string
+          quantity?: number | null
+          source?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "entitlement_events_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
@@ -231,6 +435,7 @@ export type Database = {
           quantity: number | null
           reason: string | null
           source: string | null
+          updated_at: string
           user_id: string
         }
         Insert: {
@@ -243,6 +448,7 @@ export type Database = {
           quantity?: number | null
           reason?: string | null
           source?: string | null
+          updated_at?: string
           user_id: string
         }
         Update: {
@@ -255,6 +461,7 @@ export type Database = {
           quantity?: number | null
           reason?: string | null
           source?: string | null
+          updated_at?: string
           user_id?: string
         }
         Relationships: [
@@ -367,6 +574,54 @@ export type Database = {
           },
         ]
       }
+      keyword_rules: {
+        Row: {
+          action: Database["public"]["Enums"]["keyword_rule_action"]
+          created_at: string
+          hold_type: Database["public"]["Enums"]["safety_hold_type"] | null
+          id: string
+          is_active: boolean
+          keyword: string
+          match_type: Database["public"]["Enums"]["keyword_match_type"]
+          metadata: Json
+          response_template: string | null
+          rule_set: string
+          severity: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          action: Database["public"]["Enums"]["keyword_rule_action"]
+          created_at?: string
+          hold_type?: Database["public"]["Enums"]["safety_hold_type"] | null
+          id?: string
+          is_active?: boolean
+          keyword: string
+          match_type?: Database["public"]["Enums"]["keyword_match_type"]
+          metadata?: Json
+          response_template?: string | null
+          rule_set?: string
+          severity: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          action?: Database["public"]["Enums"]["keyword_rule_action"]
+          created_at?: string
+          hold_type?: Database["public"]["Enums"]["safety_hold_type"] | null
+          id?: string
+          is_active?: boolean
+          keyword?: string
+          match_type?: Database["public"]["Enums"]["keyword_match_type"]
+          metadata?: Json
+          response_template?: string | null
+          rule_set?: string
+          severity?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: []
+      }
       learning_jobs: {
         Row: {
           completed_at: string | null
@@ -468,6 +723,7 @@ export type Database = {
           linkup_id: string
           payload: Json
           to_state: string | null
+          updated_at: string
         }
         Insert: {
           correlation_id?: string | null
@@ -479,6 +735,7 @@ export type Database = {
           linkup_id: string
           payload?: Json
           to_state?: string | null
+          updated_at?: string
         }
         Update: {
           correlation_id?: string | null
@@ -490,6 +747,7 @@ export type Database = {
           linkup_id?: string
           payload?: Json
           to_state?: string | null
+          updated_at?: string
         }
         Relationships: [
           {
@@ -517,6 +775,7 @@ export type Database = {
           selected_option: string | null
           sent_at: string | null
           state: Database["public"]["Enums"]["invite_state"]
+          status: Database["public"]["Enums"]["invite_state"] | null
           updated_at: string
         }
         Insert: {
@@ -534,6 +793,7 @@ export type Database = {
           selected_option?: string | null
           sent_at?: string | null
           state?: Database["public"]["Enums"]["invite_state"]
+          status?: Database["public"]["Enums"]["invite_state"] | null
           updated_at?: string
         }
         Update: {
@@ -551,6 +811,7 @@ export type Database = {
           selected_option?: string | null
           sent_at?: string | null
           state?: Database["public"]["Enums"]["invite_state"]
+          status?: Database["public"]["Enums"]["invite_state"] | null
           updated_at?: string
         }
         Relationships: [
@@ -566,6 +827,57 @@ export type Database = {
             columns: ["linkup_id"]
             isOneToOne: false
             referencedRelation: "linkups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      linkup_members: {
+        Row: {
+          created_at: string
+          id: string
+          joined_at: string
+          left_at: string | null
+          linkup_id: string
+          role: Database["public"]["Enums"]["linkup_member_role"]
+          status: Database["public"]["Enums"]["linkup_member_status"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          linkup_id: string
+          role: Database["public"]["Enums"]["linkup_member_role"]
+          status?: Database["public"]["Enums"]["linkup_member_status"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          linkup_id?: string
+          role?: Database["public"]["Enums"]["linkup_member_role"]
+          status?: Database["public"]["Enums"]["linkup_member_status"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "linkup_members_linkup_id_fkey"
+            columns: ["linkup_id"]
+            isOneToOne: false
+            referencedRelation: "linkups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "linkup_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
             referencedColumns: ["id"]
           },
         ]
@@ -685,6 +997,7 @@ export type Database = {
           max_size: number
           min_size: number
           region_id: string
+          scheduled_at: string | null
           state: Database["public"]["Enums"]["linkup_state"]
           updated_at: string
           venue: Json | null
@@ -704,6 +1017,7 @@ export type Database = {
           max_size?: number
           min_size?: number
           region_id: string
+          scheduled_at?: string | null
           state?: Database["public"]["Enums"]["linkup_state"]
           updated_at?: string
           venue?: Json | null
@@ -723,6 +1037,7 @@ export type Database = {
           max_size?: number
           min_size?: number
           region_id?: string
+          scheduled_at?: string | null
           state?: Database["public"]["Enums"]["linkup_state"]
           updated_at?: string
           venue?: Json | null
@@ -746,6 +1061,7 @@ export type Database = {
       }
       match_candidates: {
         Row: {
+          candidate_profile_id: string | null
           candidate_user_id: string
           component_scores: Json
           created_at: string
@@ -755,9 +1071,12 @@ export type Database = {
           match_run_id: string
           mode: Database["public"]["Enums"]["match_mode"]
           passed_hard_filters: boolean
+          subject_profile_id: string | null
           subject_user_id: string
+          updated_at: string
         }
         Insert: {
+          candidate_profile_id?: string | null
           candidate_user_id: string
           component_scores?: Json
           created_at?: string
@@ -767,9 +1086,12 @@ export type Database = {
           match_run_id: string
           mode: Database["public"]["Enums"]["match_mode"]
           passed_hard_filters?: boolean
+          subject_profile_id?: string | null
           subject_user_id: string
+          updated_at?: string
         }
         Update: {
+          candidate_profile_id?: string | null
           candidate_user_id?: string
           component_scores?: Json
           created_at?: string
@@ -779,9 +1101,18 @@ export type Database = {
           match_run_id?: string
           mode?: Database["public"]["Enums"]["match_mode"]
           passed_hard_filters?: boolean
+          subject_profile_id?: string | null
           subject_user_id?: string
+          updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "match_candidates_candidate_profile_id_fkey"
+            columns: ["candidate_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "match_candidates_candidate_user_id_fkey"
             columns: ["candidate_user_id"]
@@ -794,6 +1125,13 @@ export type Database = {
             columns: ["match_run_id"]
             isOneToOne: false
             referencedRelation: "match_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_candidates_subject_profile_id_fkey"
+            columns: ["subject_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
           {
@@ -818,6 +1156,7 @@ export type Database = {
           run_key: string
           status: Database["public"]["Enums"]["match_run_status"]
           subject_user_id: string | null
+          updated_at: string
         }
         Insert: {
           completed_at?: string | null
@@ -831,6 +1170,7 @@ export type Database = {
           run_key: string
           status?: Database["public"]["Enums"]["match_run_status"]
           subject_user_id?: string | null
+          updated_at?: string
         }
         Update: {
           completed_at?: string | null
@@ -844,6 +1184,7 @@ export type Database = {
           run_key?: string
           status?: Database["public"]["Enums"]["match_run_status"]
           subject_user_id?: string | null
+          updated_at?: string
         }
         Relationships: [
           {
@@ -914,6 +1255,7 @@ export type Database = {
           profile_id: string
           source: string
           step_id: string | null
+          updated_at: string
           user_id: string
         }
         Insert: {
@@ -926,6 +1268,7 @@ export type Database = {
           profile_id: string
           source: string
           step_id?: string | null
+          updated_at?: string
           user_id: string
         }
         Update: {
@@ -938,6 +1281,7 @@ export type Database = {
           profile_id?: string
           source?: string
           step_id?: string | null
+          updated_at?: string
           user_id?: string
         }
         Relationships: [
@@ -963,13 +1307,17 @@ export type Database = {
           activity_patterns: Json
           boundaries: Json
           completed_at: string | null
+          completeness_percent: number
           created_at: string
           fingerprint: Json
           id: string
+          is_complete_mvp: boolean
           last_interview_step: string | null
           preferences: Json
           stale_at: string | null
           state: Database["public"]["Enums"]["profile_state"]
+          state_changed_at: string
+          status_reason: string | null
           updated_at: string
           user_id: string
         }
@@ -978,13 +1326,17 @@ export type Database = {
           activity_patterns?: Json
           boundaries?: Json
           completed_at?: string | null
+          completeness_percent?: number
           created_at?: string
           fingerprint?: Json
           id?: string
+          is_complete_mvp?: boolean
           last_interview_step?: string | null
           preferences?: Json
           stale_at?: string | null
           state?: Database["public"]["Enums"]["profile_state"]
+          state_changed_at?: string
+          status_reason?: string | null
           updated_at?: string
           user_id: string
         }
@@ -993,13 +1345,17 @@ export type Database = {
           activity_patterns?: Json
           boundaries?: Json
           completed_at?: string | null
+          completeness_percent?: number
           created_at?: string
           fingerprint?: Json
           id?: string
+          is_complete_mvp?: boolean
           last_interview_step?: string | null
           preferences?: Json
           stale_at?: string | null
           state?: Database["public"]["Enums"]["profile_state"]
+          state_changed_at?: string
+          status_reason?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -1099,7 +1455,7 @@ export type Database = {
           created_at: string
           created_by_admin_id: string | null
           expires_at: string | null
-          hold_type: string
+          hold_type: Database["public"]["Enums"]["safety_hold_type"]
           id: string
           idempotency_key: string | null
           reason: string | null
@@ -1111,7 +1467,7 @@ export type Database = {
           created_at?: string
           created_by_admin_id?: string | null
           expires_at?: string | null
-          hold_type: string
+          hold_type: Database["public"]["Enums"]["safety_hold_type"]
           id?: string
           idempotency_key?: string | null
           reason?: string | null
@@ -1123,7 +1479,7 @@ export type Database = {
           created_at?: string
           created_by_admin_id?: string | null
           expires_at?: string | null
-          hold_type?: string
+          hold_type?: Database["public"]["Enums"]["safety_hold_type"]
           id?: string
           idempotency_key?: string | null
           reason?: string | null
@@ -1149,6 +1505,7 @@ export type Database = {
           description: string | null
           id: string
           idempotency_key: string | null
+          incident_type: string | null
           linkup_id: string | null
           message_id: string | null
           reporter_user_id: string | null
@@ -1165,6 +1522,7 @@ export type Database = {
           description?: string | null
           id?: string
           idempotency_key?: string | null
+          incident_type?: string | null
           linkup_id?: string | null
           message_id?: string | null
           reporter_user_id?: string | null
@@ -1181,6 +1539,7 @@ export type Database = {
           description?: string | null
           id?: string
           idempotency_key?: string | null
+          incident_type?: string | null
           linkup_id?: string | null
           message_id?: string | null
           reporter_user_id?: string | null
@@ -1228,12 +1587,13 @@ export type Database = {
           body_tag: string | null
           correlation_id: string | null
           created_at: string
-          direction: string
+          direction: Database["public"]["Enums"]["sms_direction"]
           from_e164: string
           id: string
           key_version: number
           last_status_at: string | null
           media_count: number
+          profile_id: string | null
           status: string | null
           to_e164: string
           twilio_message_sid: string | null
@@ -1246,12 +1606,13 @@ export type Database = {
           body_tag?: string | null
           correlation_id?: string | null
           created_at?: string
-          direction: string
+          direction: Database["public"]["Enums"]["sms_direction"]
           from_e164: string
           id?: string
           key_version?: number
           last_status_at?: string | null
           media_count?: number
+          profile_id?: string | null
           status?: string | null
           to_e164: string
           twilio_message_sid?: string | null
@@ -1264,12 +1625,13 @@ export type Database = {
           body_tag?: string | null
           correlation_id?: string | null
           created_at?: string
-          direction?: string
+          direction?: Database["public"]["Enums"]["sms_direction"]
           from_e164?: string
           id?: string
           key_version?: number
           last_status_at?: string | null
           media_count?: number
+          profile_id?: string | null
           status?: string | null
           to_e164?: string
           twilio_message_sid?: string | null
@@ -1277,6 +1639,13 @@ export type Database = {
           user_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "sms_messages_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "sms_messages_user_id_fkey"
             columns: ["user_id"]
@@ -1323,7 +1692,8 @@ export type Database = {
           last_status_at: string | null
           next_attempt_at: string | null
           purpose: string
-          status: string
+          run_at: string | null
+          status: Database["public"]["Enums"]["job_state"]
           to_e164: string
           twilio_message_sid: string | null
           updated_at: string
@@ -1344,7 +1714,8 @@ export type Database = {
           last_status_at?: string | null
           next_attempt_at?: string | null
           purpose: string
-          status?: string
+          run_at?: string | null
+          status?: Database["public"]["Enums"]["job_state"]
           to_e164: string
           twilio_message_sid?: string | null
           updated_at?: string
@@ -1365,7 +1736,8 @@ export type Database = {
           last_status_at?: string | null
           next_attempt_at?: string | null
           purpose?: string
-          status?: string
+          run_at?: string | null
+          status?: Database["public"]["Enums"]["job_state"]
           to_e164?: string
           twilio_message_sid?: string | null
           updated_at?: string
@@ -1381,30 +1753,80 @@ export type Database = {
           },
         ]
       }
+      sms_status_callbacks: {
+        Row: {
+          error_code: string | null
+          error_message: string | null
+          id: string
+          message_sid: string
+          message_status: string
+          payload_fingerprint: string
+          provider_event_at: string | null
+          received_at: string
+          sms_message_id: string | null
+        }
+        Insert: {
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          message_sid: string
+          message_status: string
+          payload_fingerprint: string
+          provider_event_at?: string | null
+          received_at?: string
+          sms_message_id?: string | null
+        }
+        Update: {
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          message_sid?: string
+          message_status?: string
+          payload_fingerprint?: string
+          provider_event_at?: string | null
+          received_at?: string
+          sms_message_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sms_status_callbacks_sms_message_id_fkey"
+            columns: ["sms_message_id"]
+            isOneToOne: false
+            referencedRelation: "sms_messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stripe_events: {
         Row: {
+          created_at: string
           event_created_at: string
           event_id: string
           event_type: string
           id: string
           payload: Json
           received_at: string
+          updated_at: string
         }
         Insert: {
+          created_at?: string
           event_created_at: string
           event_id: string
           event_type: string
           id?: string
           payload: Json
           received_at?: string
+          updated_at?: string
         }
         Update: {
+          created_at?: string
           event_created_at?: string
           event_id?: string
           event_type?: string
           id?: string
           payload?: Json
           received_at?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -1414,18 +1836,21 @@ export type Database = {
           blocker_user_id: string
           created_at: string
           id: string
+          updated_at: string
         }
         Insert: {
           blocked_user_id: string
           blocker_user_id: string
           created_at?: string
           id?: string
+          updated_at?: string
         }
         Update: {
           blocked_user_id?: string
           blocker_user_id?: string
           created_at?: string
           id?: string
+          updated_at?: string
         }
         Relationships: [
           {
@@ -1537,6 +1962,7 @@ export type Database = {
           points: number
           reason: string | null
           strike_type: string
+          updated_at: string
           user_id: string
           window_end: string
           window_start: string
@@ -1547,6 +1973,7 @@ export type Database = {
           points: number
           reason?: string | null
           strike_type: string
+          updated_at?: string
           user_id: string
           window_end: string
           window_start: string
@@ -1557,6 +1984,7 @@ export type Database = {
           points?: number
           reason?: string | null
           strike_type?: string
+          updated_at?: string
           user_id?: string
           window_end?: string
           window_start?: string
@@ -1715,7 +2143,8 @@ export type Database = {
           last_status_at: string | null
           next_attempt_at: string | null
           purpose: string
-          status: string
+          run_at: string | null
+          status: Database["public"]["Enums"]["job_state"]
           to_e164: string
           twilio_message_sid: string | null
           updated_at: string
@@ -1746,6 +2175,9 @@ export type Database = {
         | "safety_hold"
       entitlement_source: "stripe" | "admin_override" | "reconciled"
       invite_state: "pending" | "accepted" | "declined" | "expired" | "closed"
+      job_state: "pending" | "sending" | "sent" | "failed" | "canceled"
+      keyword_match_type: "exact" | "contains" | "regex"
+      keyword_rule_action: "flag" | "hold" | "block" | "crisis_route"
       learning_job_status: "started" | "completed" | "failed"
       learning_signal_type:
         | "linkup_attendance_attended"
@@ -1761,6 +2193,13 @@ export type Database = {
         | "match_preview_expired"
         | "user_blocked_other"
         | "user_reported_other"
+      linkup_member_role: "initiator" | "participant"
+      linkup_member_status:
+        | "confirmed"
+        | "canceled"
+        | "no_show"
+        | "attended"
+        | "left"
       linkup_state:
         | "draft"
         | "broadcasting"
@@ -1778,7 +2217,13 @@ export type Database = {
         | "stale"
       region_state: "open" | "waitlisted" | "closed"
       safety_hold_status: "active" | "lifted" | "expired"
+      safety_hold_type:
+        | "match_hold"
+        | "linkup_hold"
+        | "contact_hold"
+        | "global_hold"
       safety_incident_status: "open" | "triaged" | "resolved" | "escalated"
+      sms_direction: "in" | "out"
       subscription_state:
         | "none"
         | "trialing"
@@ -1938,6 +2383,9 @@ export const Constants = {
       ],
       entitlement_source: ["stripe", "admin_override", "reconciled"],
       invite_state: ["pending", "accepted", "declined", "expired", "closed"],
+      job_state: ["pending", "sending", "sent", "failed", "canceled"],
+      keyword_match_type: ["exact", "contains", "regex"],
+      keyword_rule_action: ["flag", "hold", "block", "crisis_route"],
       learning_job_status: ["started", "completed", "failed"],
       learning_signal_type: [
         "linkup_attendance_attended",
@@ -1953,6 +2401,14 @@ export const Constants = {
         "match_preview_expired",
         "user_blocked_other",
         "user_reported_other",
+      ],
+      linkup_member_role: ["initiator", "participant"],
+      linkup_member_status: [
+        "confirmed",
+        "canceled",
+        "no_show",
+        "attended",
+        "left",
       ],
       linkup_state: [
         "draft",
@@ -1973,7 +2429,14 @@ export const Constants = {
       ],
       region_state: ["open", "waitlisted", "closed"],
       safety_hold_status: ["active", "lifted", "expired"],
+      safety_hold_type: [
+        "match_hold",
+        "linkup_hold",
+        "contact_hold",
+        "global_hold",
+      ],
       safety_incident_status: ["open", "triaged", "resolved", "escalated"],
+      sms_direction: ["in", "out"],
       subscription_state: [
         "none",
         "trialing",
