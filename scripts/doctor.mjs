@@ -1,412 +1,415 @@
 import fs from "fs";
 import path from "path";
-import crypto from "crypto";
 
 const CWD = process.cwd();
-const SECTIONS = [
-  "Summary",
-  "Env Sources",
-  "Env Var Fingerprints",
-  "URL Shape Checks",
-  "Supabase Config Checks",
-  "Function Presence Checks",
-  "Scheduler Readiness Checks",
-  "Schema Drift Checks",
-  "Repo Scripts Checks",
-  "Next Actions",
-];
+const CONTRACT_PATH = path.join(CWD, "docs", "runbooks", "environment-contract.md");
+const ENV_FILES = [".env.local", ".env"];
+const VALID_ENVS = new Set(["local", "staging", "production"]);
+const REQUIRED_ONE_OF = [["TWILIO_MESSAGING_SERVICE_SID", "TWILIO_FROM_NUMBER"]];
 
-const results = new Map();
+const results = [];
 let passCount = 0;
 let failCount = 0;
 let warnCount = 0;
 
-function addResult(section, status, message) {
-  if (!results.has(section)) {
-    results.set(section, []);
-  }
-  results.get(section).push({ status, message });
+function addResult(status, category, message) {
+  results.push({ status, category, message });
   if (status === "PASS") passCount += 1;
   if (status === "FAIL") failCount += 1;
   if (status === "WARN") warnCount += 1;
 }
 
-function sha256Prefix(value) {
-  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 8);
-}
-
 function isSet(value) {
-  return typeof value === "string" && value.length > 0;
+  return typeof value === "string" && value.trim().length > 0;
 }
 
-function readFileIfExists(filePath) {
+function fingerprint(value) {
+  if (!isSet(value)) {
+    return "unset";
+  }
+  const trimmed = value.trim();
+  const prefix = trimmed.slice(0, 4);
+  return `${prefix}... (len=${trimmed.length})`;
+}
+
+function parseDotEnvLine(line) {
+  if (!line || line.trim().length === 0) return null;
+  if (line.trim().startsWith("#")) return null;
+
+  const eq = line.indexOf("=");
+  if (eq <= 0) return null;
+
+  const key = line.slice(0, eq).trim();
+  if (!/^[A-Z0-9_]+$/.test(key)) return null;
+
+  let value = line.slice(eq + 1).trim();
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1);
+  }
+
+  return { key, value };
+}
+
+function loadLocalEnvFiles() {
+  for (const rel of ENV_FILES) {
+    const fullPath = path.join(CWD, rel);
+    if (!fs.existsSync(fullPath)) {
+      continue;
+    }
+
+    const raw = fs.readFileSync(fullPath, "utf8");
+    const lines = raw.split("\n");
+    let loaded = 0;
+
+    for (const line of lines) {
+      const parsed = parseDotEnvLine(line);
+      if (!parsed) continue;
+      if (!isSet(process.env[parsed.key])) {
+        process.env[parsed.key] = parsed.value;
+        loaded += 1;
+      }
+    }
+
+    addResult("PASS", "Env Sources", `Loaded ${loaded} vars from ${rel} (without overriding existing process.env)`);
+  }
+}
+
+function parseContractRows() {
+  if (!fs.existsSync(CONTRACT_PATH)) {
+    addResult("FAIL", "Contract", `Missing canonical contract: ${path.relative(CWD, CONTRACT_PATH)}`);
+    return [];
+  }
+
+  const raw = fs.readFileSync(CONTRACT_PATH, "utf8");
+  const lines = raw.split("\n");
+  const rows = [];
+  let section = "Unknown";
+
+  for (const line of lines) {
+    const header = line.match(/^###\s+(.+)$/);
+    if (header) {
+      section = header[1].trim();
+      continue;
+    }
+
+    if (!line.trim().startsWith("|")) {
+      continue;
+    }
+
+    const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+    if (cells.length < 6) {
+      continue;
+    }
+
+    if (cells[0] === "Name") {
+      continue;
+    }
+
+    const separatorCell = cells[0].replace(/[:\-\s]/g, "");
+    if (separatorCell.length === 0) {
+      continue;
+    }
+
+    const nameMatch = cells[0].match(/`([A-Z0-9_]+)`/);
+    if (!nameMatch) {
+      continue;
+    }
+
+    rows.push({
+      name: nameMatch[1],
+      required: cells[1],
+      usedBy: cells[2],
+      format: cells[3],
+      whereSet: cells[4],
+      notes: cells[5],
+      section,
+    });
+  }
+
+  addResult("PASS", "Contract", `Parsed ${rows.length} variable rows from ${path.relative(CWD, CONTRACT_PATH)}`);
+  return rows;
+}
+
+function envAliases(appEnv) {
+  if (appEnv === "production") return ["production", "prod"];
+  return [appEnv];
+}
+
+function appliesToEnv(row, appEnv) {
+  const where = row.whereSet.toLowerCase();
+  const aliases = envAliases(appEnv);
+
+  const hasEnvScope = aliases.some((alias) => where.includes(`${alias}:`));
+  if (!hasEnvScope) return false;
+
+  if (appEnv === "production" && /production:\s*not used|not used in prod runtime/.test(where)) {
+    return false;
+  }
+  if (appEnv === "staging" && /staging:\s*not used/.test(where)) {
+    return false;
+  }
+  if (appEnv === "local" && /local:\s*not used/.test(where)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isRequiredForEnv(row, appEnv) {
+  const required = row.required.toLowerCase().trim();
+  if (!required.startsWith("yes")) {
+    return false;
+  }
+
+  if (appEnv === "local" && /\bno\s*\(local\)/.test(required)) {
+    return false;
+  }
+  if (appEnv === "staging" && /\bno\s*\(staging\)/.test(required)) {
+    return false;
+  }
+  if (appEnv === "production" && /\bno\s*\((production|prod)\)/.test(required)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isConditionalRequirement(row) {
+  const text = `${row.required} ${row.usedBy} ${row.notes}`.toLowerCase();
+
+  return /near-term|planned|placeholder|only if|build-time optional|\boptional\b/.test(text);
+}
+
+function isLikelyUrlVar(name) {
+  return name.endsWith("_URL") || name === "APP_BASE_URL" || name.includes("WEBHOOK") || name.includes("CALLBACK");
+}
+
+function validateUrlFormat(name, value) {
   try {
-    return fs.readFileSync(filePath, "utf8");
+    const parsed = new URL(value);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      addResult("FAIL", "Format", `${name} must use http or https scheme.`);
+      return;
+    }
+
+    if (name.endsWith("RUNNER_URL") && parsed.search.length > 0) {
+      addResult("FAIL", "Format", `${name} must not include query params.`);
+      return;
+    }
+
+    addResult("PASS", "Format", `${name} is a valid URL (${parsed.origin}).`);
   } catch {
+    addResult("FAIL", "Format", `${name} is not a valid URL.`);
+  }
+}
+
+function detectEnvironment() {
+  const raw = process.env.APP_ENV;
+  if (!isSet(raw)) {
+    addResult("FAIL", "Environment", "APP_ENV is required and must be one of: local, staging, production.");
     return null;
   }
-}
 
-function checkEnvSources() {
-  const envPath = path.join(CWD, ".env");
-  const envLocalPath = path.join(CWD, ".env.local");
-
-  if (fs.existsSync(envPath)) {
-    addResult("Env Sources", "PASS", "Found .env");
-  } else {
-    addResult("Env Sources", "WARN", "Missing .env");
+  const env = raw.trim().toLowerCase();
+  if (!VALID_ENVS.has(env)) {
+    addResult("FAIL", "Environment", `APP_ENV='${raw}' is invalid. Expected one of: local, staging, production.`);
+    return null;
   }
 
-  if (fs.existsSync(envLocalPath)) {
-    addResult("Env Sources", "PASS", "Found .env.local");
-  } else {
-    addResult("Env Sources", "WARN", "Missing .env.local");
-  }
-
-  const envKeys = Object.keys(process.env).length;
-  addResult("Env Sources", "PASS", `process.env keys detected: ${envKeys}`);
+  addResult("PASS", "Environment", `Detected environment: ${env}`);
+  return env;
 }
 
-const FINGERPRINT_VARS = [
-  "CRON_SECRET",
-  "LOCAL_RUNNER_URL",
-  "LOCAL_RUNNER_SECRET",
-  "STAGING_RUNNER_URL",
-  "STAGING_RUNNER_SECRET",
-  "PRODUCTION_RUNNER_URL",
-  "PRODUCTION_RUNNER_SECRET",
-  "SUPABASE_FUNCTIONS_URL",
-  "SUPABASE_URL",
-  "SUPABASE_ANON_KEY",
-  "SUPABASE_SERVICE_ROLE_KEY",
-  "PROJECT_REF",
-  "TWILIO_ACCOUNT_SID",
-  "TWILIO_AUTH_TOKEN",
-  "TWILIO_MESSAGING_SERVICE_SID",
-  "TWILIO_FROM_NUMBER",
-  "TWILIO_STATUS_CALLBACK_URL",
-  "SMS_BODY_ENCRYPTION_KEY",
-  "STRIPE_SECRET_KEY",
-  "STRIPE_WEBHOOK_SECRET",
-];
+function checkRequiredVars(rows, appEnv) {
+  const inScope = rows.filter((row) => appliesToEnv(row, appEnv));
+  const required = inScope.filter((row) => isRequiredForEnv(row, appEnv));
+  const hardRequired = required.filter((row) => !isConditionalRequirement(row));
+  const conditional = required.filter((row) => isConditionalRequirement(row));
 
-function checkEnvFingerprints() {
-  for (const name of FINGERPRINT_VARS) {
-    const value = process.env[name];
-    const set = isSet(value);
-    const length = set ? value.length : 0;
-    const prefix = set ? sha256Prefix(value) : "n/a";
-    const status = set ? "PASS" : "WARN";
-    addResult(
-      "Env Var Fingerprints",
-      status,
-      `${name} is_set=${set} length=${length} sha256_8=${prefix}`
-    );
+  addResult("PASS", "Contract", `Derived ${hardRequired.length} hard-required and ${conditional.length} conditional-required vars for ${appEnv}.`);
+
+  const hardByName = new Map();
+  for (const row of hardRequired) {
+    if (!hardByName.has(row.name)) {
+      hardByName.set(row.name, row);
+    }
   }
-}
 
-const RUNNER_URL_VARS = [
-  "LOCAL_RUNNER_URL",
-  "STAGING_RUNNER_URL",
-  "PRODUCTION_RUNNER_URL",
-];
+  for (const [left, right] of REQUIRED_ONE_OF) {
+    const leftRow = hardByName.get(left);
+    const rightRow = hardByName.get(right);
+    if (!leftRow && !rightRow) {
+      continue;
+    }
 
-function checkUrlShapes() {
-  for (const name of RUNNER_URL_VARS) {
+    hardByName.delete(left);
+    hardByName.delete(right);
+
+    const leftValue = process.env[left];
+    const rightValue = process.env[right];
+    if (!isSet(leftValue) && !isSet(rightValue)) {
+      addResult(
+        "FAIL",
+        "Required Vars",
+        `${left} or ${right} must be set for ${appEnv}. (${left}=${fingerprint(leftValue)}, ${right}=${fingerprint(rightValue)})`
+      );
+    } else {
+      const winner = isSet(leftValue) ? left : right;
+      addResult("PASS", "Required Vars", `One-of requirement satisfied by ${winner} (${fingerprint(process.env[winner])}).`);
+    }
+  }
+
+  for (const [name, row] of hardByName.entries()) {
     const value = process.env[name];
     if (!isSet(value)) {
-      addResult("URL Shape Checks", "WARN", `${name} is not set`);
+      addResult(
+        "FAIL",
+        "Required Vars",
+        `${name} is required for ${appEnv}. Where set: ${row.whereSet}`
+      );
       continue;
     }
-    if (value.includes("?")) {
-      addResult(
-        "URL Shape Checks",
-        "FAIL",
-        `${name} contains query params. Remove everything after ?`
-      );
+
+    addResult("PASS", "Required Vars", `${name} is set (${fingerprint(value)}).`);
+  }
+
+  for (const row of conditional) {
+    const value = process.env[row.name];
+    if (isSet(value)) {
+      addResult("PASS", "Conditional Vars", `${row.name} is set (${fingerprint(value)}).`);
     } else {
-      addResult("URL Shape Checks", "PASS", `${name} has no query params`);
+      addResult("WARN", "Conditional Vars", `${row.name} is conditionally required (${row.required}). Set it when enabling: ${row.usedBy}`);
     }
   }
+}
 
-  const functionsBase = process.env.SUPABASE_FUNCTIONS_URL;
-  if (!isSet(functionsBase)) {
-    addResult("URL Shape Checks", "WARN", "SUPABASE_FUNCTIONS_URL is not set");
-    return;
-  }
+async function checkSupabaseConnectivity() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
 
-  const pattern = /^https:\/\/[a-z0-9-]+\.supabase\.co\/functions\/v1\/?$/;
-  if (pattern.test(functionsBase)) {
+  if (!isSet(supabaseUrl) || !isSet(anonKey)) {
     addResult(
-      "URL Shape Checks",
-      "PASS",
-      "SUPABASE_FUNCTIONS_URL matches expected base format"
-    );
-  } else {
-    addResult(
-      "URL Shape Checks",
       "FAIL",
-      "SUPABASE_FUNCTIONS_URL format is invalid. Expected https://<ref>.supabase.co/functions/v1"
-    );
-  }
-}
-
-function parseVerifyJwtValues(toml) {
-  const targetFunctions = new Set([
-    "twilio-inbound",
-    "twilio-status-callback",
-  ]);
-  const values = new Map();
-  let currentFunction = null;
-
-  for (const rawLine of toml.split("\n")) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-
-    const sectionMatch = line.match(/^\[functions\.([\w-]+)\]$/);
-    if (sectionMatch) {
-      const name = sectionMatch[1];
-      currentFunction = targetFunctions.has(name) ? name : null;
-      continue;
-    }
-
-    if (!currentFunction) continue;
-    const verifyMatch = line.match(/^verify_jwt\s*=\s*(true|false)\s*$/);
-    if (verifyMatch) {
-      values.set(currentFunction, verifyMatch[1] === "true");
-    }
-  }
-
-  return values;
-}
-
-function checkSupabaseConfig() {
-  const configPath = path.join(CWD, "supabase", "config.toml");
-  const toml = readFileIfExists(configPath);
-  if (!toml) {
-    addResult("Supabase Config Checks", "WARN", "Missing supabase/config.toml");
-    return;
-  }
-
-  const values = parseVerifyJwtValues(toml);
-  for (const fnName of ["twilio-inbound", "twilio-status-callback"]) {
-    if (!values.has(fnName)) {
-      addResult(
-        "Supabase Config Checks",
-        "WARN",
-        `Missing verify_jwt for ${fnName}. Add [functions.${fnName}] with verify_jwt = false`
-      );
-      continue;
-    }
-    const enabled = values.get(fnName);
-    if (enabled === false) {
-      addResult(
-        "Supabase Config Checks",
-        "PASS",
-        `${fnName} verify_jwt is false`
-      );
-    } else {
-      addResult(
-        "Supabase Config Checks",
-        "WARN",
-        `${fnName} verify_jwt is true; expected false`
-      );
-    }
-  }
-}
-
-function checkSchemaDriftSignals() {
-  const migrationsPath = path.join(CWD, "supabase", "migrations");
-  if (!fs.existsSync(migrationsPath)) {
-    addResult(
-      "Schema Drift Checks",
-      "WARN",
-      "Missing supabase/migrations/. Schema changes will drift without migrations."
-    );
-  } else {
-    const entries = fs.readdirSync(migrationsPath);
-    const sqlFiles = entries.filter((name) => name.endsWith(".sql"));
-    if (sqlFiles.length === 0) {
-      addResult(
-        "Schema Drift Checks",
-        "WARN",
-        "supabase/migrations exists but has no .sql files"
-      );
-    } else {
-      addResult(
-        "Schema Drift Checks",
-        "PASS",
-        `supabase/migrations has ${sqlFiles.length} migration file(s)`
-      );
-    }
-  }
-
-  const pkgPath = path.join(CWD, "package.json");
-  const pkgRaw = readFileIfExists(pkgPath);
-  let hasGenTypesScript = false;
-  if (pkgRaw) {
-    try {
-      const pkg = JSON.parse(pkgRaw);
-      hasGenTypesScript = Boolean(pkg.scripts?.["db:gen-types"]);
-    } catch {
-      hasGenTypesScript = false;
-    }
-  }
-
-  const typesPath = path.join(CWD, "supabase", "types", "database.ts");
-  if (fs.existsSync(typesPath)) {
-    addResult(
-      "Schema Drift Checks",
-      "PASS",
-      "Found supabase/types/database.ts"
-    );
-  } else if (hasGenTypesScript) {
-    addResult(
-      "Schema Drift Checks",
-      "WARN",
-      "Missing supabase/types/database.ts. Run pnpm db:gen-types."
-    );
-  } else {
-    addResult(
-      "Schema Drift Checks",
-      "WARN",
-      "No generated types file detected. If types are expected, add db:gen-types."
-    );
-  }
-}
-
-function checkFunctionPresence() {
-  const functions = [
-    "twilio-inbound",
-    "twilio-outbound-runner",
-    "twilio-status-callback",
-  ];
-  for (const fnName of functions) {
-    const fnPath = path.join(CWD, "supabase", "functions", fnName);
-    if (fs.existsSync(fnPath) && fs.statSync(fnPath).isDirectory()) {
-      addResult(
-        "Function Presence Checks",
-        "PASS",
-        `Found supabase/functions/${fnName}/`
-      );
-    } else {
-      addResult(
-        "Function Presence Checks",
-        "FAIL",
-        `Missing supabase/functions/${fnName}/`
-      );
-    }
-  }
-}
-
-function checkSchedulerReadiness() {
-  const docPath = path.join(CWD, "docs", "runbooks", "environment-contract.md");
-  const doc = readFileIfExists(docPath);
-  if (!doc) {
-    addResult(
-      "Scheduler Readiness Checks",
-      "FAIL",
-      "Missing docs/runbooks/environment-contract.md"
+      "Supabase Connectivity",
+      "SUPABASE_URL and SUPABASE_ANON_KEY are required for connectivity check."
     );
     return;
   }
 
-  const required = [
-    "CRON_SECRET",
-    "STAGING_RUNNER_URL",
-    "STAGING_RUNNER_SECRET",
-  ];
-
-  for (const name of required) {
-    if (doc.includes(name)) {
-      addResult(
-        "Scheduler Readiness Checks",
-        "PASS",
-        `Documented in environment-contract.md: ${name}`
-      );
-    } else {
-      addResult(
-        "Scheduler Readiness Checks",
-        "FAIL",
-        `Missing in environment-contract.md: ${name}`
-      );
-    }
-  }
-}
-
-function checkRepoScripts() {
-  const pkgPath = path.join(CWD, "package.json");
-  const pkgRaw = readFileIfExists(pkgPath);
-  if (!pkgRaw) {
-    addResult("Repo Scripts Checks", "FAIL", "Missing package.json");
-    return;
-  }
-
-  let scripts = {};
+  let endpoint;
   try {
-    const pkg = JSON.parse(pkgRaw);
-    scripts = pkg.scripts ?? {};
+    const parsed = new URL(supabaseUrl);
+    endpoint = `${parsed.origin}/rest/v1/`;
   } catch {
-    addResult("Repo Scripts Checks", "FAIL", "package.json is not valid JSON");
+    addResult("FAIL", "Supabase Connectivity", "Cannot run connectivity check because SUPABASE_URL is not a valid URL.");
     return;
   }
 
-  const expected = ["lint", "typecheck", "test", "build"];
-  for (const name of expected) {
-    if (scripts[name]) {
-      addResult("Repo Scripts Checks", "PASS", `Found script: ${name}`);
-    } else {
-      addResult("Repo Scripts Checks", "WARN", `Missing script: ${name}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+        Prefer: "count=none",
+      },
+      signal: controller.signal,
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      addResult(
+        "FAIL",
+        "Supabase Connectivity",
+        `Supabase responded ${response.status}. Hint: SUPABASE_ANON_KEY may not match SUPABASE_URL project.`
+      );
+      return;
+    }
+
+    if (response.status >= 500) {
+      addResult(
+        "FAIL",
+        "Supabase Connectivity",
+        `Supabase responded ${response.status}. Hint: service may be unavailable.`
+      );
+      return;
+    }
+
+    addResult(
+      "PASS",
+      "Supabase Connectivity",
+      `Connectivity probe succeeded against /rest/v1/ (status=${response.status}).`
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    addResult(
+      "FAIL",
+      "Supabase Connectivity",
+      `Connectivity probe failed: ${message}. Hint: check network reachability and SUPABASE_URL.`
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function checkUrlVars() {
+  const names = new Set();
+
+  for (const name of Object.keys(process.env)) {
+    if (isLikelyUrlVar(name)) {
+      names.add(name);
     }
   }
-}
 
-function checkNextActions() {
-  const next = ["0.4", "0.5", "0.6", "2.3", "2.4"];
-  for (const ticket of next) {
-    addResult("Next Actions", "WARN", `Ticket ${ticket}`);
+  if (names.has("APP_BASE_URL") && !isSet(process.env.APP_BASE_URL)) {
+    addResult("FAIL", "Format", "APP_BASE_URL is present but empty.");
   }
-}
 
-function checkRemoteOptIn() {
-  if (process.env.DOCTOR_REMOTE === "1") {
-    addResult(
-      "Env Sources",
-      "WARN",
-      "DOCTOR_REMOTE=1 set, but no remote checks are implemented"
-    );
+  const sorted = Array.from(names).sort();
+  for (const name of sorted) {
+    const value = process.env[name];
+    if (!isSet(value)) {
+      continue;
+    }
+    validateUrlFormat(name, value);
+  }
+
+  if (sorted.length === 0) {
+    addResult("WARN", "Format", "No URL-like environment variables were detected for validation.");
   }
 }
 
 function printReport() {
-  const summary = `Summary: PASS=${passCount} FAIL=${failCount} WARN=${warnCount}`;
-  console.log(summary);
+  console.log("JOSH Doctor Preflight");
 
-  for (const section of SECTIONS) {
-    if (section === "Summary") continue;
-    console.log(`\n${section}`);
-    const entries = results.get(section) ?? [];
-    if (entries.length === 0) {
-      console.log("  WARN: No checks recorded");
-      continue;
-    }
-    for (const entry of entries) {
-      console.log(`  ${entry.status}: ${entry.message}`);
-    }
+  const envValue = isSet(process.env.APP_ENV) ? process.env.APP_ENV.trim().toLowerCase() : "(unset)";
+  console.log(`Environment (APP_ENV): ${envValue}`);
+
+  for (const entry of results) {
+    console.log(`${entry.status.padEnd(4)} [${entry.category}] ${entry.message}`);
   }
+
+  console.log(`Summary: PASS=${passCount} WARN=${warnCount} FAIL=${failCount}`);
 }
 
-function main() {
-  checkEnvSources();
-  checkRemoteOptIn();
-  checkEnvFingerprints();
-  checkUrlShapes();
-  checkSupabaseConfig();
-  checkFunctionPresence();
-  checkSchedulerReadiness();
-  checkSchemaDriftSignals();
-  checkRepoScripts();
-  checkNextActions();
+async function main() {
+  loadLocalEnvFiles();
+
+  const appEnv = detectEnvironment();
+  const rows = parseContractRows();
+
+  if (rows.length > 0 && appEnv) {
+    checkRequiredVars(rows, appEnv);
+  }
+
+  checkUrlVars();
+  await checkSupabaseConnectivity();
+
   printReport();
 
   if (failCount > 0) {
@@ -414,4 +417,4 @@ function main() {
   }
 }
 
-main();
+await main();
