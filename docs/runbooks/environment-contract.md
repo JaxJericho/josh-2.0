@@ -114,8 +114,12 @@ If this file conflicts with any other env-var doc, this file wins.
 | Name | Required | Used by | Format / constraints | Where set (local / staging / production) | Security / rotation notes |
 |---|---|---|---|---|---|
 | `DOCTOR_REMOTE` | No | `scripts/doctor.mjs` remote-check toggle | `1` to enable remote mode | Local shell only. | Non-secret. |
+| `TWILIO_REPLAY_MODE` | No | `scripts/verify/twilio_inbound_replay.mjs` request shape selector | `inbound` or `status` | Local shell only. | Non-secret. |
+| `TWILIO_INBOUND_URL` | No | Replay script inbound target URL | Absolute URL | Local shell only. | Non-secret. |
+| `TWILIO_STATUS_CALLBACK_URL` | No | Replay script status-callback target URL | Absolute URL | Local shell only. | Non-secret. |
 | `WEBHOOK_URL` | No | `scripts/verify/twilio_inbound_replay.mjs` target URL | Absolute URL | Local shell only. | Non-secret. |
 | `SIGNATURE_URL` | No | Same replay script, canonical URL for signature base string | Absolute URL | Local shell only. | Non-secret. |
+| `EXPECT_STATUS` | No | Replay script expected HTTP status | Integer HTTP status code | Local shell only. | Non-secret. |
 | `FORWARDED_HOST` | No | Replay script forwarded-host override | Hostname only | Local shell only. | Non-secret. |
 | `FORWARDED_PROTO` | No | Replay script forwarded-proto override | `http` or `https` | Local shell only. | Non-secret. |
 | `FROM_E164` | No | Replay script payload | E.164 number | Local shell only. | Non-secret test data. |
@@ -123,6 +127,7 @@ If this file conflicts with any other env-var doc, this file wins.
 | `BODY` | No | Replay script payload | Short text body | Local shell only. | Do not use real PII in tests. |
 | `MESSAGE_SID` | No | Replay script payload idempotency key | Twilio SID-like string (`SM...`) | Local shell only. | Non-secret test id. |
 | `NUM_MEDIA` | No | Replay script payload | Integer string (`0`, `1`, ...) | Local shell only. | Non-secret. |
+| `MESSAGE_STATUS` | No | Replay script status-callback payload | Twilio callback status string (`sent`, `delivered`, etc.) | Local shell only. | Non-secret. |
 
 ### Template-Only Placeholders In `supabase/config.toml`
 
