@@ -140,9 +140,38 @@ Deno.serve(async (req) => {
       message: err?.message ?? String(error),
       stack: err?.stack ?? null,
     });
-    return new Response("Internal error", { status: 500 });
+    return jsonErrorResponse(error, requestId, phase);
   }
 });
+
+function jsonErrorResponse(
+  error: unknown,
+  requestId: string,
+  phase: string
+): Response {
+  const missingEnv = extractMissingEnvName(error);
+  const payload: Record<string, unknown> = {
+    code: 500,
+    message: missingEnv ? "Server misconfiguration" : "Internal error",
+    request_id: requestId,
+    phase,
+  };
+  if (missingEnv) {
+    payload.missing_env = missingEnv;
+  }
+  return new Response(JSON.stringify(payload), {
+    status: 500,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+    },
+  });
+}
+
+function extractMissingEnvName(error: unknown): string | null {
+  const message = (error as { message?: string })?.message ?? "";
+  const match = /Missing required env var: ([A-Z0-9_]+)/.exec(message);
+  return match ? match[1] : null;
+}
 
 function mapJobStatus(messageStatus: string): string {
   const status = messageStatus.toLowerCase();
