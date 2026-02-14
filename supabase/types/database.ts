@@ -41,6 +41,7 @@ export type Database = {
           id: string
           role: string
           updated_at: string
+          user_id: string | null
         }
         Insert: {
           created_at?: string
@@ -48,6 +49,7 @@ export type Database = {
           id?: string
           role: string
           updated_at?: string
+          user_id?: string | null
         }
         Update: {
           created_at?: string
@@ -55,8 +57,17 @@ export type Database = {
           id?: string
           role?: string
           updated_at?: string
+          user_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "admin_users_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       audit_log: {
         Row: {
@@ -2165,6 +2176,12 @@ export type Database = {
         Args: { key: string; plaintext: string }
         Returns: string
       }
+      is_admin_user: { Args: never; Returns: boolean }
+      is_linkup_visible_to_current_user: {
+        Args: { linkup_uuid: string }
+        Returns: boolean
+      }
+      owns_profile: { Args: { profile_uuid: string }; Returns: boolean }
     }
     Enums: {
       conversation_mode:
