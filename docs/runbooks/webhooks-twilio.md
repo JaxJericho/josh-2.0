@@ -92,6 +92,139 @@ supabase functions deploy twilio-inbound --project-ref rcqlnfywwfsixznrmzmv
 supabase functions deploy twilio-status-callback --project-ref rcqlnfywwfsixznrmzmv
 ```
 
+## Outbound Pipeline Verification (Staging, CLI Only)
+
+Use this flow to prove:
+- outbound job insertion works
+- runner executes exactly once
+- `sms_messages` gets an encrypted outbound row with correlation + Twilio SID
+- Twilio status callback updates `status` and `last_status_at`
+
+Required shell env vars (names only):
+- `STAGING_DB_URL`
+- `TEST_TO_E164`
+- `SMS_BODY_ENCRYPTION_KEY`
+- `QSTASH_RUNNER_SECRET`
+
+1. Insert one outbound job (exact SQL):
+
+```bash
+read -r JOB_ID CORRELATION_ID IDEMPOTENCY_KEY <<<"$(psql "$STAGING_DB_URL" -X -A -t \
+  -v ON_ERROR_STOP=1 \
+  -v to_e164="$TEST_TO_E164" \
+  -v enc_key="$SMS_BODY_ENCRYPTION_KEY" <<'SQL'
+with prepared as (
+  select
+    gen_random_uuid() as correlation_id,
+    format('ticket_2_3:%s', to_char(clock_timestamp(), 'YYYYMMDDHH24MISSMS')) as idempotency_key,
+    public.encrypt_sms_body('Ticket 2.3 outbound runner verification', :'enc_key') as body_ciphertext
+)
+insert into public.sms_outbound_jobs (
+  user_id,
+  to_e164,
+  from_e164,
+  body_ciphertext,
+  body_iv,
+  body_tag,
+  key_version,
+  purpose,
+  status,
+  correlation_id,
+  idempotency_key,
+  run_at
+)
+select
+  null,
+  :'to_e164',
+  null,
+  prepared.body_ciphertext,
+  null,
+  null,
+  1,
+  'ticket_2_3_verification',
+  'pending',
+  prepared.correlation_id,
+  prepared.idempotency_key,
+  now()
+from prepared
+returning id, correlation_id, idempotency_key;
+SQL
+)"
+
+echo "JOB_ID=$JOB_ID"
+echo "CORRELATION_ID=$CORRELATION_ID"
+echo "IDEMPOTENCY_KEY=$IDEMPOTENCY_KEY"
+```
+
+2. Trigger runner manually:
+
+```bash
+curl -sS -X POST \
+  -H "x-runner-secret: ${QSTASH_RUNNER_SECRET}" \
+  "https://rcqlnfywwfsixznrmzmv.supabase.co/functions/v1/twilio-outbound-runner?limit=1"
+```
+
+3. Verify outbound message row + encryption fields:
+
+```bash
+psql "$STAGING_DB_URL" -X -v ON_ERROR_STOP=1 -v corr_id="$CORRELATION_ID" <<'SQL'
+select
+  id,
+  direction,
+  twilio_message_sid,
+  correlation_id,
+  status,
+  last_status_at,
+  (body_ciphertext is not null) as has_body_ciphertext,
+  (body_iv is not null) as has_body_iv,
+  (body_tag is not null) as has_body_tag,
+  key_version,
+  created_at
+from public.sms_messages
+where correlation_id = :'corr_id'::uuid
+  and direction = 'out'
+order by created_at desc
+limit 1;
+SQL
+```
+
+4. Re-run runner to prove no duplicate sends:
+
+```bash
+curl -sS -X POST \
+  -H "x-runner-secret: ${QSTASH_RUNNER_SECRET}" \
+  "https://rcqlnfywwfsixznrmzmv.supabase.co/functions/v1/twilio-outbound-runner?limit=1"
+
+psql "$STAGING_DB_URL" -X -A -t -v ON_ERROR_STOP=1 -v corr_id="$CORRELATION_ID" <<'SQL'
+select count(*)
+from public.sms_messages
+where correlation_id = :'corr_id'::uuid
+  and direction = 'out';
+SQL
+```
+
+5. Poll until callback updates delivery status:
+
+```bash
+for i in {1..30}; do
+  psql "$STAGING_DB_URL" -X -v ON_ERROR_STOP=1 -v corr_id="$CORRELATION_ID" <<'SQL'
+select
+  m.twilio_message_sid,
+  m.status as message_status,
+  m.last_status_at as message_last_status_at,
+  j.status as job_status,
+  j.last_status_at as job_last_status_at
+from public.sms_messages m
+left join public.sms_outbound_jobs j on j.twilio_message_sid = m.twilio_message_sid
+where m.correlation_id = :'corr_id'::uuid
+  and m.direction = 'out'
+order by m.created_at desc
+limit 1;
+SQL
+  sleep 10
+done
+```
+
 ## Verification (Local)
 
 To test local functions explicitly, pass a local URL:

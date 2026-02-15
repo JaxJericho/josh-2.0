@@ -109,8 +109,11 @@ async function handleCron(request: Request): Promise<Response> {
   try {
     upstreamResponse = await fetch(runnerUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ runner_secret: runnerSecret }),
+      headers: {
+        "content-type": "application/json",
+        "x-runner-secret": runnerSecret,
+      },
+      body: "{}",
     });
   } catch {
     logEvent({

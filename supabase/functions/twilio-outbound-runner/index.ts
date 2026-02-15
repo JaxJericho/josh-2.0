@@ -7,7 +7,10 @@ type SmsOutboundJob = {
   to_e164: string;
   from_e164: string | null;
   body_ciphertext: string | null;
+  body_iv: string | null;
+  body_tag: string | null;
   key_version: number;
+  idempotency_key: string;
   purpose: string;
   status: string;
   twilio_message_sid: string | null;
@@ -151,6 +154,7 @@ Deno.serve(async (req) => {
       const sendResult = await sendTwilioMessage({
         accountSid: twilioAccountSid,
         authToken: twilioAuthToken,
+        idempotencyKey: job.idempotency_key,
         to: job.to_e164,
         from: fromE164,
         body: plaintext as string,
@@ -197,7 +201,7 @@ Deno.serve(async (req) => {
       message: err?.message ?? String(error),
       stack: err?.stack ?? null,
     });
-    return jsonResponse({ error: "Internal error" }, 500);
+    return jsonErrorResponse(error, requestId, phase);
   }
 });
 
@@ -223,7 +227,7 @@ async function markJobSent(
   status: string | null,
   incrementAttempts = true
 ): Promise<void> {
-  const { error } = await supabase
+  let updateQuery = supabase
     .from("sms_outbound_jobs")
     .update({
       status: "sent",
@@ -233,7 +237,14 @@ async function markJobSent(
       attempts: incrementAttempts ? job.attempts + 1 : job.attempts,
       next_attempt_at: null,
     })
-    .eq("id", job.id);
+    .eq("id", job.id)
+    .neq("status", "canceled");
+
+  if (incrementAttempts) {
+    updateQuery = updateQuery.eq("status", "sending");
+  }
+
+  const { error } = await updateQuery;
 
   if (error) {
     console.error("sms_outbound.job_update_failed", {
@@ -265,7 +276,8 @@ async function markJobFailure(
       attempts: nextAttempt,
       next_attempt_at: nextAttemptAt,
     })
-    .eq("id", job.id);
+    .eq("id", job.id)
+    .eq("status", "sending");
 
   if (error) {
     console.error("sms_outbound.job_failure_update_failed", {
@@ -296,8 +308,8 @@ async function ensureSmsMessage(
         to_e164: job.to_e164,
         twilio_message_sid: sid,
         body_ciphertext: job.body_ciphertext,
-        body_iv: null,
-        body_tag: null,
+        body_iv: job.body_iv,
+        body_tag: job.body_tag,
         key_version: job.key_version,
         media_count: 0,
         status,
@@ -328,6 +340,7 @@ function computeBackoffMs(attempt: number): number {
 type TwilioSendInput = {
   accountSid: string;
   authToken: string;
+  idempotencyKey: string;
   to: string;
   from: string;
   body: string;
@@ -372,6 +385,7 @@ async function sendTwilioMessage(
       method: "POST",
       headers: {
         Authorization: `Basic ${auth}`,
+        "Idempotency-Key": input.idempotencyKey,
         "content-type": "application/x-www-form-urlencoded",
       },
       body: payload.toString(),
@@ -438,6 +452,30 @@ function jsonResponse(payload: Record<string, unknown>, status = 200): Response 
   });
 }
 
+function jsonErrorResponse(
+  error: unknown,
+  requestId: string,
+  phase: string
+): Response {
+  const missingEnv = extractMissingEnvName(error);
+  const payload: Record<string, unknown> = {
+    code: 500,
+    message: missingEnv ? "Server misconfiguration" : "Internal error",
+    request_id: requestId,
+    phase,
+  };
+  if (missingEnv) {
+    payload.missing_env = missingEnv;
+  }
+  return jsonResponse(payload, 500);
+}
+
+function extractMissingEnvName(error: unknown): string | null {
+  const message = (error as { message?: string })?.message ?? "";
+  const match = /Missing required env var: ([A-Z0-9_]+)/.exec(message);
+  return match ? match[1] : null;
+}
+
 function requireEnv(name: string): string {
   const value = Deno.env.get(name);
   if (!value) {
@@ -447,11 +485,9 @@ function requireEnv(name: string): string {
 }
 
 async function verifyQstashRequest(req: Request): Promise<Response | null> {
-  const headerKeys = Array.from(req.headers.keys());
-  const headerKeysLower = headerKeys.map((key) => key.toLowerCase());
-  const body = await req.text();
   const signature = req.headers.get("Upstash-Signature") ??
     req.headers.get("upstash-signature");
+  const runnerSecretHeader = req.headers.get("x-runner-secret") ?? "";
   const currentKey = Deno.env.get("QSTASH_CURRENT_SIGNING_KEY") ?? "";
   const nextKey = Deno.env.get("QSTASH_NEXT_SIGNING_KEY") ?? "";
   const projectRef = Deno.env.get("PROJECT_REF") ?? "";
@@ -460,15 +496,43 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
     ? `https://${projectRef}.supabase.co/functions/v1/twilio-outbound-runner`
     : "";
 
-  if (signature) {
-    if (!currentKey || !nextKey || !projectRef) {
+  // Deterministic manual auth: `x-runner-secret` only (no body token).
+  // Must run before Upstash signature verification.
+  if (runnerSecretHeader) {
+    const ok = Boolean(runnerSecret) &&
+      timingSafeEqual(runnerSecretHeader, runnerSecret);
+    if (!ok) {
       return unauthorizedResponse({
-        hasSignature: true,
+        authBranch: "runner_secret_header",
+        method: req.method,
+        contentTypePresent: Boolean(req.headers.get("content-type")),
+        hasUpstashSignatureHeader: Boolean(signature),
+        hasRunnerSecretHeader: true,
+        runnerSecretEnvPresent: Boolean(runnerSecret),
+        runnerSecretMatches: Boolean(runnerSecret) &&
+          timingSafeEqual(runnerSecretHeader, runnerSecret),
         hasProjectRef: Boolean(projectRef),
         hasCurrentKey: Boolean(currentKey),
         hasNextKey: Boolean(nextKey),
-        expectedUrl,
-        headerKeys: headerKeysLower,
+      });
+    }
+    return null;
+  }
+
+  if (signature) {
+    const body = await req.text();
+    if (!currentKey || !nextKey || !projectRef) {
+      return unauthorizedResponse({
+        authBranch: "upstash_signature",
+        method: req.method,
+        contentTypePresent: Boolean(req.headers.get("content-type")),
+        hasUpstashSignatureHeader: true,
+        hasRunnerSecretHeader: false,
+        runnerSecretEnvPresent: Boolean(runnerSecret),
+        runnerSecretMatches: false,
+        hasProjectRef: Boolean(projectRef),
+        hasCurrentKey: Boolean(currentKey),
+        hasNextKey: Boolean(nextKey),
       });
     }
 
@@ -485,92 +549,82 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
       });
     } catch {
       return unauthorizedResponse({
-        hasSignature: true,
+        authBranch: "upstash_signature",
+        method: req.method,
+        contentTypePresent: Boolean(req.headers.get("content-type")),
+        hasUpstashSignatureHeader: true,
+        hasRunnerSecretHeader: false,
+        runnerSecretEnvPresent: Boolean(runnerSecret),
+        runnerSecretMatches: false,
         hasProjectRef: true,
         hasCurrentKey: true,
         hasNextKey: true,
-        expectedUrl,
-        headerKeys: headerKeysLower,
       });
     }
 
     const subject = decodeJwtSubject(signature);
     if (!subject || subject !== expectedUrl) {
       return unauthorizedResponse({
-        hasSignature: true,
+        authBranch: "upstash_signature",
+        method: req.method,
+        contentTypePresent: Boolean(req.headers.get("content-type")),
+        hasUpstashSignatureHeader: true,
+        hasRunnerSecretHeader: false,
+        runnerSecretEnvPresent: Boolean(runnerSecret),
+        runnerSecretMatches: false,
         hasProjectRef: true,
         hasCurrentKey: true,
         hasNextKey: true,
-        expectedUrl,
-        headerKeys: headerKeysLower,
       });
     }
 
     return null;
   }
 
-  if (!runnerSecret) {
-    return unauthorizedResponse({
-      hasSignature: false,
-      hasProjectRef: Boolean(projectRef),
-      hasCurrentKey: Boolean(currentKey),
-      hasNextKey: Boolean(nextKey),
-      expectedUrl,
-      headerKeys: headerKeysLower,
-    });
-  }
-
-  const providedSecret = parseRunnerSecret(body);
-  if (!providedSecret || !timingSafeEqual(providedSecret, runnerSecret)) {
-    return unauthorizedResponse({
-      hasSignature: false,
-      hasProjectRef: Boolean(projectRef),
-      hasCurrentKey: Boolean(currentKey),
-      hasNextKey: Boolean(nextKey),
-      expectedUrl,
-      headerKeys: headerKeysLower,
-    });
-  }
-
-  return null;
+  return unauthorizedResponse({
+    authBranch: "missing_auth",
+    method: req.method,
+    contentTypePresent: Boolean(req.headers.get("content-type")),
+    hasUpstashSignatureHeader: false,
+    hasRunnerSecretHeader: false,
+    runnerSecretEnvPresent: Boolean(runnerSecret),
+    runnerSecretMatches: false,
+    hasProjectRef: Boolean(projectRef),
+    hasCurrentKey: Boolean(currentKey),
+    hasNextKey: Boolean(nextKey),
+  });
 }
 
 function unauthorizedResponse(input: {
-  hasSignature: boolean;
+  authBranch: "runner_secret_header" | "upstash_signature" | "missing_auth";
+  method: string;
+  contentTypePresent: boolean;
+  hasUpstashSignatureHeader: boolean;
+  hasRunnerSecretHeader: boolean;
+  runnerSecretEnvPresent: boolean;
+  runnerSecretMatches: boolean;
   hasProjectRef: boolean;
   hasCurrentKey: boolean;
   hasNextKey: boolean;
-  expectedUrl: string;
-  headerKeys: string[];
 }): Response {
-  if (Deno.env.get("QSTASH_AUTH_DEBUG") === "1") {
-    const headerKeySet = new Set(input.headerKeys);
-    return jsonResponse(
-      {
-        error: "Unauthorized",
-        debug: {
-          has_signature: input.hasSignature,
-          has_project_ref: input.hasProjectRef,
-          has_current_key: input.hasCurrentKey,
-          has_next_key: input.hasNextKey,
-          expected_url: input.expectedUrl,
-          header_keys: input.headerKeys,
-          upstash_headers_present: {
-            "upstash-signature": headerKeySet.has("upstash-signature"),
-            "upstash-message-id": headerKeySet.has("upstash-message-id"),
-            "upstash-schedule-id": headerKeySet.has("upstash-schedule-id"),
-            "upstash-topic-name": headerKeySet.has("upstash-topic-name"),
-          },
-          forwarded_headers_present: {
-            "x-runner-secret": headerKeySet.has("x-runner-secret"),
-            authorization: headerKeySet.has("authorization"),
-          },
-        },
+  return jsonResponse(
+    {
+      error: "Unauthorized",
+      debug: {
+        auth_branch: input.authBranch,
+        method: input.method,
+        content_type_present: input.contentTypePresent,
+        has_upstash_signature_header: input.hasUpstashSignatureHeader,
+        has_runner_secret_header: input.hasRunnerSecretHeader,
+        runner_secret_env_present: input.runnerSecretEnvPresent,
+        runner_secret_matches: input.runnerSecretMatches,
+        has_project_ref: input.hasProjectRef,
+        has_current_key: input.hasCurrentKey,
+        has_next_key: input.hasNextKey,
       },
-      401
-    );
-  }
-  return jsonResponse({ error: "Unauthorized" }, 401);
+    },
+    401
+  );
 }
 
 function decodeJwtSubject(token: string): string | null {
@@ -595,20 +649,6 @@ function decodeBase64Url(value: string): string | null {
   const padding = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
   try {
     return atob(padded + padding);
-  } catch {
-    return null;
-  }
-}
-
-function parseRunnerSecret(body: string): string | null {
-  if (!body || body.trim().length === 0) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(body) as { runner_secret?: unknown };
-    return typeof parsed.runner_secret === "string"
-      ? parsed.runner_secret
-      : null;
   } catch {
     return null;
   }

@@ -4,7 +4,8 @@
 
 Vercel Cron invokes a protected Next.js API route on a fixed schedule.
 That route validates `Authorization: Bearer ${CRON_SECRET}` and then calls the
-Supabase Edge Function runner using `STAGING_RUNNER_URL` and `STAGING_RUNNER_SECRET`.
+Supabase Edge Function runner using `STAGING_RUNNER_URL` and `STAGING_RUNNER_SECRET`
+via the `x-runner-secret` request header.
 
 Scheduler chain:
 - Vercel Cron → protected Next.js route → Supabase Edge Function runner
