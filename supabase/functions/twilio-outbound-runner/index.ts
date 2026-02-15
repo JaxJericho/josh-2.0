@@ -7,7 +7,10 @@ type SmsOutboundJob = {
   to_e164: string;
   from_e164: string | null;
   body_ciphertext: string | null;
+  body_iv: string | null;
+  body_tag: string | null;
   key_version: number;
+  idempotency_key: string;
   purpose: string;
   status: string;
   twilio_message_sid: string | null;
@@ -151,6 +154,7 @@ Deno.serve(async (req) => {
       const sendResult = await sendTwilioMessage({
         accountSid: twilioAccountSid,
         authToken: twilioAuthToken,
+        idempotencyKey: job.idempotency_key,
         to: job.to_e164,
         from: fromE164,
         body: plaintext as string,
@@ -197,7 +201,7 @@ Deno.serve(async (req) => {
       message: err?.message ?? String(error),
       stack: err?.stack ?? null,
     });
-    return jsonResponse({ error: "Internal error" }, 500);
+    return jsonErrorResponse(error, requestId, phase);
   }
 });
 
@@ -223,7 +227,7 @@ async function markJobSent(
   status: string | null,
   incrementAttempts = true
 ): Promise<void> {
-  const { error } = await supabase
+  let updateQuery = supabase
     .from("sms_outbound_jobs")
     .update({
       status: "sent",
@@ -233,7 +237,14 @@ async function markJobSent(
       attempts: incrementAttempts ? job.attempts + 1 : job.attempts,
       next_attempt_at: null,
     })
-    .eq("id", job.id);
+    .eq("id", job.id)
+    .neq("status", "canceled");
+
+  if (incrementAttempts) {
+    updateQuery = updateQuery.eq("status", "sending");
+  }
+
+  const { error } = await updateQuery;
 
   if (error) {
     console.error("sms_outbound.job_update_failed", {
@@ -265,7 +276,8 @@ async function markJobFailure(
       attempts: nextAttempt,
       next_attempt_at: nextAttemptAt,
     })
-    .eq("id", job.id);
+    .eq("id", job.id)
+    .eq("status", "sending");
 
   if (error) {
     console.error("sms_outbound.job_failure_update_failed", {
@@ -296,8 +308,8 @@ async function ensureSmsMessage(
         to_e164: job.to_e164,
         twilio_message_sid: sid,
         body_ciphertext: job.body_ciphertext,
-        body_iv: null,
-        body_tag: null,
+        body_iv: job.body_iv,
+        body_tag: job.body_tag,
         key_version: job.key_version,
         media_count: 0,
         status,
@@ -328,6 +340,7 @@ function computeBackoffMs(attempt: number): number {
 type TwilioSendInput = {
   accountSid: string;
   authToken: string;
+  idempotencyKey: string;
   to: string;
   from: string;
   body: string;
@@ -372,6 +385,7 @@ async function sendTwilioMessage(
       method: "POST",
       headers: {
         Authorization: `Basic ${auth}`,
+        "Idempotency-Key": input.idempotencyKey,
         "content-type": "application/x-www-form-urlencoded",
       },
       body: payload.toString(),
@@ -436,6 +450,30 @@ function jsonResponse(payload: Record<string, unknown>, status = 200): Response 
     status,
     headers: { "content-type": "application/json; charset=utf-8" },
   });
+}
+
+function jsonErrorResponse(
+  error: unknown,
+  requestId: string,
+  phase: string
+): Response {
+  const missingEnv = extractMissingEnvName(error);
+  const payload: Record<string, unknown> = {
+    code: 500,
+    message: missingEnv ? "Server misconfiguration" : "Internal error",
+    request_id: requestId,
+    phase,
+  };
+  if (missingEnv) {
+    payload.missing_env = missingEnv;
+  }
+  return jsonResponse(payload, 500);
+}
+
+function extractMissingEnvName(error: unknown): string | null {
+  const message = (error as { message?: string })?.message ?? "";
+  const match = /Missing required env var: ([A-Z0-9_]+)/.exec(message);
+  return match ? match[1] : null;
 }
 
 function requireEnv(name: string): string {
