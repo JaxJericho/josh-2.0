@@ -160,8 +160,7 @@ echo "IDEMPOTENCY_KEY=$IDEMPOTENCY_KEY"
 
 ```bash
 curl -sS -X POST \
-  -H "content-type: application/json" \
-  --data "{\"runner_secret\":\"${QSTASH_RUNNER_SECRET}\"}" \
+  -H "x-runner-secret: ${QSTASH_RUNNER_SECRET}" \
   "https://rcqlnfywwfsixznrmzmv.supabase.co/functions/v1/twilio-outbound-runner?limit=1"
 ```
 
@@ -193,8 +192,7 @@ SQL
 
 ```bash
 curl -sS -X POST \
-  -H "content-type: application/json" \
-  --data "{\"runner_secret\":\"${QSTASH_RUNNER_SECRET}\"}" \
+  -H "x-runner-secret: ${QSTASH_RUNNER_SECRET}" \
   "https://rcqlnfywwfsixznrmzmv.supabase.co/functions/v1/twilio-outbound-runner?limit=1"
 
 psql "$STAGING_DB_URL" -X -A -t -v ON_ERROR_STOP=1 -v corr_id="$CORRELATION_ID" <<'SQL'
