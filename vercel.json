@@ -1,8 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/cron/twilio-outbound-runner",
-      "schedule": "*/5 * * * *"
+      "path": "/api/cron/run-outbound",
+      "schedule": "* * * * *"
     }
   ]
 }

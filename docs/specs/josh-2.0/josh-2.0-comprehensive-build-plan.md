@@ -269,13 +269,13 @@ Every ticket must include:
 * Dependencies: None.  
 * Agent Work:  
   * Add `vercel.json` cron:  
-    * Path: `/api/cron/twilio-outbound-runner`  
-    * Schedule: start with `*/5 * * * *`  
+    * Path: `/api/cron/run-outbound`  
+    * Schedule: `* * * * *`  
   * Add protected cron route that:  
     * Requires `Authorization: Bearer ${CRON_SECRET}`  
     * Calls Supabase runner endpoint using `STAGING_RUNNER_URL` and `STAGING_RUNNER_SECRET`  
     * Hard-fails if runner URL contains `?`  
-    * Returns upstream status and body  
+    * Returns a structured summary: `{ ok, runner_status, processed, sent, failed }`  
   * Create `docs/runbooks/vercel-cron-runner.md`.  
 * Manual Work (You):  
   * In Vercel staging env vars set:  
