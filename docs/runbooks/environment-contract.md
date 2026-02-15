@@ -87,7 +87,7 @@ If this file conflicts with any other env-var doc, this file wins.
 
 | Name | Required | Used by | Format / constraints | Where set (local / staging / production) | Security / rotation notes |
 |---|---|---|---|---|---|
-| `CRON_SECRET` | Yes | `app/api/cron/twilio-outbound-runner/route.ts` bearer auth | Random high-entropy token; no whitespace | Local: `.env.local` for local cron endpoint tests. Staging: Vercel staging env. Production: Vercel production env. | Secret. Rotate with cron config update in lockstep. |
+| `CRON_SECRET` | Yes | `app/api/cron/run-outbound/route.ts` bearer auth | Random high-entropy token; no whitespace | Local: `.env.local` for local cron endpoint tests. Staging: Vercel staging env. Production: Vercel production env. | Secret. Rotate with cron config update in lockstep. |
 | `STAGING_RUNNER_URL` | Yes | Next cron route -> Supabase runner target | Absolute URL; MUST NOT contain `?` | Local: optional for local imitation. Staging: Vercel staging env. Production: not used in prod runtime. | Non-secret but correctness-critical. |
 | `STAGING_RUNNER_SECRET` | Yes | Next cron route `x-runner-secret` header to runner | Must exactly match runner-side expected secret | Local: optional. Staging: Vercel staging env. Production: not used in prod runtime. | Secret. Must match `QSTASH_RUNNER_SECRET` in target function environment. |
 | `LOCAL_RUNNER_URL` | No (tooling) | `scripts/doctor.mjs` checks | Absolute URL with no query string | Local shell only. | Non-secret. |
