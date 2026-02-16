@@ -1,5 +1,4 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
-import { Receiver } from "https://esm.sh/@upstash/qstash@2.7.4?target=deno";
 
 type SmsOutboundJob = {
   id: string;
@@ -40,7 +39,7 @@ Deno.serve(async (req) => {
     }
 
     phase = "auth";
-    const authResponse = await verifyQstashRequest(req);
+    const authResponse = await verifyRunnerRequest(req);
     if (authResponse) {
       return authResponse;
     }
@@ -484,20 +483,14 @@ function requireEnv(name: string): string {
   return value;
 }
 
-async function verifyQstashRequest(req: Request): Promise<Response | null> {
-  const signature = req.headers.get("Upstash-Signature") ??
-    req.headers.get("upstash-signature");
+async function verifyRunnerRequest(req: Request): Promise<Response | null> {
+  const hasUpstashSignatureHeader = Boolean(
+    req.headers.get("Upstash-Signature") ?? req.headers.get("upstash-signature")
+  );
   const runnerSecretHeader = req.headers.get("x-runner-secret") ?? "";
-  const currentKey = Deno.env.get("QSTASH_CURRENT_SIGNING_KEY") ?? "";
-  const nextKey = Deno.env.get("QSTASH_NEXT_SIGNING_KEY") ?? "";
-  const projectRef = Deno.env.get("PROJECT_REF") ?? "";
   const runnerSecret = Deno.env.get("QSTASH_RUNNER_SECRET") ?? "";
-  const expectedUrl = projectRef
-    ? `https://${projectRef}.supabase.co/functions/v1/twilio-outbound-runner`
-    : "";
 
-  // Deterministic manual auth: `x-runner-secret` only (no body token).
-  // Must run before Upstash signature verification.
+  // Canonical auth path: deterministic `x-runner-secret` only.
   if (runnerSecretHeader) {
     const ok = Boolean(runnerSecret) &&
       timingSafeEqual(runnerSecretHeader, runnerSecret);
@@ -506,78 +499,13 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
         authBranch: "runner_secret_header",
         method: req.method,
         contentTypePresent: Boolean(req.headers.get("content-type")),
-        hasUpstashSignatureHeader: Boolean(signature),
+        hasUpstashSignatureHeader,
         hasRunnerSecretHeader: true,
         runnerSecretEnvPresent: Boolean(runnerSecret),
         runnerSecretMatches: Boolean(runnerSecret) &&
           timingSafeEqual(runnerSecretHeader, runnerSecret),
-        hasProjectRef: Boolean(projectRef),
-        hasCurrentKey: Boolean(currentKey),
-        hasNextKey: Boolean(nextKey),
       });
     }
-    return null;
-  }
-
-  if (signature) {
-    const body = await req.text();
-    if (!currentKey || !nextKey || !projectRef) {
-      return unauthorizedResponse({
-        authBranch: "upstash_signature",
-        method: req.method,
-        contentTypePresent: Boolean(req.headers.get("content-type")),
-        hasUpstashSignatureHeader: true,
-        hasRunnerSecretHeader: false,
-        runnerSecretEnvPresent: Boolean(runnerSecret),
-        runnerSecretMatches: false,
-        hasProjectRef: Boolean(projectRef),
-        hasCurrentKey: Boolean(currentKey),
-        hasNextKey: Boolean(nextKey),
-      });
-    }
-
-    const receiver = new Receiver({
-      currentSigningKey: currentKey,
-      nextSigningKey: nextKey,
-    });
-
-    try {
-      await receiver.verify({
-        signature,
-        body,
-        url: expectedUrl,
-      });
-    } catch {
-      return unauthorizedResponse({
-        authBranch: "upstash_signature",
-        method: req.method,
-        contentTypePresent: Boolean(req.headers.get("content-type")),
-        hasUpstashSignatureHeader: true,
-        hasRunnerSecretHeader: false,
-        runnerSecretEnvPresent: Boolean(runnerSecret),
-        runnerSecretMatches: false,
-        hasProjectRef: true,
-        hasCurrentKey: true,
-        hasNextKey: true,
-      });
-    }
-
-    const subject = decodeJwtSubject(signature);
-    if (!subject || subject !== expectedUrl) {
-      return unauthorizedResponse({
-        authBranch: "upstash_signature",
-        method: req.method,
-        contentTypePresent: Boolean(req.headers.get("content-type")),
-        hasUpstashSignatureHeader: true,
-        hasRunnerSecretHeader: false,
-        runnerSecretEnvPresent: Boolean(runnerSecret),
-        runnerSecretMatches: false,
-        hasProjectRef: true,
-        hasCurrentKey: true,
-        hasNextKey: true,
-      });
-    }
-
     return null;
   }
 
@@ -585,27 +513,21 @@ async function verifyQstashRequest(req: Request): Promise<Response | null> {
     authBranch: "missing_auth",
     method: req.method,
     contentTypePresent: Boolean(req.headers.get("content-type")),
-    hasUpstashSignatureHeader: false,
+    hasUpstashSignatureHeader,
     hasRunnerSecretHeader: false,
     runnerSecretEnvPresent: Boolean(runnerSecret),
     runnerSecretMatches: false,
-    hasProjectRef: Boolean(projectRef),
-    hasCurrentKey: Boolean(currentKey),
-    hasNextKey: Boolean(nextKey),
   });
 }
 
 function unauthorizedResponse(input: {
-  authBranch: "runner_secret_header" | "upstash_signature" | "missing_auth";
+  authBranch: "runner_secret_header" | "missing_auth";
   method: string;
   contentTypePresent: boolean;
   hasUpstashSignatureHeader: boolean;
   hasRunnerSecretHeader: boolean;
   runnerSecretEnvPresent: boolean;
   runnerSecretMatches: boolean;
-  hasProjectRef: boolean;
-  hasCurrentKey: boolean;
-  hasNextKey: boolean;
 }): Response {
   return jsonResponse(
     {
@@ -618,40 +540,10 @@ function unauthorizedResponse(input: {
         has_runner_secret_header: input.hasRunnerSecretHeader,
         runner_secret_env_present: input.runnerSecretEnvPresent,
         runner_secret_matches: input.runnerSecretMatches,
-        has_project_ref: input.hasProjectRef,
-        has_current_key: input.hasCurrentKey,
-        has_next_key: input.hasNextKey,
       },
     },
     401
   );
-}
-
-function decodeJwtSubject(token: string): string | null {
-  const parts = token.split(".");
-  if (parts.length < 2) {
-    return null;
-  }
-  const payload = decodeBase64Url(parts[1]);
-  if (!payload) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(payload) as { sub?: string };
-    return typeof parsed.sub === "string" ? parsed.sub : null;
-  } catch {
-    return null;
-  }
-}
-
-function decodeBase64Url(value: string): string | null {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padding = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
-  try {
-    return atob(padded + padding);
-  } catch {
-    return null;
-  }
 }
 
 function timingSafeEqual(a: string, b: string): boolean {

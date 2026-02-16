@@ -66,8 +66,7 @@ High-level staging setup:
 - `SMS_BODY_ENCRYPTION_KEY` (pgcrypto passphrase; keep secret and rotate via `key_version`)
 - `PROJECT_REF` (Supabase project ref, required for Twilio signature validation)
 - `TWILIO_STATUS_CALLBACK_URL` (optional; defaults to `https://<project-ref>.supabase.co/functions/v1/twilio-status-callback`)
-- `QSTASH_CURRENT_SIGNING_KEY` (Upstash QStash signing key)
-- `QSTASH_NEXT_SIGNING_KEY` (Upstash QStash signing key; rotation support)
+- `QSTASH_RUNNER_SECRET` (required by `twilio-outbound-runner` header auth)
 
 ---
 
@@ -123,11 +122,13 @@ supabase functions serve twilio-outbound-runner --no-verify-jwt
 ```
 
 ```bash
-curl -X POST \"http://127.0.0.1:54321/functions/v1/twilio-outbound-runner?limit=5\"
+curl -X POST "http://127.0.0.1:54321/functions/v1/twilio-outbound-runner?limit=5" \
+  -H "x-runner-secret: ${QSTASH_RUNNER_SECRET}"
 ```
 
 Unsigned requests are rejected with `401 Unauthorized`. To run the runner
-locally end-to-end, invoke it through QStash with a valid signature.
+locally end-to-end, include an `x-runner-secret` header that matches
+`QSTASH_RUNNER_SECRET` in the function environment.
 
 ### Idempotency Replay
 

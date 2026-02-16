@@ -94,11 +94,11 @@ If this file conflicts with any other env-var doc, this file wins.
 | `LOCAL_RUNNER_SECRET` | No (tooling) | `scripts/doctor.mjs`, `scripts/print-env-fingerprint.mjs` | Secret token | Local shell only. | Secret. |
 | `PRODUCTION_RUNNER_URL` | No (tooling / future parity checks) | `scripts/doctor.mjs` checks | Absolute URL with no query string | Local shell optional for diagnostics. | Non-secret. |
 | `PRODUCTION_RUNNER_SECRET` | No (tooling / future parity checks) | `scripts/doctor.mjs`, `scripts/print-env-fingerprint.mjs` | Secret token | Local shell optional for diagnostics. | Secret. |
-| `QSTASH_CURRENT_SIGNING_KEY` | Yes (QStash signature auth path) | `supabase/functions/twilio-outbound-runner` signature validation | Upstash signing key | Local: shell for local signed tests. Staging: Supabase staging function secret. Production: Supabase production function secret. | Secret. Rotate using current/next overlap. |
-| `QSTASH_NEXT_SIGNING_KEY` | Yes (QStash signature auth path) | Same as above | Upstash next signing key | Local: shell for local signed tests. Staging: Supabase staging function secret. Production: Supabase production function secret. | Secret. Maintain overlap during rotation. |
-| `QSTASH_RUNNER_SECRET` | Yes | `supabase/functions/twilio-outbound-runner` manual auth via `x-runner-secret` header | Random secret token; compared timing-safe | Local: shell optional. Staging: Supabase staging function secret. Production: Supabase production function secret. | Secret. Must be synchronized with caller secret when header-auth is used. |
+| `QSTASH_RUNNER_SECRET` | Yes | `supabase/functions/twilio-outbound-runner` deterministic auth via `x-runner-secret` header | Random secret token; compared timing-safe | Local: shell optional. Staging: Supabase staging function secret. Production: Supabase production function secret. | Secret. Must be synchronized with caller secret when header-auth is used. |
 | `QSTASH_AUTH_DEBUG` | No | Runner unauthorized debug payload toggle | `1` to enable, unset/`0` to disable | Local only for debugging. Staging/Production should remain unset. | Non-secret but can leak auth diagnostics; keep disabled outside controlled debugging. |
 | `QSTASH_ECHO_SECRET` | Yes (only if qstash-echo endpoint enabled) | `supabase/functions/qstash-echo` auth guard | Random secret token | Local: shell for local diagnostics. Staging: Supabase staging function secret. Production: Supabase production secret only if endpoint retained. | Secret. Rotate after any exposure. |
+
+Canonical scheduler path is Vercel Cron -> protected Next.js route -> Supabase runner with `CRON_SECRET` + `QSTASH_RUNNER_SECRET`. Legacy Upstash signature-key auth is deprecated and not required for staging or production scheduling.
 
 ### Observability
 
