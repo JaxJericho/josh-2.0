@@ -21,6 +21,8 @@ All commands must be green before promotion.
 Notes:
 - `pnpm doctor` runs pnpm's built-in diagnostics.
 - `pnpm run doctor` runs this repo's preflight script (`scripts/doctor.mjs`).
+- `scripts/doctor.mjs` runs a Supabase connectivity probe when `SUPABASE_URL` and `SUPABASE_ANON_KEY`
+  are set. Set `DOCTOR_REMOTE=1` to make connectivity failures fail the run (recommended for staging promotions).
 
 ## Staging Promotion Checklist (Staging Must Be Green Before Prod)
 

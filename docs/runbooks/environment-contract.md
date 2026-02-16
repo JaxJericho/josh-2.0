@@ -21,6 +21,98 @@ If this file conflicts with any other env-var doc, this file wins.
     - Vercel project env vars (production project, `Production` scope)
     - Supabase production project secrets (Edge Functions/Auth settings)
 
+## Staging Requirements (Current)
+
+This section is an explicit "where does it live" index for staging. It is meant to
+make `pnpm run doctor` and staging promotions deterministic.
+
+### Vercel Staging Env Vars (Next.js runtime)
+
+- `APP_ENV=staging`
+- `SENTRY_ENVIRONMENT=staging`
+- `SENTRY_DSN`
+- `NEXT_PUBLIC_SENTRY_DSN`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `CRON_SECRET`
+- `STAGING_RUNNER_URL` (no query params; recommended: `https://rcqlnfywwfsixznrmzmv.supabase.co/functions/v1/twilio-outbound-runner`)
+- `STAGING_RUNNER_SECRET` (must match Supabase `QSTASH_RUNNER_SECRET`)
+- `TWILIO_ACCOUNT_SID` (needed by reconcile route)
+- `TWILIO_AUTH_TOKEN` (needed by status callback + reconcile route)
+- `TWILIO_STATUS_CALLBACK_URL` (recommended; should point at `/api/webhooks/twilio/status`)
+
+### Supabase Staging Function Secrets (Edge Functions runtime)
+
+- `PROJECT_REF=rcqlnfywwfsixznrmzmv`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SMS_BODY_ENCRYPTION_KEY`
+- `QSTASH_RUNNER_SECRET` (must match Vercel `STAGING_RUNNER_SECRET` when using header auth)
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_FROM_NUMBER`
+- `TWILIO_STATUS_CALLBACK_URL` (recommended override for outbound runner)
+
+### Local `.env.local` (Doctor-Only Convenience)
+
+To run `pnpm run doctor` locally in a staging-shaped mode, mirror the above values into
+`.env.local` (never commit). At minimum, set:
+
+- `APP_ENV=staging`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `PROJECT_REF=rcqlnfywwfsixznrmzmv`
+- `CRON_SECRET`
+- `STAGING_RUNNER_URL`
+- `STAGING_RUNNER_SECRET`
+- `QSTASH_RUNNER_SECRET`
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_FROM_NUMBER`
+- `SMS_BODY_ENCRYPTION_KEY`
+- `SENTRY_ENVIRONMENT=staging`
+- `SENTRY_DSN`
+- `NEXT_PUBLIC_SENTRY_DSN`
+
+Minimal `.env.local` template (names only, fill values from Vercel/Supabase):
+
+```bash
+# Environment
+APP_ENV=staging
+SENTRY_ENVIRONMENT=staging
+
+# Observability (Vercel staging)
+SENTRY_DSN=...
+NEXT_PUBLIC_SENTRY_DSN=...
+
+# Supabase (Vercel staging)
+SUPABASE_URL=https://rcqlnfywwfsixznrmzmv.supabase.co
+SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+
+# Scheduler (Vercel staging)
+CRON_SECRET=...
+STAGING_RUNNER_URL=https://rcqlnfywwfsixznrmzmv.supabase.co/functions/v1/twilio-outbound-runner
+STAGING_RUNNER_SECRET=...
+
+# Supabase Functions (Supabase staging secrets)
+PROJECT_REF=rcqlnfywwfsixznrmzmv
+QSTASH_RUNNER_SECRET=...   # must match STAGING_RUNNER_SECRET when using header auth
+SMS_BODY_ENCRYPTION_KEY=...
+
+# Twilio (Vercel staging + Supabase staging secrets)
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_MESSAGING_SERVICE_SID=MG...   # or set TWILIO_FROM_NUMBER=+1...
+```
+
+Notes:
+- Do not paste secrets into PRs or docs. Use `pnpm env:fingerprint` to verify safely.
+- If you are not using QStash signature verification, do not set `QSTASH_CURRENT_SIGNING_KEY`
+  or `QSTASH_NEXT_SIGNING_KEY`.
+
 ## Canonical Variable Contract
 
 `Required` means required for the referenced runtime path to work in that environment.
@@ -94,8 +186,8 @@ If this file conflicts with any other env-var doc, this file wins.
 | `LOCAL_RUNNER_SECRET` | No (tooling) | `scripts/doctor.mjs`, `scripts/print-env-fingerprint.mjs` | Secret token | Local shell only. | Secret. |
 | `PRODUCTION_RUNNER_URL` | No (tooling / future parity checks) | `scripts/doctor.mjs` checks | Absolute URL with no query string | Local shell optional for diagnostics. | Non-secret. |
 | `PRODUCTION_RUNNER_SECRET` | No (tooling / future parity checks) | `scripts/doctor.mjs`, `scripts/print-env-fingerprint.mjs` | Secret token | Local shell optional for diagnostics. | Secret. |
-| `QSTASH_CURRENT_SIGNING_KEY` | Yes (QStash signature auth path) | `supabase/functions/twilio-outbound-runner` signature validation | Upstash signing key | Local: shell for local signed tests. Staging: Supabase staging function secret. Production: Supabase production function secret. | Secret. Rotate using current/next overlap. |
-| `QSTASH_NEXT_SIGNING_KEY` | Yes (QStash signature auth path) | Same as above | Upstash next signing key | Local: shell for local signed tests. Staging: Supabase staging function secret. Production: Supabase production function secret. | Secret. Maintain overlap during rotation. |
+| `QSTASH_CURRENT_SIGNING_KEY` | No (only if QStash signature verification enabled) | `supabase/functions/twilio-outbound-runner` signature validation | Upstash signing key | Local: shell for local signed tests. Staging: Supabase staging function secret only if signature verification is used. Production: Supabase production function secret only if signature verification is used. | Secret. Rotate using current/next overlap. |
+| `QSTASH_NEXT_SIGNING_KEY` | No (only if QStash signature verification enabled) | Same as above | Upstash next signing key | Local: shell for local signed tests. Staging: Supabase staging function secret only if signature verification is used. Production: Supabase production function secret only if signature verification is used. | Secret. Maintain overlap during rotation. |
 | `QSTASH_RUNNER_SECRET` | Yes | `supabase/functions/twilio-outbound-runner` manual auth via `x-runner-secret` header | Random secret token; compared timing-safe | Local: shell optional. Staging: Supabase staging function secret. Production: Supabase production function secret. | Secret. Must be synchronized with caller secret when header-auth is used. |
 | `QSTASH_AUTH_DEBUG` | No | Runner unauthorized debug payload toggle | `1` to enable, unset/`0` to disable | Local only for debugging. Staging/Production should remain unset. | Non-secret but can leak auth diagnostics; keep disabled outside controlled debugging. |
 | `QSTASH_ECHO_SECRET` | Yes (only if qstash-echo endpoint enabled) | `supabase/functions/qstash-echo` auth guard | Random secret token | Local: shell for local diagnostics. Staging: Supabase staging function secret. Production: Supabase production secret only if endpoint retained. | Secret. Rotate after any exposure. |

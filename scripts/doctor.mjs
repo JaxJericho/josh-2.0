@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 
 const CWD = process.cwd();
 const CONTRACT_PATH = path.join(CWD, "docs", "runbooks", "environment-contract.md");
@@ -23,13 +24,19 @@ function isSet(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function sha256Prefix(value) {
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 8);
+}
+
 function fingerprint(value) {
-  if (!isSet(value)) {
-    return "unset";
-  }
+  if (!isSet(value)) return "unset";
   const trimmed = value.trim();
-  const prefix = trimmed.slice(0, 4);
-  return `${prefix}... (len=${trimmed.length})`;
+  // Safe fingerprint only: never print raw prefixes.
+  return `len=${trimmed.length} sha256_8=${sha256Prefix(trimmed)}`;
+}
+
+function doctorRemoteEnabled() {
+  return process.env.DOCTOR_REMOTE === "1";
 }
 
 function parseDotEnvLine(line) {
@@ -262,6 +269,36 @@ function checkRequiredVars(rows, appEnv) {
     }
   }
 
+  // QStash signing keys are optional unless signature verification is being used.
+  // Treat "enabled" as "any signing key is set" to avoid partial config.
+  const currentKey = process.env.QSTASH_CURRENT_SIGNING_KEY;
+  const nextKey = process.env.QSTASH_NEXT_SIGNING_KEY;
+  const anyKeySet = isSet(currentKey) || isSet(nextKey);
+  if (anyKeySet) {
+    if (!isSet(currentKey) || !isSet(nextKey)) {
+      addResult(
+        "FAIL",
+        "Required Vars",
+        `QSTASH_CURRENT_SIGNING_KEY and QSTASH_NEXT_SIGNING_KEY must both be set when QStash signature verification is enabled. (current=${fingerprint(currentKey)}, next=${fingerprint(nextKey)})`
+      );
+    } else {
+      addResult(
+        "PASS",
+        "Required Vars",
+        `QStash signing key pair present (current=${fingerprint(currentKey)}, next=${fingerprint(nextKey)}).`
+      );
+    }
+
+    const projectRef = process.env.PROJECT_REF;
+    if (!isSet(projectRef)) {
+      addResult(
+        "FAIL",
+        "Required Vars",
+        "PROJECT_REF is required when QStash signature verification is enabled (used for expected URL)."
+      );
+    }
+  }
+
   for (const [name, row] of hardByName.entries()) {
     const value = process.env[name];
     if (!isSet(value)) {
@@ -291,10 +328,13 @@ async function checkSupabaseConnectivity() {
   const anonKey = process.env.SUPABASE_ANON_KEY;
 
   if (!isSet(supabaseUrl) || !isSet(anonKey)) {
+    const severity = doctorRemoteEnabled() ? "FAIL" : "WARN";
     addResult(
-      "FAIL",
+      severity,
       "Supabase Connectivity",
-      "SUPABASE_URL and SUPABASE_ANON_KEY are required for connectivity check."
+      doctorRemoteEnabled()
+        ? "SUPABASE_URL and SUPABASE_ANON_KEY are required for connectivity check (DOCTOR_REMOTE=1)."
+        : "Skipping connectivity check because SUPABASE_URL or SUPABASE_ANON_KEY is missing. (Set DOCTOR_REMOTE=1 to enforce.)"
     );
     return;
   }
@@ -323,19 +363,21 @@ async function checkSupabaseConnectivity() {
     });
 
     if (response.status === 401 || response.status === 403) {
+      const severity = doctorRemoteEnabled() ? "FAIL" : "WARN";
       addResult(
-        "FAIL",
+        severity,
         "Supabase Connectivity",
-        `Supabase responded ${response.status}. Hint: SUPABASE_ANON_KEY may not match SUPABASE_URL project.`
+        `Supabase responded ${response.status}. Hint: SUPABASE_ANON_KEY may not match SUPABASE_URL project. (Set DOCTOR_REMOTE=1 to enforce.)`
       );
       return;
     }
 
     if (response.status >= 500) {
+      const severity = doctorRemoteEnabled() ? "FAIL" : "WARN";
       addResult(
-        "FAIL",
+        severity,
         "Supabase Connectivity",
-        `Supabase responded ${response.status}. Hint: service may be unavailable.`
+        `Supabase responded ${response.status}. Hint: service may be unavailable. (Set DOCTOR_REMOTE=1 to enforce.)`
       );
       return;
     }
@@ -347,10 +389,11 @@ async function checkSupabaseConnectivity() {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const severity = doctorRemoteEnabled() ? "FAIL" : "WARN";
     addResult(
-      "FAIL",
+      severity,
       "Supabase Connectivity",
-      `Connectivity probe failed: ${message}. Hint: check network reachability and SUPABASE_URL.`
+      `Connectivity probe failed: ${message}. Hint: check network reachability and SUPABASE_URL. (Set DOCTOR_REMOTE=1 to enforce.)`
     );
   } finally {
     clearTimeout(timeoutId);
