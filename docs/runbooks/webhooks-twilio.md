@@ -225,6 +225,86 @@ SQL
 done
 ```
 
+## Outbound Status Reconciliation (Staging, CLI Only)
+
+Use this flow to prove the reconciliation job can self-heal a stale outbound row by
+refreshing the status from Twilio's Messages API.
+
+Required shell env vars (names only):
+- `STAGING_DB_URL`
+- `CRON_SECRET`
+
+1. Choose a real Twilio SID from a prior staging send:
+
+```bash
+psql "$STAGING_DB_URL" -X -v ON_ERROR_STOP=1 <<'SQL'
+select
+  twilio_message_sid,
+  status,
+  last_status_at,
+  created_at
+from public.sms_messages
+where direction = 'out'
+  and twilio_message_sid is not null
+order by created_at desc
+limit 10;
+SQL
+```
+
+Pick one `twilio_message_sid` from the output and export it:
+
+```bash
+export TWILIO_MESSAGE_SID="SMxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+2. Force it to look stale (do not invent SIDs):
+
+```bash
+psql "$STAGING_DB_URL" -X -v ON_ERROR_STOP=1 -v sid="$TWILIO_MESSAGE_SID" <<'SQL'
+update public.sms_messages
+set
+  status = coalesce(status, 'sent'),
+  last_status_at = now() - interval '1 day'
+where twilio_message_sid = :'sid';
+
+select twilio_message_sid, status, last_status_at
+from public.sms_messages
+where twilio_message_sid = :'sid'
+  and direction = 'out'
+order by created_at desc
+limit 1;
+SQL
+```
+
+3. Invoke reconcile route (should update at least 1 row):
+
+```bash
+curl -i -X POST \
+  -H "Authorization: Bearer ${CRON_SECRET}" \
+  "https://josh-2-0-staging.vercel.app/api/cron/reconcile-outbound?limit=25&stale_minutes=15"
+```
+
+4. Verify DB updated (status and last_status_at advanced):
+
+```bash
+psql "$STAGING_DB_URL" -X -v ON_ERROR_STOP=1 -v sid="$TWILIO_MESSAGE_SID" <<'SQL'
+select twilio_message_sid, status, last_status_at
+from public.sms_messages
+where twilio_message_sid = :'sid'
+  and direction = 'out'
+order by created_at desc
+limit 1;
+SQL
+```
+
+5. Idempotency proof (re-run immediately; `updated=0` expected):
+
+```bash
+curl -i -X POST \
+  -H "Authorization: Bearer ${CRON_SECRET}" \
+  "https://josh-2-0-staging.vercel.app/api/cron/reconcile-outbound?limit=25&stale_minutes=15"
+```
+
 ## Verification (Local)
 
 To test local functions explicitly, pass a local URL:

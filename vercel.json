@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/run-outbound",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-outbound",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

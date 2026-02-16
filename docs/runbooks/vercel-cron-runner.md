@@ -2,27 +2,38 @@
 
 ## How It Works
 
-Vercel Cron invokes a protected Next.js API route on a fixed schedule.
-That route validates `Authorization: Bearer ${CRON_SECRET}` and then calls the
-Supabase Edge Function runner using `STAGING_RUNNER_URL` and `STAGING_RUNNER_SECRET`
-via the `x-runner-secret` request header.
+Vercel Cron invokes protected Next.js API routes on a fixed schedule.
+Each route validates `Authorization: Bearer ${CRON_SECRET}` and then performs a
+deterministic job:
+
+- `run-outbound`: calls the Supabase Edge Function runner using `STAGING_RUNNER_URL`
+  and `STAGING_RUNNER_SECRET` via the `x-runner-secret` request header.
+- `reconcile-outbound`: scans for stale outbound rows in Postgres using service-role
+  and refreshes status directly from Twilio's Messages API.
 
 Scheduler chain:
 - Vercel Cron → protected Next.js route → Supabase Edge Function runner
 
 Cron path (configured in `vercel.json`):
 - `/api/cron/run-outbound`
+- `/api/cron/reconcile-outbound`
 
 ## Required Env Vars (Names Only)
 
-- `CRON_SECRET`
-- `STAGING_RUNNER_URL` (no query params)
-- `STAGING_RUNNER_SECRET`
+- `CRON_SECRET` (both cron routes)
+- `STAGING_RUNNER_URL` (no query params; run-outbound only)
+- `STAGING_RUNNER_SECRET` (run-outbound only)
+- `SUPABASE_URL` (reconcile-outbound only)
+- `SUPABASE_SERVICE_ROLE_KEY` (reconcile-outbound only)
+- `TWILIO_ACCOUNT_SID` (reconcile-outbound only)
+- `TWILIO_AUTH_TOKEN` (reconcile-outbound only)
 
 Notes:
-- This route does not require `SUPABASE_URL` or `SUPABASE_ANON_KEY` because it calls
+- `run-outbound` does not require `SUPABASE_URL` or `SUPABASE_ANON_KEY` because it calls
   the Edge Function runner via HTTP using `STAGING_RUNNER_URL`.
 - `STAGING_RUNNER_SECRET` must match the runner's `QSTASH_RUNNER_SECRET` in Supabase.
+- `reconcile-outbound` reads/writes Postgres via `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
+  and fetches message state from Twilio via `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN`.
 
 ## Manual Test (curl)
 
@@ -51,10 +62,27 @@ Expected response shape:
 { "ok": true, "runner_status": 200, "processed": 1, "sent": 1, "failed": 0 }
 ```
 
+## Reconcile Outbound (Backfill) — Manual Test (curl)
+
+This job scans for stale outbound rows and refreshes status directly from Twilio.
+
+```bash
+curl -i \
+  -H "Authorization: Bearer ${CRON_SECRET}" \
+  -X POST \
+  "${STAGING_BASE_URL}/api/cron/reconcile-outbound?limit=25&stale_minutes=15"
+```
+
+Expected response shape:
+
+```json
+{ "ok": true, "checked": 1, "updated": 1, "skipped": 0, "failed": 0 }
+```
+
 ## Troubleshooting Checklist
 
 - 401: Missing/invalid `Authorization` header or wrong `CRON_SECRET`.
-- 400: `STAGING_RUNNER_URL` contains query params (must not include `?`).
+- 400: `STAGING_RUNNER_URL` contains query params (must not include `?`) (run-outbound only).
 - 500: Missing required env vars in Vercel.
-- 502: Route could not reach the runner endpoint.
-- Upstream non-200: Runner returned an error; check Supabase Edge Function logs.
+- 502: Route could not reach the runner endpoint (run-outbound only).
+- Upstream non-200: Runner returned an error; check Supabase Edge Function logs (run-outbound only).
