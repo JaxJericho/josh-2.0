@@ -1,4 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+import {
+  dispatchConversationRoute,
+  routeConversationMessage,
+  type NormalizedInboundMessagePayload,
+} from "../_shared/router/conversation-router.ts";
 
 type Command = "STOP" | "HELP" | "NONE";
 
@@ -125,6 +130,11 @@ Deno.serve(async (req) => {
 
     if (insertError) {
       if (isDuplicateSidError(insertError)) {
+        console.info("twilio.inbound_duplicate_sid", {
+          request_id: requestId,
+          inbound_message_sid: messageSid,
+          command,
+        });
         return deterministicResponse(command);
       }
       return new Response("Server Error", { status: 500 });
@@ -132,11 +142,26 @@ Deno.serve(async (req) => {
 
     const isDuplicate = !insertedRows || insertedRows.length === 0;
     if (isDuplicate) {
+      console.info("twilio.inbound_duplicate_sid", {
+        request_id: requestId,
+        inbound_message_sid: messageSid,
+        command,
+      });
       return deterministicResponse(command);
+    }
+
+    const inboundMessageId = insertedRows?.[0]?.id ?? null;
+    if (!inboundMessageId) {
+      return new Response("Server Error", { status: 500 });
     }
 
     if (command === "STOP") {
       phase = "opt_out";
+      console.info("twilio.override_applied", {
+        request_id: requestId,
+        override_type: "STOP",
+        inbound_message_id: inboundMessageId,
+      });
       const optOutError = await recordOptOut(supabase, user?.id ?? null, fromE164);
       if (optOutError) {
         return new Response("Server Error", { status: 500 });
@@ -146,10 +171,45 @@ Deno.serve(async (req) => {
     }
 
     if (command === "HELP") {
+      console.info("twilio.override_applied", {
+        request_id: requestId,
+        override_type: "HELP",
+        inbound_message_id: inboundMessageId,
+      });
       return twimlResponse(HELP_REPLY);
     }
 
-    return twimlResponse();
+    phase = "route";
+    const payload: NormalizedInboundMessagePayload = {
+      inbound_message_id: inboundMessageId,
+      inbound_message_sid: messageSid,
+      from_e164: fromE164,
+      to_e164: toE164,
+      body_raw: bodyRaw,
+      body_normalized: bodyNormalized,
+    };
+
+    const routingDecision = await routeConversationMessage({
+      supabase,
+      payload,
+      safetyOverrideApplied: false,
+    });
+
+    phase = "dispatch";
+    const dispatchResult = await dispatchConversationRoute({
+      decision: routingDecision,
+      payload,
+    });
+
+    console.info("twilio.router_dispatch_completed", {
+      request_id: requestId,
+      inbound_message_id: inboundMessageId,
+      user_id: routingDecision.user_id,
+      route: routingDecision.route,
+      engine: dispatchResult.engine,
+    });
+
+    return twimlResponse(dispatchResult.reply_message);
   } catch (error) {
     const err = error as Error;
     console.error("twilio.unhandled_error", {
@@ -351,15 +411,7 @@ async function recordOptOut(
   userId: string | null,
   phoneE164: string
 ): Promise<Error | null> {
-  if (userId) {
-    const { error } = await supabase
-      .from("users")
-      .update({ sms_consent: false })
-      .eq("id", userId);
-    return error ?? null;
-  }
-
-  const { error } = await supabase
+  const { error: ledgerError } = await supabase
     .from("sms_opt_outs")
     .upsert(
       {
@@ -369,7 +421,18 @@ async function recordOptOut(
       { onConflict: "phone_e164", ignoreDuplicates: false }
     );
 
-  return error ?? null;
+  if (ledgerError) {
+    return ledgerError;
+  }
+
+  if (userId) {
+    const { error } = await supabase
+      .from("users")
+      .update({ sms_consent: false })
+      .eq("id", userId);
+    return error ?? null;
+  }
+  return null;
 }
 
 function twimlResponse(message?: string): Response {
