@@ -197,6 +197,7 @@ Deno.serve(async (req) => {
 
     phase = "dispatch";
     const dispatchResult = await dispatchConversationRoute({
+      supabase,
       decision: routingDecision,
       payload,
     });

@@ -38,23 +38,42 @@ describe("conversation router foundation", () => {
       .toThrow(ConversationRouterError);
   });
 
-  it("fails fast when conversation state is missing", async () => {
+  it("routes idle users with incomplete profile into interview engine", async () => {
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: { mode: "idle", state_token: "idle" },
+      profile: { is_complete_mvp: false, state: "partial" },
+    });
+
+    const decision = await routeConversationMessage({
+      supabase,
+      payload: samplePayload(),
+    });
+
+    expect(decision.route).toBe("profile_interview_engine");
+    expect(decision.next_transition).toBe("interview:start_onboarding");
+  });
+
+  it("creates default session when conversation state is missing", async () => {
     const supabase = buildSupabaseMock({
       user: { id: "usr_123" },
       session: null,
+      profile: null,
     });
 
-    await expect(
-      routeConversationMessage({
-        supabase,
-        payload: samplePayload(),
-      })
-    ).rejects.toMatchObject({ code: "MISSING_STATE" });
+    const decision = await routeConversationMessage({
+      supabase,
+      payload: samplePayload(),
+    });
+
+    expect(decision.state.mode).toBe("idle");
+    expect(decision.route).toBe("profile_interview_engine");
   });
 
   it("dispatches deterministic default engine response", async () => {
     const decision = sampleDecision("default_engine");
     const result = await dispatchConversationRoute({
+      supabase: buildSupabaseMock({ user: null, session: null, profile: null }),
       decision,
       payload: samplePayload(),
     });
@@ -92,8 +111,15 @@ function buildSupabaseMock(
   data: {
     user: { id: string } | null;
     session: { mode: string | null; state_token: string | null } | null;
+    profile: { is_complete_mvp: boolean; state: string | null } | null;
   },
 ) {
+  const state = {
+    user: data.user,
+    session: data.session,
+    profile: data.profile,
+  };
+
   return {
     from(table: string) {
       return {
@@ -103,10 +129,37 @@ function buildSupabaseMock(
               return {
                 async maybeSingle() {
                   if (table === "users") {
-                    return { data: data.user, error: null };
+                    return { data: state.user, error: null };
                   }
                   if (table === "conversation_sessions") {
-                    return { data: data.session, error: null };
+                    return { data: state.session, error: null };
+                  }
+                  if (table === "profiles") {
+                    return { data: state.profile, error: null };
+                  }
+                  return { data: null, error: null };
+                },
+              };
+            },
+          };
+        },
+        insert(payload: {
+          mode: string;
+          state_token: string;
+        }) {
+          return {
+            select() {
+              return {
+                async single() {
+                  if (table === "conversation_sessions") {
+                    state.session = {
+                      mode: payload.mode,
+                      state_token: payload.state_token,
+                    };
+                    return {
+                      data: state.session,
+                      error: null,
+                    };
                   }
                   return { data: null, error: null };
                 },
