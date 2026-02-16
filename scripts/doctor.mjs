@@ -180,7 +180,7 @@ function isRequiredForEnv(row, appEnv) {
 function isConditionalRequirement(row) {
   const text = `${row.required} ${row.usedBy} ${row.notes}`.toLowerCase();
 
-  return /near-term|planned|placeholder|only if|build-time optional|\boptional\b/.test(text);
+  return /near-term|planned|placeholder|only if|build-time optional|\boptional\b|deprecated|legacy/.test(text);
 }
 
 function isLikelyUrlVar(name) {

@@ -39,8 +39,6 @@ DOCTOR_REMOTE=1 node scripts/doctor.mjs
 
 These env var names are still referenced in code/docs and should be renamed in a later ticket:
 
-- `QSTASH_CURRENT_SIGNING_KEY`
-- `QSTASH_NEXT_SIGNING_KEY`
 - `QSTASH_RUNNER_SECRET`
 - `QSTASH_AUTH_DEBUG`
 
