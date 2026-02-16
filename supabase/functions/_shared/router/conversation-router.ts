@@ -35,6 +35,7 @@ export type NormalizedInboundMessagePayload = {
 };
 
 export type EngineDispatchInput = {
+  supabase: SupabaseClientLike;
   decision: RoutingDecision;
   payload: NormalizedInboundMessagePayload;
 };
@@ -83,7 +84,7 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
 };
 
 const LEGAL_TRANSITIONS_BY_MODE: Record<ConversationMode, ReadonlySet<string>> = {
-  idle: new Set(["idle:awaiting_user_input"]),
+  idle: new Set(["idle:awaiting_user_input", "interview:start_onboarding"]),
   interviewing: new Set(["interview:awaiting_next_input"]),
   linkup_forming: new Set(["linkup:awaiting_details"]),
   awaiting_invite_reply: new Set(["invite:awaiting_reply"]),
@@ -115,17 +116,17 @@ export async function routeConversationMessage(
     );
   }
 
-  const session = await fetchConversationSession(params.supabase, user.id);
-  if (!session) {
-    throw new ConversationRouterError(
-      "MISSING_STATE",
-      "Conversation state is missing for the resolved user."
-    );
-  }
+  const session = await fetchOrCreateConversationSession(params.supabase, user.id);
 
   const state = validateConversationState(session.mode, session.state_token);
-  const route = resolveRouteForState(state);
-  const nextTransition = resolveNextTransition(state, route);
+  const profile = await fetchProfileSummary(params.supabase, user.id);
+  const shouldForceInterview = shouldRouteIdleUserToInterview(state, profile);
+  const route = shouldForceInterview
+    ? "profile_interview_engine"
+    : resolveRouteForState(state);
+  const nextTransition = shouldForceInterview
+    ? "interview:start_onboarding"
+    : resolveNextTransition(state, route);
 
   const decision: RoutingDecision = {
     user_id: user.id,
@@ -282,6 +283,86 @@ async function fetchConversationSession(
     mode: data.mode ?? null,
     state_token: data.state_token ?? null,
   };
+}
+
+async function fetchOrCreateConversationSession(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<{ mode: string | null; state_token: string | null }> {
+  const existing = await fetchConversationSession(supabase, userId);
+  if (existing) {
+    return existing;
+  }
+
+  const { data, error } = await supabase
+    .from("conversation_sessions")
+    .insert({
+      user_id: userId,
+      mode: "idle",
+      state_token: "idle",
+      current_step_id: null,
+      last_inbound_message_sid: null,
+    })
+    .select("mode,state_token")
+    .single();
+
+  if (error || !data) {
+    throw new ConversationRouterError(
+      "STATE_CREATE_FAILED",
+      "Unable to create default conversation state for routing."
+    );
+  }
+
+  return {
+    mode: data.mode ?? null,
+    state_token: data.state_token ?? null,
+  };
+}
+
+async function fetchProfileSummary(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<{ is_complete_mvp: boolean; state: string | null } | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("is_complete_mvp,state")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "PROFILE_LOOKUP_FAILED",
+      "Unable to load profile completeness for routing."
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    is_complete_mvp: data.is_complete_mvp ?? false,
+    state: data.state ?? null,
+  };
+}
+
+function shouldRouteIdleUserToInterview(
+  state: ConversationState,
+  profile: { is_complete_mvp: boolean; state: string | null } | null,
+): boolean {
+  if (state.mode !== "idle") {
+    return false;
+  }
+
+  if (!profile) {
+    return true;
+  }
+
+  if (profile.is_complete_mvp) {
+    return false;
+  }
+
+  return profile.state !== "complete_full";
 }
 
 function isConversationMode(value: string): value is ConversationMode {
