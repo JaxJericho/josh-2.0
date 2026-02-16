@@ -185,7 +185,9 @@ function isRequiredForEnv(row, appEnv) {
 }
 
 function isConditionalRequirement(row) {
-  const text = `${row.required} ${row.usedBy} ${row.notes}`.toLowerCase();
+  // Only treat vars as conditional if the contract explicitly marks them as such.
+  // (Used-by text can mention "planned/near-term" without making the var optional.)
+  const text = `${row.required} ${row.notes}`.toLowerCase();
 
   return /near-term|planned|placeholder|only if|build-time optional|\boptional\b/.test(text);
 }
