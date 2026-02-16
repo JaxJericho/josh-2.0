@@ -53,6 +53,14 @@ export type ProfileUpdatePatch = {
   state_changed_at: string;
 };
 
+export type StructuredProfileCoreSignals = {
+  fingerprint: Record<string, unknown>;
+  activity_patterns: Array<Record<string, unknown>>;
+  boundaries: Record<string, unknown>;
+  preferences: Record<string, unknown>;
+  active_intent: Record<string, unknown> | null;
+};
+
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -380,5 +388,21 @@ export function buildProfilePatchForInterviewAnswer(params: {
     completed_at: isComplete ? params.nowIso : params.profile.completed_at,
     status_reason: isComplete ? "interview_complete_mvp" : "interview_in_progress",
     state_changed_at: nextState !== params.profile.state ? params.nowIso : params.profile.state_changed_at,
+  };
+}
+
+export function buildStructuredProfileCoreSignals(input: {
+  fingerprint: unknown;
+  activity_patterns: unknown;
+  boundaries: unknown;
+  preferences: unknown;
+  active_intent: unknown;
+}): StructuredProfileCoreSignals {
+  return {
+    fingerprint: asObject(input.fingerprint),
+    activity_patterns: asObjectArray(input.activity_patterns),
+    boundaries: asObject(input.boundaries),
+    preferences: asObject(input.preferences),
+    active_intent: input.active_intent == null ? null : asObject(input.active_intent),
   };
 }
