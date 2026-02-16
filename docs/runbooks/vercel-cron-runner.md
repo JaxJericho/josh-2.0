@@ -12,12 +12,17 @@ Scheduler chain:
 
 Cron path (configured in `vercel.json`):
 - `/api/cron/run-outbound`
+- `/api/cron/reconcile-outbound`
 
 ## Required Env Vars (Names Only)
 
-- `CRON_SECRET`
-- `STAGING_RUNNER_URL` (no query params)
-- `STAGING_RUNNER_SECRET`
+- `CRON_SECRET` (both cron routes)
+- `STAGING_RUNNER_URL` (no query params; run-outbound only)
+- `STAGING_RUNNER_SECRET` (run-outbound only)
+- `SUPABASE_URL` (reconcile-outbound only)
+- `SUPABASE_SERVICE_ROLE_KEY` (reconcile-outbound only)
+- `TWILIO_ACCOUNT_SID` (reconcile-outbound only)
+- `TWILIO_AUTH_TOKEN` (reconcile-outbound only)
 
 Notes:
 - This route does not require `SUPABASE_URL` or `SUPABASE_ANON_KEY` because it calls
@@ -49,6 +54,23 @@ Expected response shape:
 
 ```json
 { "ok": true, "runner_status": 200, "processed": 1, "sent": 1, "failed": 0 }
+```
+
+## Reconcile Outbound (Backfill) — Manual Test (curl)
+
+This job scans for stale outbound rows and refreshes status directly from Twilio.
+
+```bash
+curl -i \
+  -H "Authorization: Bearer ${CRON_SECRET}" \
+  -X POST \
+  "${STAGING_BASE_URL}/api/cron/reconcile-outbound?limit=25&stale_minutes=15"
+```
+
+Expected response shape:
+
+```json
+{ "ok": true, "checked": 1, "updated": 1, "skipped": 0, "failed": 0 }
 ```
 
 ## Troubleshooting Checklist
