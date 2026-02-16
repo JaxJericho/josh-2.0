@@ -2,6 +2,8 @@
 import { buildInterviewTransitionPlan, type ConversationMode, type InterviewSessionSnapshot } from "../../../../packages/core/src/interview/state.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import type { ProfileRowForInterview, ProfileState } from "../../../../packages/core/src/profile/profile-writer.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { recomputeProfileSignals } from "../../../../packages/core/src/compatibility/compatibility-signal-writer.ts";
 import type {
   EngineDispatchInput,
   EngineDispatchResult,
@@ -30,6 +32,7 @@ type ProfileRow = {
   completed_at: string | null;
   status_reason: string | null;
   state_changed_at: string;
+  updated_at: string;
 };
 
 const VALID_CONVERSATION_MODES: ReadonlySet<ConversationMode> = new Set([
@@ -195,7 +198,7 @@ async function fetchOrCreateProfile(
   userId: string,
 ): Promise<ProfileRow> {
   const selectColumns =
-    "id,user_id,state,is_complete_mvp,last_interview_step,preferences,fingerprint,activity_patterns,boundaries,active_intent,completeness_percent,completed_at,status_reason,state_changed_at";
+    "id,user_id,state,is_complete_mvp,last_interview_step,preferences,fingerprint,activity_patterns,boundaries,active_intent,completeness_percent,completed_at,status_reason,state_changed_at,updated_at";
 
   const { data: existing, error } = await supabase
     .from("profiles")
@@ -223,6 +226,7 @@ async function fetchOrCreateProfile(
       completed_at: existing.completed_at,
       status_reason: existing.status_reason,
       state_changed_at: existing.state_changed_at,
+      updated_at: existing.updated_at,
     };
   }
 
@@ -265,6 +269,7 @@ async function fetchOrCreateProfile(
     completed_at: created.completed_at,
     status_reason: created.status_reason,
     state_changed_at: created.state_changed_at,
+    updated_at: created.updated_at,
   };
 }
 
@@ -288,6 +293,13 @@ async function persistInterviewTransition(params: {
 
     if (updateProfileError) {
       throw new Error("Unable to persist profile interview patch.");
+    }
+
+    if (params.transition.profile_patch.is_complete_mvp) {
+      await recomputeProfileSignals({
+        supabase: params.supabase,
+        user_id: params.userId,
+      });
     }
   }
 
