@@ -12,7 +12,12 @@ insert into public.regions (
   display_name,
   state,
   geometry,
-  rules
+  rules,
+  name,
+  country_code,
+  state_code,
+  is_active,
+  is_launch_region
 ) values
   (
     '00000000-0000-0000-0000-000000000101'::uuid,
@@ -20,7 +25,12 @@ insert into public.regions (
     'Bay Area',
     'open',
     '{"type":"region","name":"Bay Area"}'::jsonb,
-    '{"density_thresholds":{"eligible_min":50}}'::jsonb
+    '{"density_thresholds":{"eligible_min":50}}'::jsonb,
+    'Bay Area',
+    'US',
+    'CA',
+    true,
+    true
   ),
   (
     '00000000-0000-0000-0000-000000000102'::uuid,
@@ -28,14 +38,24 @@ insert into public.regions (
     'Austin',
     'waitlisted',
     '{"type":"region","name":"Austin"}'::jsonb,
-    '{"density_thresholds":{"eligible_min":40}}'::jsonb
+    '{"density_thresholds":{"eligible_min":40}}'::jsonb,
+    'Austin',
+    'US',
+    'TX',
+    false,
+    false
   )
 on conflict (id) do update set
   slug = excluded.slug,
   display_name = excluded.display_name,
   state = excluded.state,
   geometry = excluded.geometry,
-  rules = excluded.rules;
+  rules = excluded.rules,
+  name = excluded.name,
+  country_code = excluded.country_code,
+  state_code = excluded.state_code,
+  is_active = excluded.is_active,
+  is_launch_region = excluded.is_launch_region;
 
 -- Users
 with seed_users as (

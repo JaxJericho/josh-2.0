@@ -35,6 +35,7 @@ describe("onboarding interview e2e", () => {
       "B",
       "bars and late nights",
       "C",
+      "US-WA",
     ];
 
     let finalAction = "";
@@ -151,6 +152,8 @@ function createHarnessState(): InterviewHarnessState {
     profile: {
       id: "pro_123",
       user_id: "usr_123",
+      country_code: null,
+      state_code: null,
       state: "empty",
       is_complete_mvp: false,
       last_interview_step: null,
