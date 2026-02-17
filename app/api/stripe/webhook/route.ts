@@ -45,9 +45,6 @@ async function insertStripeEvent(event: Stripe.Event): Promise<{
     event_type: event.type,
     event_created_at: new Date(event.created * 1000).toISOString(),
     payload: event as unknown as Json,
-    received_at: new Date().toISOString(),
-    processed_at: null,
-    processing_error: null,
   });
 
   if (!error) {
