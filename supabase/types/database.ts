@@ -2065,6 +2065,8 @@ export type Database = {
           event_type: string
           id: string
           payload: Json
+          processed_at: string | null
+          processing_error: string | null
           received_at: string
           updated_at: string
         }
@@ -2075,6 +2077,8 @@ export type Database = {
           event_type: string
           id?: string
           payload: Json
+          processed_at?: string | null
+          processing_error?: string | null
           received_at?: string
           updated_at?: string
         }
@@ -2085,6 +2089,8 @@ export type Database = {
           event_type?: string
           id?: string
           payload?: Json
+          processed_at?: string | null
+          processing_error?: string | null
           received_at?: string
           updated_at?: string
         }
@@ -2748,4 +2754,3 @@ export const Constants = {
     },
   },
 } as const
-
