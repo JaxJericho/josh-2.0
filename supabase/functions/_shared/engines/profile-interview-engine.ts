@@ -7,7 +7,9 @@ import { recomputeProfileSignals } from "../../../../packages/core/src/compatibi
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { resolveRegionAssignment } from "../../../../packages/core/src/regions/assignment.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import { enforceWaitlistGate } from "../waitlist/waitlist-operations.ts";
+import { createSupabaseEntitlementsRepository, evaluateEntitlements } from "../../../../packages/core/src/entitlements/evaluate-entitlements.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { enforceWaitlistGate, SAFETY_HOLD_MESSAGE } from "../waitlist/waitlist-operations.ts";
 import type {
   EngineDispatchInput,
   EngineDispatchResult,
@@ -125,6 +127,17 @@ export async function runProfileInterviewEngine(
   );
 
   const profile = await fetchOrCreateProfile(input.supabase, input.decision.user_id);
+  const entitlementEvaluation = await evaluateEntitlements({
+    profile_id: profile.id,
+    repository: createSupabaseEntitlementsRepository(input.supabase),
+  });
+
+  if (entitlementEvaluation.blocked_by_safety_hold) {
+    return {
+      engine: "profile_interview_engine",
+      reply_message: SAFETY_HOLD_MESSAGE,
+    };
+  }
 
   const transition = buildInterviewTransitionPlan({
     inbound_message_sid: input.payload.inbound_message_sid,

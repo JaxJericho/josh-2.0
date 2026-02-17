@@ -16,7 +16,7 @@ export async function runDefaultEngine(
     allowNotification: true,
   });
 
-  if (waitlistGate.is_waitlist_region && waitlistGate.reply_message) {
+  if (waitlistGate.reply_message) {
     return {
       engine: "default_engine",
       reply_message: waitlistGate.reply_message,

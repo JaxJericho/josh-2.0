@@ -61,12 +61,48 @@ describe("default engine waitlist gating", () => {
     expect(result.reply_message).toContain("default engine selected");
     expect(Object.keys(state.waitlistEntries).length).toBe(0);
   });
+
+  it("respects waitlist_override and skips waitlist insertion", async () => {
+    const state = createState({
+      isLaunchRegion: false,
+      regionSlug: "waitlist",
+      regionId: "reg_waitlist",
+      profileEntitlements: {
+        can_initiate: true,
+        can_participate: false,
+        can_exchange_contact: false,
+        region_override: false,
+        waitlist_override: true,
+        safety_override: false,
+        reason: "manual override",
+      },
+    });
+
+    const result = await runDefaultEngine({
+      supabase: buildSupabaseMock(state),
+      decision: decisionFor(state.userId),
+      payload: payloadStub(),
+    });
+
+    expect(result.reply_message).toContain("default engine selected");
+    expect(Object.keys(state.waitlistEntries)).toHaveLength(0);
+  });
 });
 
 function createState(params: {
   isLaunchRegion: boolean;
   regionSlug: string;
   regionId: string;
+  profileEntitlements?: {
+    can_initiate: boolean;
+    can_participate: boolean;
+    can_exchange_contact: boolean;
+    region_override: boolean;
+    waitlist_override: boolean;
+    safety_override: boolean;
+    reason: string | null;
+  };
+  hasActiveSafetyHold?: boolean;
 }) {
   return {
     userId: "usr_waitlist_1",
@@ -80,6 +116,8 @@ function createState(params: {
         is_launch_region: params.isLaunchRegion,
       },
     },
+    profileEntitlements: params.profileEntitlements ?? null,
+    hasActiveSafetyHold: params.hasActiveSafetyHold ?? false,
     waitlistEntries: {} as Record<string, WaitlistEntryRow>,
   };
 }
@@ -96,6 +134,16 @@ function buildSupabaseMock(state: {
       is_launch_region: boolean;
     };
   } | null;
+  profileEntitlements: {
+    can_initiate: boolean;
+    can_participate: boolean;
+    can_exchange_contact: boolean;
+    region_override: boolean;
+    waitlist_override: boolean;
+    safety_override: boolean;
+    reason: string | null;
+  } | null;
+  hasActiveSafetyHold: boolean;
   waitlistEntries: Record<string, WaitlistEntryRow>;
 }) {
   return {
@@ -113,7 +161,11 @@ function buildSupabaseMock(state: {
         async maybeSingle() {
           if (table === "profiles") {
             const userId = queryState.user_id as string;
-            if (userId !== state.userId) {
+            const profileId = queryState.id as string;
+            if (userId && userId !== state.userId) {
+              return { data: null, error: null };
+            }
+            if (profileId && profileId !== state.profileId) {
               return { data: null, error: null };
             }
             return {
@@ -140,6 +192,24 @@ function buildSupabaseMock(state: {
             const profileId = queryState.profile_id as string;
             return {
               data: state.waitlistEntries[profileId] ?? null,
+              error: null,
+            };
+          }
+
+          if (table === "profile_entitlements") {
+            const profileId = queryState.profile_id as string;
+            if (profileId !== state.profileId || !state.profileEntitlements) {
+              return { data: null, error: null };
+            }
+            return {
+              data: state.profileEntitlements,
+              error: null,
+            };
+          }
+
+          if (table === "safety_holds") {
+            return {
+              data: state.hasActiveSafetyHold ? { id: "hold_1" } : null,
               error: null,
             };
           }

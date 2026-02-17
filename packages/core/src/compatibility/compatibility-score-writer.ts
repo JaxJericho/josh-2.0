@@ -1,5 +1,9 @@
 import { COMPATIBILITY_SIGNAL_TABLE } from "./compatibility-signal-writer";
 import { scorePair, type CompatibilityScoreResult, type CompatibilitySignalSnapshot } from "./scorer";
+import {
+  createSupabaseEntitlementsRepository,
+  evaluateEntitlements,
+} from "../entitlements/evaluate-entitlements";
 
 export const COMPATIBILITY_SCORE_TABLE = "profile_compatibility_scores";
 
@@ -18,11 +22,6 @@ type ProfileRow = {
   user_id: string;
   state: string;
   is_complete_mvp: boolean;
-};
-
-type EntitlementRow = {
-  user_id: string;
-  can_receive_intro: boolean;
 };
 
 type SignalRow = {
@@ -156,14 +155,25 @@ async function assertUserIsEligible(
     );
   }
 
-  const entitlements = await fetchEntitlements(supabase, userId);
-  if (!entitlements.can_receive_intro) {
+  const entitlements = await evaluateEntitlements({
+    profile_id: profile.id,
+    repository: createSupabaseEntitlementsRepository(supabase),
+  });
+  if (!entitlements.can_participate) {
+    if (entitlements.blocked_by_safety_hold) {
+      throw new Error(
+        `User '${userId}' is not eligible: active safety hold present.`,
+      );
+    }
+    if (entitlements.blocked_by_waitlist) {
+      throw new Error(
+        `User '${userId}' is not eligible: waitlist gating is active.`,
+      );
+    }
     throw new Error(
-      `User '${userId}' is not eligible: can_receive_intro is false.`,
+      `User '${userId}' is not eligible: can_participate is false.`,
     );
   }
-
-  await assertNoActiveSafetyHold(supabase, userId);
 }
 
 async function fetchUser(
@@ -215,52 +225,6 @@ async function fetchProfile(
     state: data.state,
     is_complete_mvp: data.is_complete_mvp,
   };
-}
-
-async function fetchEntitlements(
-  supabase: SupabaseClientLike,
-  userId: string,
-): Promise<EntitlementRow> {
-  const { data, error } = await supabase
-    .from("entitlements")
-    .select("user_id,can_receive_intro")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to load entitlements for user '${userId}'.`);
-  }
-
-  if (!data?.user_id) {
-    throw new Error(`Entitlements not found for user '${userId}'.`);
-  }
-
-  return {
-    user_id: data.user_id,
-    can_receive_intro: data.can_receive_intro,
-  };
-}
-
-async function assertNoActiveSafetyHold(
-  supabase: SupabaseClientLike,
-  userId: string,
-): Promise<void> {
-  const { data, error } = await supabase
-    .from("safety_holds")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("status", "active")
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to load safety hold state for user '${userId}'.`);
-  }
-
-  if (data?.id) {
-    throw new Error(
-      `User '${userId}' is not eligible: active safety hold present.`,
-    );
-  }
 }
 
 function toSignalSnapshot(row: SignalRow): CompatibilitySignalSnapshot {
