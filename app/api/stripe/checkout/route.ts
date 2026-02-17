@@ -125,6 +125,9 @@ export async function POST(request: Request): Promise<Response> {
       success_url: `${origin}/dashboard?checkout=success`,
       cancel_url: `${origin}/dashboard?checkout=cancel`,
       metadata: { user_id: userId },
+      subscription_data: {
+        metadata: { user_id: userId },
+      },
       client_reference_id: userId,
       ...(existingCustomerId ? { customer: existingCustomerId } : {}),
     });
