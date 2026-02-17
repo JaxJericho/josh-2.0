@@ -30,6 +30,14 @@ type ExistingSubscriptionState = Pick<
   | "cancel_at_period_end"
 >;
 
+type ExistingEntitlementState = Pick<
+  Database["public"]["Tables"]["entitlements"]["Row"],
+  | "version"
+  | "intro_credits_remaining"
+  | "linkup_credits_remaining"
+  | "expires_at"
+>;
+
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -64,6 +72,14 @@ function isSupportedSubscriptionEventType(
   );
 }
 
+function isLifecycleStatusEvent(eventType: string): boolean {
+  return (
+    eventType === "customer.subscription.created" ||
+    eventType === "customer.subscription.updated" ||
+    eventType === "customer.subscription.deleted"
+  );
+}
+
 function coerceNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -84,6 +100,26 @@ function coerceStripeIdentifier(value: unknown): string | null {
   }
 
   return null;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
+
+function subscriptionStatusToEntitlements(status: string): {
+  canReceiveIntro: boolean;
+  canInitiateLinkup: boolean;
+  canParticipateLinkup: boolean;
+} {
+  const isActive = status === "active";
+
+  return {
+    canReceiveIntro: isActive,
+    canInitiateLinkup: isActive,
+    canParticipateLinkup: isActive,
+  };
 }
 
 function toSafeErrorMessage(error: unknown): string {
@@ -165,6 +201,58 @@ async function fetchExistingSubscriptionState(
   return data;
 }
 
+async function fetchExistingEntitlementState(
+  userId: string
+): Promise<ExistingEntitlementState | null> {
+  const supabase = getSupabaseServiceRoleClient();
+  const { data, error } = await supabase
+    .from("entitlements")
+    .select("version,intro_credits_remaining,linkup_credits_remaining,expires_at")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load entitlements state (${error.code ?? "unknown"})`);
+  }
+
+  return data;
+}
+
+async function upsertEntitlementsFromSubscriptionState(input: {
+  userId: string | null;
+  status: string;
+}): Promise<void> {
+  const userId = input.userId ? input.userId.trim() : "";
+  if (!isUuid(userId)) {
+    throw new Error("Subscription event user_id is missing or not a valid UUID.");
+  }
+
+  const entitlementFlags = subscriptionStatusToEntitlements(input.status);
+  const nowIso = new Date().toISOString();
+  const existing = await fetchExistingEntitlementState(userId);
+  const supabase = getSupabaseServiceRoleClient();
+  const { error } = await supabase.from("entitlements").upsert(
+    {
+      user_id: userId,
+      can_receive_intro: entitlementFlags.canReceiveIntro,
+      can_initiate_linkup: entitlementFlags.canInitiateLinkup,
+      can_participate_linkup: entitlementFlags.canParticipateLinkup,
+      intro_credits_remaining: existing ? existing.intro_credits_remaining : 0,
+      linkup_credits_remaining: existing ? existing.linkup_credits_remaining : 0,
+      expires_at: existing?.expires_at ?? null,
+      source: "stripe",
+      computed_at: nowIso,
+      updated_at: nowIso,
+      version: existing ? existing.version + 1 : 1,
+    },
+    { onConflict: "user_id" }
+  );
+
+  if (error) {
+    throw new Error(`Failed to upsert entitlements state (${error.code ?? "unknown"})`);
+  }
+}
+
 async function persistSubscriptionLifecycleState(event: Stripe.Event): Promise<void> {
   if (!isSupportedSubscriptionEventType(event.type)) {
     return;
@@ -206,6 +294,13 @@ async function persistSubscriptionLifecycleState(event: Stripe.Event): Promise<v
 
   if (error) {
     throw new Error(`Failed to persist subscription state (${error.code ?? "unknown"})`);
+  }
+
+  if (isLifecycleStatusEvent(event.type)) {
+    await upsertEntitlementsFromSubscriptionState({
+      userId: mergedUserId,
+      status: mergedStatus,
+    });
   }
 }
 
