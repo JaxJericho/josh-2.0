@@ -31,6 +31,36 @@ stripe trigger payment_intent.succeeded
 
 Expected result: webhook route returns `200` with `ok: true`.
 
+## Ingestion + Idempotency Verification
+
+After `stripe trigger checkout.session.completed`, verify the event was persisted and marked processed.
+
+1. Capture the Stripe event id from CLI output (`evt_...`).
+2. Query `public.stripe_events`:
+
+```bash
+psql "$STAGING_DB_DSN" -X -A -F '|' -t -c \
+  "select event_id,event_type,processed_at,processing_error from public.stripe_events where event_id='evt_xxx';"
+```
+
+Expected result:
+
+- one row returned
+- `processed_at` is non-null
+- `processing_error` is null
+
+Replay check:
+
+1. Re-send the same event from Stripe CLI (`stripe events resend <event_id>`).
+2. Confirm row count remains `1`:
+
+```bash
+psql "$STAGING_DB_DSN" -X -A -t -c \
+  "select count(*) from public.stripe_events where event_id='evt_xxx';"
+```
+
+Expected result: `1` (duplicate webhook acknowledged without inserting another row).
+
 ## Signature Failure Smoke Check
 
 Without a Stripe signature header, the route must fail with `400` (not `404`):
