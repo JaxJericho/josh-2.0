@@ -1255,6 +1255,189 @@ export type Database = {
           },
         ]
       }
+      profile_compatibility_scores: {
+        Row: {
+          a_hash: string
+          b_hash: string
+          breakdown_json: Json
+          computed_at: string
+          id: string
+          score_total: number
+          score_version: string
+          updated_at: string
+          user_a_id: string
+          user_b_id: string
+        }
+        Insert: {
+          a_hash: string
+          b_hash: string
+          breakdown_json?: Json
+          computed_at?: string
+          id?: string
+          score_total: number
+          score_version: string
+          updated_at?: string
+          user_a_id: string
+          user_b_id: string
+        }
+        Update: {
+          a_hash?: string
+          b_hash?: string
+          breakdown_json?: Json
+          computed_at?: string
+          id?: string
+          score_total?: number
+          score_version?: string
+          updated_at?: string
+          user_a_id?: string
+          user_b_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_compatibility_scores_user_a_id_fkey"
+            columns: ["user_a_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_compatibility_scores_user_b_id_fkey"
+            columns: ["user_b_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profile_compatibility_signals: {
+        Row: {
+          availability_vector: number[]
+          content_hash: string
+          created_at: string
+          id: string
+          intent_vector: number[]
+          interest_vector: number[]
+          metadata: Json
+          normalization_version: string
+          profile_id: string
+          source_profile_completed_at: string | null
+          source_profile_state: Database["public"]["Enums"]["profile_state"]
+          source_profile_updated_at: string
+          trait_vector: number[]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          availability_vector: number[]
+          content_hash: string
+          created_at?: string
+          id?: string
+          intent_vector: number[]
+          interest_vector: number[]
+          metadata?: Json
+          normalization_version: string
+          profile_id: string
+          source_profile_completed_at?: string | null
+          source_profile_state: Database["public"]["Enums"]["profile_state"]
+          source_profile_updated_at: string
+          trait_vector: number[]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          availability_vector?: number[]
+          content_hash?: string
+          created_at?: string
+          id?: string
+          intent_vector?: number[]
+          interest_vector?: number[]
+          metadata?: Json
+          normalization_version?: string
+          profile_id?: string
+          source_profile_completed_at?: string | null
+          source_profile_state?: Database["public"]["Enums"]["profile_state"]
+          source_profile_updated_at?: string
+          trait_vector?: number[]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_compatibility_signals_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_compatibility_signals_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profile_entitlements: {
+        Row: {
+          can_exchange_contact: boolean
+          can_initiate: boolean
+          can_participate: boolean
+          created_at: string
+          id: string
+          profile_id: string
+          reason: string | null
+          region_override: boolean
+          safety_override: boolean
+          updated_at: string
+          updated_by: string | null
+          waitlist_override: boolean
+        }
+        Insert: {
+          can_exchange_contact?: boolean
+          can_initiate?: boolean
+          can_participate?: boolean
+          created_at?: string
+          id?: string
+          profile_id: string
+          reason?: string | null
+          region_override?: boolean
+          safety_override?: boolean
+          updated_at?: string
+          updated_by?: string | null
+          waitlist_override?: boolean
+        }
+        Update: {
+          can_exchange_contact?: boolean
+          can_initiate?: boolean
+          can_participate?: boolean
+          created_at?: string
+          id?: string
+          profile_id?: string
+          reason?: string | null
+          region_override?: boolean
+          safety_override?: boolean
+          updated_at?: string
+          updated_by?: string | null
+          waitlist_override?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_entitlements_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_entitlements_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profile_events: {
         Row: {
           correlation_id: string | null
@@ -1312,6 +1495,51 @@ export type Database = {
           },
         ]
       }
+      profile_region_assignments: {
+        Row: {
+          assigned_at: string
+          assignment_source: string
+          created_at: string
+          id: string
+          profile_id: string
+          region_id: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_at?: string
+          assignment_source: string
+          created_at?: string
+          id?: string
+          profile_id: string
+          region_id: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_at?: string
+          assignment_source?: string
+          created_at?: string
+          id?: string
+          profile_id?: string
+          region_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_region_assignments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_region_assignments_region_id_fkey"
+            columns: ["region_id"]
+            isOneToOne: false
+            referencedRelation: "regions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           active_intent: Json | null
@@ -1319,6 +1547,7 @@ export type Database = {
           boundaries: Json
           completed_at: string | null
           completeness_percent: number
+          country_code: string | null
           created_at: string
           fingerprint: Json
           id: string
@@ -1328,6 +1557,7 @@ export type Database = {
           stale_at: string | null
           state: Database["public"]["Enums"]["profile_state"]
           state_changed_at: string
+          state_code: string | null
           status_reason: string | null
           updated_at: string
           user_id: string
@@ -1338,6 +1568,7 @@ export type Database = {
           boundaries?: Json
           completed_at?: string | null
           completeness_percent?: number
+          country_code?: string | null
           created_at?: string
           fingerprint?: Json
           id?: string
@@ -1347,6 +1578,7 @@ export type Database = {
           stale_at?: string | null
           state?: Database["public"]["Enums"]["profile_state"]
           state_changed_at?: string
+          state_code?: string | null
           status_reason?: string | null
           updated_at?: string
           user_id: string
@@ -1357,6 +1589,7 @@ export type Database = {
           boundaries?: Json
           completed_at?: string | null
           completeness_percent?: number
+          country_code?: string | null
           created_at?: string
           fingerprint?: Json
           id?: string
@@ -1366,6 +1599,7 @@ export type Database = {
           stale_at?: string | null
           state?: Database["public"]["Enums"]["profile_state"]
           state_changed_at?: string
+          state_code?: string | null
           status_reason?: string | null
           updated_at?: string
           user_id?: string
@@ -1430,33 +1664,48 @@ export type Database = {
       }
       regions: {
         Row: {
+          country_code: string
           created_at: string
           display_name: string
           geometry: Json
           id: string
+          is_active: boolean
+          is_launch_region: boolean
+          name: string
           rules: Json
           slug: string
           state: Database["public"]["Enums"]["region_state"]
+          state_code: string | null
           updated_at: string
         }
         Insert: {
+          country_code: string
           created_at?: string
           display_name: string
-          geometry: Json
+          geometry?: Json
           id?: string
+          is_active?: boolean
+          is_launch_region?: boolean
+          name: string
           rules?: Json
           slug: string
           state?: Database["public"]["Enums"]["region_state"]
+          state_code?: string | null
           updated_at?: string
         }
         Update: {
+          country_code?: string
           created_at?: string
           display_name?: string
           geometry?: Json
           id?: string
+          is_active?: boolean
+          is_launch_region?: boolean
+          name?: string
           rules?: Json
           slug?: string
           state?: Database["public"]["Enums"]["region_state"]
+          state_code?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -2082,11 +2331,15 @@ export type Database = {
         Row: {
           activated_at: string | null
           created_at: string
+          id: string
           joined_at: string
+          last_notified_at: string | null
           notified_at: string | null
           onboarded_at: string | null
+          profile_id: string
+          reason: string | null
           region_id: string
-          source: string | null
+          source: string
           status: Database["public"]["Enums"]["waitlist_status"]
           updated_at: string
           user_id: string
@@ -2094,11 +2347,15 @@ export type Database = {
         Insert: {
           activated_at?: string | null
           created_at?: string
+          id?: string
           joined_at?: string
+          last_notified_at?: string | null
           notified_at?: string | null
           onboarded_at?: string | null
+          profile_id: string
+          reason?: string | null
           region_id: string
-          source?: string | null
+          source?: string
           status?: Database["public"]["Enums"]["waitlist_status"]
           updated_at?: string
           user_id: string
@@ -2106,16 +2363,27 @@ export type Database = {
         Update: {
           activated_at?: string | null
           created_at?: string
+          id?: string
           joined_at?: string
+          last_notified_at?: string | null
           notified_at?: string | null
           onboarded_at?: string | null
+          profile_id?: string
+          reason?: string | null
           region_id?: string
-          source?: string | null
+          source?: string
           status?: Database["public"]["Enums"]["waitlist_status"]
           updated_at?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "waitlist_entries_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "waitlist_entries_region_id_fkey"
             columns: ["region_id"]

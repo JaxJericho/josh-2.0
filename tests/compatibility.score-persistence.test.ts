@@ -89,6 +89,28 @@ function createMockSupabase() {
         can_receive_intro: true,
       },
     ],
+    profile_entitlements: [
+      {
+        profile_id: "pro-1",
+        can_initiate: true,
+        can_participate: true,
+        can_exchange_contact: false,
+        region_override: false,
+        waitlist_override: false,
+        safety_override: false,
+        reason: null,
+      },
+      {
+        profile_id: "pro-2",
+        can_initiate: true,
+        can_participate: true,
+        can_exchange_contact: false,
+        region_override: false,
+        waitlist_override: false,
+        safety_override: false,
+        reason: null,
+      },
+    ],
     safety_holds: [],
     [COMPATIBILITY_SIGNAL_TABLE]: [
       {
