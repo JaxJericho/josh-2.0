@@ -1,10 +1,34 @@
 import Stripe from "stripe";
-import type { Json } from "../../../../supabase/types/database";
+import type { Database, Json } from "../../../../supabase/types/database";
 import { logEvent } from "../../../lib/observability";
 import { getStripeClient } from "../../../lib/stripe";
 import { getSupabaseServiceRoleClient } from "../../../lib/supabase-service-role";
 
 export const runtime = "nodejs";
+
+type SupportedSubscriptionEventType =
+  | "checkout.session.completed"
+  | "customer.subscription.created"
+  | "customer.subscription.updated"
+  | "customer.subscription.deleted";
+
+type NormalizedSubscriptionState = {
+  userId: string | null;
+  stripeCustomerId: string | null;
+  stripeSubscriptionId: string;
+  status: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+};
+
+type ExistingSubscriptionState = Pick<
+  Database["public"]["Tables"]["subscriptions"]["Row"],
+  | "user_id"
+  | "stripe_customer_id"
+  | "status"
+  | "current_period_end"
+  | "cancel_at_period_end"
+>;
 
 function json(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -29,11 +53,160 @@ function isDuplicateInsertError(error: { code?: string | null }): boolean {
   return error.code === "23505";
 }
 
+function isSupportedSubscriptionEventType(
+  eventType: string
+): eventType is SupportedSubscriptionEventType {
+  return (
+    eventType === "checkout.session.completed" ||
+    eventType === "customer.subscription.created" ||
+    eventType === "customer.subscription.updated" ||
+    eventType === "customer.subscription.deleted"
+  );
+}
+
+function coerceNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function coerceStripeIdentifier(value: unknown): string | null {
+  const direct = coerceNonEmptyString(value);
+  if (direct) {
+    return direct;
+  }
+
+  if (value && typeof value === "object" && "id" in value) {
+    return coerceNonEmptyString((value as { id?: unknown }).id);
+  }
+
+  return null;
+}
+
 function toSafeErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message.trim().slice(0, 240);
   }
   return "Stripe webhook processing failed.";
+}
+
+function extractSubscriptionStateFromEvent(
+  event: Stripe.Event
+): NormalizedSubscriptionState | null {
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const stripeSubscriptionId = coerceStripeIdentifier(session.subscription);
+    if (!stripeSubscriptionId) {
+      return null;
+    }
+
+    return {
+      userId:
+        coerceNonEmptyString(session.metadata?.user_id) ??
+        coerceNonEmptyString(session.client_reference_id),
+      stripeCustomerId: coerceStripeIdentifier(session.customer),
+      stripeSubscriptionId,
+      status: "checkout_completed",
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+    };
+  }
+
+  if (
+    event.type === "customer.subscription.created" ||
+    event.type === "customer.subscription.updated" ||
+    event.type === "customer.subscription.deleted"
+  ) {
+    const subscription = event.data.object as Stripe.Subscription;
+    const firstItemCurrentPeriodEnd = subscription.items?.data?.[0]?.current_period_end;
+    const stripeSubscriptionId = coerceNonEmptyString(subscription.id);
+    if (!stripeSubscriptionId) {
+      return null;
+    }
+
+    return {
+      userId: coerceNonEmptyString(subscription.metadata?.user_id),
+      stripeCustomerId: coerceStripeIdentifier(subscription.customer),
+      stripeSubscriptionId,
+      status:
+        event.type === "customer.subscription.deleted"
+          ? "canceled"
+          : coerceNonEmptyString(subscription.status) ?? "unknown",
+      currentPeriodEnd:
+        typeof firstItemCurrentPeriodEnd === "number"
+          ? new Date(firstItemCurrentPeriodEnd * 1000).toISOString()
+          : null,
+      cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+    };
+  }
+
+  return null;
+}
+
+async function fetchExistingSubscriptionState(
+  stripeSubscriptionId: string
+): Promise<ExistingSubscriptionState | null> {
+  const supabase = getSupabaseServiceRoleClient();
+  const { data, error } = await supabase
+    .from("subscriptions")
+    .select("user_id,stripe_customer_id,status,current_period_end,cancel_at_period_end")
+    .eq("stripe_subscription_id", stripeSubscriptionId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      `Failed to load existing subscription state (${error.code ?? "unknown"})`
+    );
+  }
+
+  return data;
+}
+
+async function persistSubscriptionLifecycleState(event: Stripe.Event): Promise<void> {
+  if (!isSupportedSubscriptionEventType(event.type)) {
+    return;
+  }
+
+  const extracted = extractSubscriptionStateFromEvent(event);
+  if (!extracted) {
+    return;
+  }
+
+  const existing = await fetchExistingSubscriptionState(extracted.stripeSubscriptionId);
+
+  const mergedUserId = extracted.userId ?? existing?.user_id ?? null;
+  const mergedStripeCustomerId =
+    extracted.stripeCustomerId ?? existing?.stripe_customer_id ?? null;
+  const mergedCurrentPeriodEnd = extracted.currentPeriodEnd ?? existing?.current_period_end ?? null;
+  const mergedCancelAtPeriodEnd =
+    event.type === "checkout.session.completed" && existing
+      ? existing.cancel_at_period_end
+      : extracted.cancelAtPeriodEnd;
+  const mergedStatus =
+    event.type === "checkout.session.completed" && existing
+      ? existing.status
+      : extracted.status;
+
+  const supabase = getSupabaseServiceRoleClient();
+  const { error } = await supabase.from("subscriptions").upsert(
+    {
+      user_id: mergedUserId,
+      stripe_customer_id: mergedStripeCustomerId,
+      stripe_subscription_id: extracted.stripeSubscriptionId,
+      status: mergedStatus,
+      current_period_end: mergedCurrentPeriodEnd,
+      cancel_at_period_end: mergedCancelAtPeriodEnd,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "stripe_subscription_id" }
+  );
+
+  if (error) {
+    throw new Error(`Failed to persist subscription state (${error.code ?? "unknown"})`);
+  }
 }
 
 async function insertStripeEvent(event: Stripe.Event): Promise<{
@@ -171,6 +344,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     inserted = true;
+    await persistSubscriptionLifecycleState(event);
     await markStripeEventProcessed(event.id);
     logEvent({
       level: "info",
