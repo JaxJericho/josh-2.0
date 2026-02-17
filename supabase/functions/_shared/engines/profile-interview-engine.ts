@@ -6,6 +6,8 @@ import type { ProfileRowForInterview, ProfileState } from "../../../../packages/
 import { recomputeProfileSignals } from "../../../../packages/core/src/compatibility/compatibility-signal-writer.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { resolveRegionAssignment } from "../../../../packages/core/src/regions/assignment.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { enforceWaitlistGate } from "../waitlist/waitlist-operations.ts";
 import type {
   EngineDispatchInput,
   EngineDispatchResult,
@@ -132,7 +134,7 @@ export async function runProfileInterviewEngine(
     profile: toProfileRowForInterview(profile),
   });
 
-  await persistInterviewTransition({
+  const persistResult = await persistInterviewTransition({
     supabase: input.supabase,
     userId: input.decision.user_id,
     inboundMessageSid: input.payload.inbound_message_sid,
@@ -144,7 +146,7 @@ export async function runProfileInterviewEngine(
 
   return {
     engine: "profile_interview_engine",
-    reply_message: transition.reply_message,
+    reply_message: persistResult.reply_message_override ?? transition.reply_message,
   };
 }
 
@@ -293,9 +295,10 @@ async function persistInterviewTransition(params: {
   session: ConversationSessionRow;
   profile: ProfileRow;
   transition: ReturnType<typeof buildInterviewTransitionPlan>;
-}): Promise<void> {
+}): Promise<{ reply_message_override: string | null }> {
   const conversationIdempotencyKey =
     `profile_interview:conversation:${params.userId}:${params.inboundMessageSid}:${params.transition.action}`;
+  let replyMessageOverride: string | null = null;
 
   if (params.transition.profile_patch) {
     const { error: updateProfileError } = await params.supabase
@@ -313,6 +316,15 @@ async function persistInterviewTransition(params: {
       countryCode: params.transition.profile_patch.country_code ?? params.profile.country_code,
       stateCode: params.transition.profile_patch.state_code ?? params.profile.state_code,
     });
+
+    const waitlistGate = await enforceWaitlistGate({
+      supabase: params.supabase,
+      userId: params.userId,
+      allowNotification: params.transition.action === "complete",
+    });
+    if (waitlistGate.is_waitlist_region && waitlistGate.reply_message) {
+      replyMessageOverride = waitlistGate.reply_message;
+    }
 
     if (params.transition.profile_patch.is_complete_mvp) {
       await recomputeProfileSignals({
@@ -402,6 +414,8 @@ async function persistInterviewTransition(params: {
       throw new Error("Unable to write profile completion audit log.");
     }
   }
+
+  return { reply_message_override: replyMessageOverride };
 }
 
 async function upsertProfileRegionAssignment(params: {

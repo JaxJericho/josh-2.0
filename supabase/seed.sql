@@ -147,25 +147,30 @@ on conflict (id) do update set
 
 -- Waitlist entries (closed region)
 insert into public.waitlist_entries (
+  id,
+  profile_id,
   user_id,
   region_id,
   status,
   joined_at,
   onboarded_at,
-  source
+  source,
+  reason
 ) values
-  ('00000000-0000-0000-0000-000000000209'::uuid, '00000000-0000-0000-0000-000000000102'::uuid, 'waiting',   '2026-01-03 16:00:00+00', null,                    'seed'),
-  ('00000000-0000-0000-0000-000000000210'::uuid, '00000000-0000-0000-0000-000000000102'::uuid, 'onboarded', '2026-01-03 16:00:00+00', '2026-01-04 10:00:00+00', 'seed'),
-  ('00000000-0000-0000-0000-000000000211'::uuid, '00000000-0000-0000-0000-000000000102'::uuid, 'waiting',   '2026-01-03 16:00:00+00', null,                    'seed'),
-  ('00000000-0000-0000-0000-000000000212'::uuid, '00000000-0000-0000-0000-000000000102'::uuid, 'onboarded', '2026-01-03 16:00:00+00', '2026-01-04 10:00:00+00', 'seed')
-on conflict (user_id, region_id) do update set
+  ('00000000-0000-0000-0000-000000000901'::uuid, '00000000-0000-0000-0000-000000000309'::uuid, '00000000-0000-0000-0000-000000000209'::uuid, '00000000-0000-0000-0000-000000000102'::uuid, 'waiting',   '2026-01-03 16:00:00+00', null,                    'seed', 'region_not_supported'),
+  ('00000000-0000-0000-0000-000000000902'::uuid, '00000000-0000-0000-0000-000000000310'::uuid, '00000000-0000-0000-0000-000000000210'::uuid, '00000000-0000-0000-0000-000000000102'::uuid, 'onboarded', '2026-01-03 16:00:00+00', '2026-01-04 10:00:00+00', 'seed', 'region_not_supported'),
+  ('00000000-0000-0000-0000-000000000903'::uuid, '00000000-0000-0000-0000-000000000311'::uuid, '00000000-0000-0000-0000-000000000211'::uuid, '00000000-0000-0000-0000-000000000102'::uuid, 'waiting',   '2026-01-03 16:00:00+00', null,                    'seed', 'region_not_supported'),
+  ('00000000-0000-0000-0000-000000000904'::uuid, '00000000-0000-0000-0000-000000000312'::uuid, '00000000-0000-0000-0000-000000000212'::uuid, '00000000-0000-0000-0000-000000000102'::uuid, 'onboarded', '2026-01-03 16:00:00+00', '2026-01-04 10:00:00+00', 'seed', 'region_not_supported')
+on conflict (profile_id) do update set
+  user_id = excluded.user_id,
   region_id = excluded.region_id,
   status = excluded.status,
   joined_at = excluded.joined_at,
   onboarded_at = excluded.onboarded_at,
   notified_at = excluded.notified_at,
   activated_at = excluded.activated_at,
-  source = excluded.source;
+  source = excluded.source,
+  reason = excluded.reason;
 
 -- Profiles
 with profile_templates as (
