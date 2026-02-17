@@ -112,7 +112,7 @@ class InMemoryEntitlementsRepository implements AdminSetEntitlementsRepository {
     profile_id: string;
     fields: Partial<Record<"can_initiate" | "can_participate" | "can_exchange_contact" | "region_override" | "waitlist_override" | "safety_override", boolean>>;
     reason: string | null;
-    updated_by: string;
+    updated_by: string | null;
   }): Promise<ProfileEntitlementsRecord> {
     const nowIso = "2026-02-17T18:00:00.000Z";
     const existing = this.rowsByProfileId.get(input.profile_id);
@@ -137,11 +137,11 @@ class InMemoryEntitlementsRepository implements AdminSetEntitlementsRepository {
   }
 
   async writeAuditLog(input: {
-    admin_user_id: string;
+    admin_user_id: string | null;
     profile_id: string;
     reason: string | null;
     fields: Partial<Record<"can_initiate" | "can_participate" | "can_exchange_contact" | "region_override" | "waitlist_override" | "safety_override", boolean>>;
-    updated_by: string;
+    updated_by: string | null;
     idempotency_key: string;
   }): Promise<"inserted" | "duplicate"> {
     if (this.auditIdempotencyKeys.has(input.idempotency_key)) {

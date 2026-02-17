@@ -25,8 +25,8 @@ export type AdminSetEntitlementsCommand = {
 };
 
 export type AdminSetEntitlementsActor = {
-  admin_user_id: string;
-  admin_profile_id: string;
+  admin_user_id: string | null;
+  admin_profile_id: string | null;
 };
 
 export type ProfileEntitlementsRecord = {
@@ -49,14 +49,14 @@ export type AdminSetEntitlementsRepository = {
     profile_id: string;
     fields: EntitlementFieldPatch;
     reason: string | null;
-    updated_by: string;
+    updated_by: string | null;
   }) => Promise<ProfileEntitlementsRecord>;
   writeAuditLog: (input: {
-    admin_user_id: string;
+    admin_user_id: string | null;
     profile_id: string;
     reason: string | null;
     fields: EntitlementFieldPatch;
-    updated_by: string;
+    updated_by: string | null;
     idempotency_key: string;
   }) => Promise<"inserted" | "duplicate">;
 };

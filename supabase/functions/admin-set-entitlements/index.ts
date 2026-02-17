@@ -7,6 +7,8 @@ import {
   type AdminSetEntitlementsRepository,
   type ProfileEntitlementsRecord,
 } from "../_shared/entitlements/admin-set-entitlements.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { resolveAdminAuthContext } from "../_shared/entitlements/admin-auth.ts";
 
 Deno.serve(async (req) => {
   const requestId = crypto.randomUUID();
@@ -48,10 +50,15 @@ Deno.serve(async (req) => {
     });
 
     phase = "actor";
-    const actor = await resolveAdminActor({
-      serviceClient,
-      userId: authContext.user_id,
-    });
+    const actor = authContext.mode === "secret"
+      ? {
+        admin_user_id: null,
+        admin_profile_id: null,
+      }
+      : await resolveAdminActor({
+        serviceClient,
+        userId: authContext.user_id,
+      });
 
     phase = "execute";
     const repository = createRepository(serviceClient);
@@ -65,6 +72,7 @@ Deno.serve(async (req) => {
       request_id: requestId,
       admin_user_id: actor.admin_user_id,
       admin_profile_id: actor.admin_profile_id,
+      auth_mode: authContext.mode,
       profile_id: command.profile_id,
       fields: Object.keys(command.fields).sort(),
       has_reason: Boolean(command.reason),
@@ -185,22 +193,31 @@ async function verifyAdminAccess(params: {
   req: Request;
   supabaseUrl: string;
   anonKey: string;
-}): Promise<{ user_id: string }> {
-  const authorization = params.req.headers.get("authorization") ?? "";
-  if (!authorization.startsWith("Bearer ")) {
-    throw new AdminSetEntitlementsError(401, "UNAUTHORIZED", "Unauthorized.");
-  }
-  const accessToken = authorization.slice("Bearer ".length).trim();
-  const userIdFromToken = parseUserIdFromJwt(accessToken);
-  if (!userIdFromToken) {
-    throw new AdminSetEntitlementsError(401, "UNAUTHORIZED", "Unauthorized.");
+}): Promise<
+  | {
+      mode: "secret";
+    }
+  | {
+      mode: "bearer";
+      user_id: string;
+    }
+> {
+  const authContext = resolveAdminAuthContext({
+    authorizationHeader: params.req.headers.get("authorization"),
+    adminSecretHeader: params.req.headers.get("x-admin-secret"),
+    configuredAdminOpsSecret: Deno.env.get("ADMIN_OPS_SECRET"),
+    parseUserIdFromJwt,
+  });
+
+  if (authContext.mode === "secret") {
+    return { mode: "secret" };
   }
 
   const authClient = createClient(params.supabaseUrl, params.anonKey, {
     auth: { persistSession: false },
     global: {
       headers: {
-        authorization,
+        authorization: authContext.authorization,
       },
     },
   });
@@ -219,7 +236,8 @@ async function verifyAdminAccess(params: {
   }
 
   return {
-    user_id: userIdFromToken,
+    mode: "bearer",
+    user_id: authContext.user_id,
   };
 }
 
