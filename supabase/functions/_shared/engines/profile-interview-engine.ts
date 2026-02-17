@@ -4,6 +4,8 @@ import { buildInterviewTransitionPlan, type ConversationMode, type InterviewSess
 import type { ProfileRowForInterview, ProfileState } from "../../../../packages/core/src/profile/profile-writer.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { recomputeProfileSignals } from "../../../../packages/core/src/compatibility/compatibility-signal-writer.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { resolveRegionAssignment } from "../../../../packages/core/src/regions/assignment.ts";
 import type {
   EngineDispatchInput,
   EngineDispatchResult,
@@ -20,6 +22,8 @@ type ConversationSessionRow = {
 type ProfileRow = {
   id: string;
   user_id: string;
+  country_code: string | null;
+  state_code: string | null;
   state: string;
   is_complete_mvp: boolean;
   last_interview_step: string | null;
@@ -78,6 +82,8 @@ function toProfileRowForInterview(row: ProfileRow): ProfileRowForInterview {
   return {
     id: row.id,
     user_id: row.user_id,
+    country_code: row.country_code,
+    state_code: row.state_code,
     state: normalizeProfileState(row.state),
     is_complete_mvp: row.is_complete_mvp,
     last_interview_step: row.last_interview_step,
@@ -198,7 +204,7 @@ async function fetchOrCreateProfile(
   userId: string,
 ): Promise<ProfileRow> {
   const selectColumns =
-    "id,user_id,state,is_complete_mvp,last_interview_step,preferences,fingerprint,activity_patterns,boundaries,active_intent,completeness_percent,completed_at,status_reason,state_changed_at,updated_at";
+    "id,user_id,country_code,state_code,state,is_complete_mvp,last_interview_step,preferences,fingerprint,activity_patterns,boundaries,active_intent,completeness_percent,completed_at,status_reason,state_changed_at,updated_at";
 
   const { data: existing, error } = await supabase
     .from("profiles")
@@ -214,6 +220,8 @@ async function fetchOrCreateProfile(
     return {
       id: existing.id,
       user_id: existing.user_id,
+      country_code: existing.country_code ?? null,
+      state_code: existing.state_code ?? null,
       state: existing.state,
       is_complete_mvp: existing.is_complete_mvp,
       last_interview_step: existing.last_interview_step,
@@ -234,6 +242,8 @@ async function fetchOrCreateProfile(
     .from("profiles")
     .insert({
       user_id: userId,
+      country_code: null,
+      state_code: null,
       state: "empty",
       is_complete_mvp: false,
       preferences: {},
@@ -257,6 +267,8 @@ async function fetchOrCreateProfile(
   return {
     id: created.id,
     user_id: created.user_id,
+    country_code: created.country_code ?? null,
+    state_code: created.state_code ?? null,
     state: created.state,
     is_complete_mvp: created.is_complete_mvp,
     last_interview_step: created.last_interview_step,
@@ -294,6 +306,13 @@ async function persistInterviewTransition(params: {
     if (updateProfileError) {
       throw new Error("Unable to persist profile interview patch.");
     }
+
+    await upsertProfileRegionAssignment({
+      supabase: params.supabase,
+      profileId: params.profile.id,
+      countryCode: params.transition.profile_patch.country_code ?? params.profile.country_code,
+      stateCode: params.transition.profile_patch.state_code ?? params.profile.state_code,
+    });
 
     if (params.transition.profile_patch.is_complete_mvp) {
       await recomputeProfileSignals({
@@ -382,6 +401,54 @@ async function persistInterviewTransition(params: {
     if (auditInsertError && !isDuplicateKeyError(auditInsertError)) {
       throw new Error("Unable to write profile completion audit log.");
     }
+  }
+}
+
+async function upsertProfileRegionAssignment(params: {
+  supabase: EngineDispatchInput["supabase"];
+  profileId: string;
+  countryCode: string | null;
+  stateCode: string | null;
+}): Promise<void> {
+  const resolved = resolveRegionAssignment({
+    countryCode: params.countryCode,
+    stateCode: params.stateCode,
+  });
+
+  if (!resolved.normalized_country_code) {
+    return;
+  }
+
+  const { data: region, error: regionLookupError } = await params.supabase
+    .from("regions")
+    .select("id,slug")
+    .eq("slug", resolved.region_slug)
+    .maybeSingle();
+
+  if (regionLookupError) {
+    throw new Error("Unable to resolve region for assignment.");
+  }
+
+  if (!region?.id) {
+    throw new Error(
+      `Region slug '${resolved.region_slug}' is not configured for deterministic assignment.`,
+    );
+  }
+
+  const { error: assignmentError } = await params.supabase
+    .from("profile_region_assignments")
+    .upsert(
+      {
+        profile_id: params.profileId,
+        region_id: region.id,
+        assignment_source: resolved.assignment_source,
+        assigned_at: new Date().toISOString(),
+      },
+      { onConflict: "profile_id" },
+    );
+
+  if (assignmentError) {
+    throw new Error("Unable to upsert profile region assignment.");
   }
 }
 

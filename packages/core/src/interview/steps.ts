@@ -3,6 +3,7 @@ import {
   parseBoundariesAnswer,
   parseGroupSizeAnswer,
   parseIntroAnswer,
+  parseLocationAnswer,
   parseMotiveAnswer,
   parseMotiveChoiceAnswer,
   parsePaceAnswer,
@@ -16,6 +17,7 @@ import {
   type DeterministicParseResult,
   type GroupSizeAnswer,
   type IntroAnswer,
+  type LocationAnswer,
   type InterviewValidationContext,
   type MotiveAnswer,
   type PaceAnswer,
@@ -38,6 +40,7 @@ export const INTERVIEW_STEP_IDS = [
   "values_01",
   "boundaries_01",
   "constraints_01",
+  "location_01",
   "wrap_01",
 ] as const;
 
@@ -62,6 +65,7 @@ export type InterviewNormalizedAnswerByStep = {
   values_01: ValuesAnswer;
   boundaries_01: BoundariesAnswer;
   constraints_01: TimePreferenceAnswer;
+  location_01: LocationAnswer;
 };
 
 export type InterviewNormalizedAnswer =
@@ -185,6 +189,15 @@ export const ONBOARDING_INTERVIEW_STEPS: readonly InterviewStep[] = [
     prompt: "What times usually work best? A mornings, B afternoons, C evenings, D weekends only.",
     retry_prompt: "Reply A, B, C, or D.",
     parse: (rawAnswer) => parseTimePreferenceAnswer(rawAnswer),
+  },
+  {
+    id: "location_01",
+    kind: "question",
+    prompt:
+      "What country/state are you in? Reply like US-WA. If you're outside the US, reply your 2-letter country code.",
+    retry_prompt:
+      "Reply in this format: US-WA (example: US-WA), or a 2-letter country code if outside the US.",
+    parse: (rawAnswer) => parseLocationAnswer(rawAnswer),
   },
   {
     id: "wrap_01",

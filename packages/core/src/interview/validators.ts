@@ -47,6 +47,11 @@ export type TimePreferenceAnswer = {
   time_preferences: Array<"mornings" | "afternoons" | "evenings" | "weekends_only">;
 };
 
+export type LocationAnswer = {
+  country_code: string;
+  state_code: string | null;
+};
+
 const ACTIVITY_ALIAS_MAP: Record<string, string[]> = {
   coffee: ["coffee", "cafe", "espresso", "latte"],
   walk: ["walk", "walking", "stroll"],
@@ -60,6 +65,65 @@ const ACTIVITY_ALIAS_MAP: Record<string, string[]> = {
 };
 
 const PREFER_NOT_PATTERN = /\b(prefer not|rather not|skip|no thanks|pass)\b/i;
+const NON_US_PATTERN = /^(non[-\s]?us|intl|international)$/i;
+const LOCATION_PAIR_PATTERN = /^([A-Z]{2})[-\s_/]([A-Z]{2})$/;
+
+const US_STATE_CODES = new Set([
+  "AL",
+  "AK",
+  "AZ",
+  "AR",
+  "CA",
+  "CO",
+  "CT",
+  "DE",
+  "FL",
+  "GA",
+  "HI",
+  "ID",
+  "IL",
+  "IN",
+  "IA",
+  "KS",
+  "KY",
+  "LA",
+  "ME",
+  "MD",
+  "MA",
+  "MI",
+  "MN",
+  "MS",
+  "MO",
+  "MT",
+  "NE",
+  "NV",
+  "NH",
+  "NJ",
+  "NM",
+  "NY",
+  "NC",
+  "ND",
+  "OH",
+  "OK",
+  "OR",
+  "PA",
+  "RI",
+  "SC",
+  "SD",
+  "TN",
+  "TX",
+  "UT",
+  "VT",
+  "VA",
+  "WA",
+  "WV",
+  "WI",
+  "WY",
+]);
+
+const US_STATE_NAME_TO_CODE: Record<string, string> = {
+  washington: "WA",
+};
 
 function normalizeText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -487,6 +551,76 @@ export function parseTimePreferenceAnswer(raw: string): DeterministicParseResult
     ok: true,
     value: {
       time_preferences: selected as TimePreferenceAnswer["time_preferences"],
+    },
+  };
+}
+
+export function parseLocationAnswer(raw: string): DeterministicParseResult<LocationAnswer> {
+  const normalized = normalizeText(raw);
+  if (!normalized) {
+    return { ok: false };
+  }
+
+  if (NON_US_PATTERN.test(normalized)) {
+    return {
+      ok: true,
+      value: {
+        country_code: "XX",
+        state_code: null,
+      },
+    };
+  }
+
+  const stateFromName = US_STATE_NAME_TO_CODE[normalized];
+  if (stateFromName) {
+    return {
+      ok: true,
+      value: {
+        country_code: "US",
+        state_code: stateFromName,
+      },
+    };
+  }
+
+  const upper = normalized.toUpperCase();
+  const pairMatch = upper.match(LOCATION_PAIR_PATTERN);
+  if (pairMatch) {
+    const countryCode = pairMatch[1];
+    const stateCode = pairMatch[2];
+
+    if (countryCode === "US" && !US_STATE_CODES.has(stateCode)) {
+      return { ok: false };
+    }
+
+    return {
+      ok: true,
+      value: {
+        country_code: countryCode,
+        state_code: countryCode === "US" ? stateCode : null,
+      },
+    };
+  }
+
+  const compact = upper.replace(/[^A-Z]/g, "");
+  if (compact.length !== 2) {
+    return { ok: false };
+  }
+
+  if (US_STATE_CODES.has(compact)) {
+    return {
+      ok: true,
+      value: {
+        country_code: "US",
+        state_code: compact,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      country_code: compact,
+      state_code: null,
     },
   };
 }

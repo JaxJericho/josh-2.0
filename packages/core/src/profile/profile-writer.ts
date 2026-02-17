@@ -14,6 +14,8 @@ export type ProfileState =
 export type ProfileRowForInterview = {
   id: string;
   user_id: string;
+  country_code: string | null;
+  state_code: string | null;
   state: ProfileState;
   is_complete_mvp: boolean;
   last_interview_step: string | null;
@@ -41,6 +43,8 @@ export type InterviewProgress = {
 export type ProfileUpdatePatch = {
   state: ProfileState;
   is_complete_mvp: boolean;
+  country_code: string | null;
+  state_code: string | null;
   last_interview_step: string | null;
   preferences: Record<string, unknown>;
   fingerprint: Record<string, unknown>;
@@ -164,6 +168,8 @@ export function buildProfilePatchForInterviewStart(params: {
   return {
     state: params.profile.state,
     is_complete_mvp: params.profile.is_complete_mvp,
+    country_code: params.profile.country_code,
+    state_code: params.profile.state_code,
     last_interview_step: params.profile.last_interview_step,
     preferences,
     fingerprint: asObject(params.profile.fingerprint),
@@ -204,6 +210,8 @@ export function buildProfilePatchForInterviewPause(params: {
   return {
     state: params.profile.state,
     is_complete_mvp: params.profile.is_complete_mvp,
+    country_code: params.profile.country_code,
+    state_code: params.profile.state_code,
     last_interview_step: params.profile.last_interview_step,
     preferences,
     fingerprint: asObject(params.profile.fingerprint),
@@ -264,6 +272,8 @@ export function buildProfilePatchForInterviewAnswer(params: {
   const preferences = asObject(params.profile.preferences);
   let activeIntent = asObject(params.profile.active_intent);
   let activityPatterns = asObjectArray(params.profile.activity_patterns);
+  let countryCode = params.profile.country_code;
+  let stateCode = params.profile.state_code;
 
   if (params.stepId === "activity_01") {
     const answer = params.answer as { activity_keys: string[] };
@@ -339,6 +349,12 @@ export function buildProfilePatchForInterviewAnswer(params: {
     preferences.onboarding_consent = answer.consent;
   }
 
+  if (params.stepId === "location_01") {
+    const answer = params.answer as { country_code: string; state_code: string | null };
+    countryCode = answer.country_code;
+    stateCode = answer.state_code;
+  }
+
   const existingProgress = readInterviewProgress(preferences) ?? {
     version: 1,
     status: "in_progress" as const,
@@ -378,6 +394,8 @@ export function buildProfilePatchForInterviewAnswer(params: {
   return {
     state: nextState,
     is_complete_mvp: isComplete,
+    country_code: countryCode,
+    state_code: stateCode,
     last_interview_step: params.stepId,
     preferences,
     fingerprint,
