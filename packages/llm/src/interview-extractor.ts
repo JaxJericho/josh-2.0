@@ -12,6 +12,7 @@ import {
   LlmProviderError,
   type LlmProvider,
 } from "./provider.ts";
+import { validateModelOutput } from "./output-validator.ts";
 
 export type InterviewExtractInput = {
   userId: string;
@@ -36,6 +37,7 @@ export type InterviewExtractorFailureCode =
   | "timeout"
   | "invalid_json"
   | "schema_invalid"
+  | "guardrail_violation"
   | "step_mismatch";
 
 export class InterviewExtractorError extends Error {
@@ -132,14 +134,7 @@ function buildInterviewExtractionUserPrompt(input: InterviewExtractInput): strin
 }
 
 function parseJsonPayload(raw: string): unknown {
-  const trimmed = raw.trim();
-  const withoutFence = trimmed.startsWith("```")
-    ? trimmed
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/, "")
-    : trimmed;
-
-  return JSON.parse(withoutFence);
+  return JSON.parse(raw);
 }
 
 function hasStrongMotiveWeight(output: InterviewExtractOutput): boolean {
@@ -226,7 +221,34 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           timeoutMs,
           signal: timeout.signal,
         });
-        const parsedJson = parseJsonPayload(providerResponse.text);
+        const validation = validateModelOutput({
+          rawText: providerResponse.text,
+          requireJson: true,
+        });
+        if (!validation.ok) {
+          logger.warn("interview_extractor.output_rejected", {
+            correlation_id: correlationId,
+            prompt_version: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+            attempt,
+            violation_codes: validation.violations.map((entry) => entry.code),
+          });
+
+          const hasWrapperOrJsonViolation = validation.violations.some((entry) =>
+            entry.code === "invalid_json" || entry.code === "output_wrapper_detected"
+          );
+
+          throw new InterviewExtractorError(
+            "Model output rejected by output validator.",
+            {
+              code: hasWrapperOrJsonViolation ? "invalid_json" : "guardrail_violation",
+              correlationId,
+              promptVersion: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+              transient: false,
+            },
+          );
+        }
+
+        const parsedJson = parseJsonPayload(validation.sanitizedText);
         const parsedOutput = enforceNeedsFollowUpRule(parseInterviewExtractOutput(parsedJson));
 
         if (parsedOutput.stepId !== input.stepId) {
