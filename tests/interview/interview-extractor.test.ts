@@ -86,6 +86,32 @@ describe("interview extractor", () => {
     });
   });
 
+  it("throws invalid_json when provider wraps JSON with prose", async () => {
+    const provider: LlmProvider = {
+      async generateText() {
+        return {
+          provider: "anthropic",
+          model: "claude-test",
+          text: `Sure. Here's the JSON:\n{"stepId":"motive_01","extracted":{}}`,
+        };
+      },
+    };
+
+    const extractor = createInterviewSignalExtractor({
+      provider,
+      logger: {
+        info() {},
+        warn() {},
+      },
+    });
+
+    await expect(extractor(createInput())).rejects.toMatchObject({
+      name: "InterviewExtractorError",
+      code: "invalid_json",
+      shouldFallback: true,
+    });
+  });
+
   it("throws schema_invalid when JSON does not match output schema", async () => {
     const provider: LlmProvider = {
       async generateText() {
@@ -113,6 +139,38 @@ describe("interview extractor", () => {
     await expect(extractor(createInput())).rejects.toMatchObject({
       name: "InterviewExtractorError",
       code: "schema_invalid",
+      shouldFallback: true,
+    });
+  });
+
+  it("throws guardrail_violation when output contains prohibited language", async () => {
+    const provider: LlmProvider = {
+      async generateText() {
+        return {
+          provider: "anthropic",
+          model: "claude-test",
+          text: JSON.stringify({
+            stepId: "motive_01",
+            extracted: {},
+            notes: {
+              followUpQuestion: "I guarantee this will work. Which one feels closer?",
+            },
+          }),
+        };
+      },
+    };
+
+    const extractor = createInterviewSignalExtractor({
+      provider,
+      logger: {
+        info() {},
+        warn() {},
+      },
+    });
+
+    await expect(extractor(createInput())).rejects.toMatchObject({
+      name: "InterviewExtractorError",
+      code: "guardrail_violation",
       shouldFallback: true,
     });
   });
