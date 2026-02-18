@@ -57,6 +57,7 @@ describe("interview state llm extraction wiring", () => {
         state_token: "interview:motive_01",
         current_step_id: "motive_01",
         last_inbound_message_sid: null,
+        dropout_nudge_sent_at: null,
       },
       profile: createProfile(),
       llm_extractor: async () => {
@@ -118,6 +119,7 @@ describe("interview state llm extraction wiring", () => {
         state_token: "interview:activity_01",
         current_step_id: "activity_01",
         last_inbound_message_sid: null,
+        dropout_nudge_sent_at: null,
       },
       profile: createProfile({
         preferences: {},
@@ -165,6 +167,7 @@ describe("interview state llm extraction wiring", () => {
         state_token: "interview:activity_01",
         current_step_id: "activity_01",
         last_inbound_message_sid: null,
+        dropout_nudge_sent_at: null,
       },
       profile: createProfile({
         preferences: {},
@@ -202,6 +205,7 @@ describe("interview state llm extraction wiring", () => {
         state_token: "interview:activity_01",
         current_step_id: "activity_01",
         last_inbound_message_sid: null,
+        dropout_nudge_sent_at: null,
       },
       profile: createProfile({
         preferences: {},
@@ -260,6 +264,7 @@ describe("interview state llm extraction wiring", () => {
         state_token: "interview:activity_01",
         current_step_id: "activity_01",
         last_inbound_message_sid: null,
+        dropout_nudge_sent_at: null,
       },
       profile: createProfile({
         preferences: {},
@@ -289,6 +294,7 @@ describe("interview state llm extraction wiring", () => {
         state_token: "interview:activity_01",
         current_step_id: "activity_01",
         last_inbound_message_sid: null,
+        dropout_nudge_sent_at: null,
       },
       profile: createProfile({
         preferences: {},

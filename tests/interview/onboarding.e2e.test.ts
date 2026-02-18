@@ -105,6 +105,7 @@ describe("onboarding interview e2e", () => {
       state_token: "interview:intro_01",
       current_step_id: null,
       last_inbound_message_sid: null,
+      dropout_nudge_sent_at: null,
     };
 
     const transition = await runTurn(state, "SM_GUARD_0001", "coffee, walk, museum");
@@ -121,6 +122,7 @@ describe("onboarding interview e2e", () => {
       state_token: "onboarding:foo",
       current_step_id: null,
       last_inbound_message_sid: null,
+      dropout_nudge_sent_at: null,
     };
 
     await expect(runTurn(state, "SM_BAD_ONB_0001", "hello"))
@@ -154,6 +156,7 @@ function applyTransition(
     state_token: transition.next_session.state_token,
     current_step_id: transition.next_session.current_step_id,
     last_inbound_message_sid: transition.next_session.last_inbound_message_sid,
+    dropout_nudge_sent_at: transition.next_session.dropout_nudge_sent_at,
   };
 
   if (transition.profile_patch) {
@@ -178,6 +181,7 @@ function createHarnessState(): InterviewHarnessState {
       state_token: "idle",
       current_step_id: null,
       last_inbound_message_sid: null,
+      dropout_nudge_sent_at: null,
     },
     profile: {
       id: "pro_123",
