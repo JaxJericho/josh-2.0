@@ -9,13 +9,16 @@ import {
 } from "../profile/profile-writer.ts";
 import {
   ACTIVE_INTERVIEW_QUESTION_STEP_IDS,
-  INTERVIEW_WRAP_MESSAGE,
   getInterviewStepById,
   isInterviewQuestionStepId,
   isInterviewStepId,
   type InterviewNormalizedAnswer,
   type InterviewQuestionStepId,
 } from "./steps.ts";
+import {
+  INTERVIEW_DROPOUT_RESUME,
+  INTERVIEW_WRAP,
+} from "./messages.ts";
 import {
   getSignalCoverageStatus,
   selectNextQuestion,
@@ -40,6 +43,7 @@ export type InterviewSessionSnapshot = {
   state_token: string;
   current_step_id: string | null;
   last_inbound_message_sid: string | null;
+  dropout_nudge_sent_at: string | null;
 };
 
 export type InterviewTransitionAction =
@@ -48,6 +52,7 @@ export type InterviewTransitionAction =
   | "retry"
   | "advance"
   | "pause"
+  | "resume"
   | "complete";
 
 export type InterviewTransitionPlan = {
@@ -60,6 +65,7 @@ export type InterviewTransitionPlan = {
     state_token: string;
     current_step_id: InterviewQuestionStepId | null;
     last_inbound_message_sid: string;
+    dropout_nudge_sent_at: string | null;
   };
   profile_patch: ProfileUpdatePatch | null;
   profile_event_type: string | null;
@@ -173,6 +179,18 @@ function buildConversationHistory(
 
 function pickNextQuestion(profile: ProfileRowForInterview): NextQuestionSelection | null {
   return selectNextQuestion(profile, buildConversationHistory(profile));
+}
+
+function shouldSendCompletionWrap(session: InterviewSessionSnapshot): boolean {
+  return session.mode === "interviewing" && session.state_token.startsWith("interview:");
+}
+
+function shouldSendDropoutResume(session: InterviewSessionSnapshot): boolean {
+  return session.mode === "interviewing" && Boolean(session.dropout_nudge_sent_at);
+}
+
+function buildDropoutResumeReply(stepId: InterviewQuestionStepId): string {
+  return `${INTERVIEW_DROPOUT_RESUME}\n\n${getInterviewStepById(stepId).prompt}`;
 }
 
 export function resolveCurrentInterviewStep(params: {
@@ -374,9 +392,10 @@ export async function buildInterviewTransitionPlan(
 ): Promise<InterviewTransitionPlan> {
   const coverageStatus = getSignalCoverageStatus(input.profile);
   if (coverageStatus.mvpComplete || input.profile.state === "complete_full") {
+    const shouldWrap = shouldSendCompletionWrap(input.session);
     return {
-      action: "idempotent",
-      reply_message: ALREADY_COMPLETE_PROFILE_MESSAGE,
+      action: shouldWrap ? "complete" : "idempotent",
+      reply_message: shouldWrap ? INTERVIEW_WRAP : ALREADY_COMPLETE_PROFILE_MESSAGE,
       current_step_id: null,
       next_step_id: null,
       next_session: {
@@ -384,6 +403,7 @@ export async function buildInterviewTransitionPlan(
         state_token: "idle",
         current_step_id: null,
         last_inbound_message_sid: input.inbound_message_sid,
+        dropout_nudge_sent_at: null,
       },
       profile_patch: null,
       profile_event_type: null,
@@ -408,6 +428,7 @@ export async function buildInterviewTransitionPlan(
         state_token: toInterviewStateToken(currentStepId),
         current_step_id: currentStepId,
         last_inbound_message_sid: input.inbound_message_sid,
+        dropout_nudge_sent_at: input.session.dropout_nudge_sent_at,
       },
       profile_patch: null,
       profile_event_type: null,
@@ -427,6 +448,7 @@ export async function buildInterviewTransitionPlan(
         state_token: toInterviewStateToken(currentStepId),
         current_step_id: currentStepId,
         last_inbound_message_sid: input.inbound_message_sid,
+        dropout_nudge_sent_at: null,
       },
       profile_patch: buildProfilePatchForInterviewStart({
         profile: input.profile,
@@ -439,11 +461,38 @@ export async function buildInterviewTransitionPlan(
     };
   }
 
+  if (shouldSendDropoutResume(input.session)) {
+    const nextSelection = pickNextQuestion(input.profile);
+    const resumeStepId = nextSelection?.questionId ?? currentStepId;
+
+    return {
+      action: "resume",
+      reply_message: buildDropoutResumeReply(resumeStepId),
+      current_step_id: currentStepId,
+      next_step_id: resumeStepId,
+      next_session: {
+        mode: "interviewing",
+        state_token: toInterviewStateToken(resumeStepId),
+        current_step_id: resumeStepId,
+        last_inbound_message_sid: input.inbound_message_sid,
+        dropout_nudge_sent_at: null,
+      },
+      profile_patch: buildProfilePatchForInterviewStart({
+        profile: input.profile,
+        currentStepId: resumeStepId,
+        nowIso: input.now_iso,
+      }),
+      profile_event_type: null,
+      profile_event_step_id: null,
+      profile_event_payload: null,
+    };
+  }
+
   const currentStep = getInterviewStepById(currentStepId);
   if (currentStep.kind !== "question") {
     return {
       action: "complete",
-      reply_message: INTERVIEW_WRAP_MESSAGE,
+      reply_message: INTERVIEW_WRAP,
       current_step_id: currentStepId,
       next_step_id: null,
       next_session: {
@@ -451,6 +500,7 @@ export async function buildInterviewTransitionPlan(
         state_token: "idle",
         current_step_id: null,
         last_inbound_message_sid: input.inbound_message_sid,
+        dropout_nudge_sent_at: null,
       },
       profile_patch: null,
       profile_event_type: null,
@@ -484,6 +534,7 @@ export async function buildInterviewTransitionPlan(
         state_token: toInterviewStateToken(currentStepId),
         current_step_id: currentStepId,
         last_inbound_message_sid: input.inbound_message_sid,
+        dropout_nudge_sent_at: input.session.dropout_nudge_sent_at,
       },
       profile_patch: null,
       profile_event_type: null,
@@ -507,6 +558,7 @@ export async function buildInterviewTransitionPlan(
         state_token: toInterviewStateToken(currentStepId),
         current_step_id: currentStepId,
         last_inbound_message_sid: input.inbound_message_sid,
+        dropout_nudge_sent_at: input.session.dropout_nudge_sent_at,
       },
       profile_patch: buildProfilePatchForInterviewPause({
         profile: input.profile,
@@ -568,7 +620,7 @@ export async function buildInterviewTransitionPlan(
   return {
     action: isComplete ? "complete" : "advance",
     reply_message: isComplete
-      ? INTERVIEW_WRAP_MESSAGE
+      ? INTERVIEW_WRAP
       : getInterviewStepById(activeNextStepId).prompt,
     current_step_id: currentStepId,
     next_step_id: plannedNextStepId,
@@ -577,6 +629,7 @@ export async function buildInterviewTransitionPlan(
       state_token: isComplete ? "idle" : toInterviewStateToken(activeNextStepId),
       current_step_id: plannedNextStepId,
       last_inbound_message_sid: input.inbound_message_sid,
+      dropout_nudge_sent_at: isComplete ? null : input.session.dropout_nudge_sent_at,
     },
     profile_patch: profilePatch,
     profile_event_type: isComplete ? "interview_completed" : "interview_step_saved",

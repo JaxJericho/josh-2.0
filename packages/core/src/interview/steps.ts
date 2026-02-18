@@ -26,6 +26,7 @@ import {
   type TopActivityAnswer,
   type ValuesAnswer,
 } from "./validators.ts";
+import { INTERVIEW_WRAP } from "./messages.ts";
 
 export const INTERVIEW_STEP_IDS = [
   // DEPRECATED in Phase 8 (Replaced by onboarding sequence)
@@ -94,9 +95,6 @@ export type InterviewTerminalStep = {
 };
 
 export type InterviewStep = InterviewQuestionStep | InterviewTerminalStep;
-
-export const INTERVIEW_WRAP_MESSAGE =
-  "Got it. That's enough to start matching. You can update anything anytime by texting me.";
 
 export const ONBOARDING_INTERVIEW_STEPS: readonly InterviewStep[] = [
   {
@@ -208,7 +206,7 @@ export const ONBOARDING_INTERVIEW_STEPS: readonly InterviewStep[] = [
   {
     id: "wrap_01",
     kind: "terminal",
-    prompt: INTERVIEW_WRAP_MESSAGE,
+    prompt: INTERVIEW_WRAP,
   },
 ] as const;
 

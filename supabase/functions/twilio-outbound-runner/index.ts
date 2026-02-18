@@ -4,6 +4,8 @@ import {
   resolveTwilioStatusCallbackUrl,
   sendTwilioRestMessage,
 } from "../_shared/twilio/send-message.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { INTERVIEW_DROPOUT_NUDGE } from "../../../packages/core/src/interview/messages.ts";
 
 type SmsOutboundJob = {
   id: string;
@@ -71,6 +73,34 @@ Deno.serve(async (req) => {
       auth: { persistSession: false },
     });
 
+    phase = "dropout_nudges";
+    let dropoutNudgeEnqueued = 0;
+    const { data: dropoutResult, error: dropoutError } = await supabase.rpc(
+      "enqueue_interview_dropout_nudges",
+      {
+        p_nudge_template: INTERVIEW_DROPOUT_NUDGE,
+        p_sms_encryption_key: encryptionKey,
+      }
+    );
+    if (dropoutError) {
+      console.error("interview_dropout.enqueue_failed", {
+        request_id: requestId,
+        error: dropoutError.message,
+      });
+    } else {
+      const result = (dropoutResult ?? {}) as Record<string, unknown>;
+      const enqueuedRaw = result.enqueued_count;
+      if (typeof enqueuedRaw === "number" && Number.isFinite(enqueuedRaw)) {
+        dropoutNudgeEnqueued = Math.max(0, Math.trunc(enqueuedRaw));
+      }
+      console.info("interview_dropout.enqueue_summary", {
+        request_id: requestId,
+        candidate_count: result.candidate_count ?? 0,
+        marked_count: result.marked_count ?? 0,
+        enqueued_count: dropoutNudgeEnqueued,
+      });
+    }
+
     phase = "claim";
     const { data: jobs, error: claimError } = await supabase.rpc(
       "claim_sms_outbound_jobs",
@@ -90,7 +120,13 @@ Deno.serve(async (req) => {
 
     const claimedJobs = (jobs ?? []) as SmsOutboundJob[];
     if (claimedJobs.length === 0) {
-      return jsonResponse({ ok: true, processed: 0, sent: 0, failed: 0 }, 200);
+      return jsonResponse({
+        ok: true,
+        processed: 0,
+        sent: 0,
+        failed: 0,
+        dropout_nudge_enqueued: dropoutNudgeEnqueued,
+      }, 200);
     }
 
     let sent = 0;
@@ -198,6 +234,7 @@ Deno.serve(async (req) => {
       processed: claimedJobs.length,
       sent,
       failed,
+      dropout_nudge_enqueued: dropoutNudgeEnqueued,
     });
   } catch (error) {
     const err = error as Error;

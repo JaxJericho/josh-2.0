@@ -335,6 +335,7 @@ export type Database = {
         Row: {
           created_at: string
           current_step_id: string | null
+          dropout_nudge_sent_at: string | null
           expires_at: string | null
           id: string
           last_inbound_message_sid: string | null
@@ -347,6 +348,7 @@ export type Database = {
         Insert: {
           created_at?: string
           current_step_id?: string | null
+          dropout_nudge_sent_at?: string | null
           expires_at?: string | null
           id?: string
           last_inbound_message_sid?: string | null
@@ -359,6 +361,7 @@ export type Database = {
         Update: {
           created_at?: string
           current_step_id?: string | null
+          dropout_nudge_sent_at?: string | null
           expires_at?: string | null
           id?: string
           last_inbound_message_sid?: string | null

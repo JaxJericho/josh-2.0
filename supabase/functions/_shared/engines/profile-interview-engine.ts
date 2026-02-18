@@ -21,6 +21,7 @@ type ConversationSessionRow = {
   state_token: string;
   current_step_id: string | null;
   last_inbound_message_sid: string | null;
+  dropout_nudge_sent_at: string | null;
 };
 
 type ProfileRow = {
@@ -79,6 +80,7 @@ function toInterviewSessionSnapshot(row: ConversationSessionRow): InterviewSessi
     state_token: row.state_token,
     current_step_id: row.current_step_id,
     last_inbound_message_sid: row.last_inbound_message_sid,
+    dropout_nudge_sent_at: row.dropout_nudge_sent_at,
   };
 }
 
@@ -171,7 +173,7 @@ async function fetchOrCreateConversationSession(
 ): Promise<ConversationSessionRow> {
   const { data: existing, error } = await supabase
     .from("conversation_sessions")
-    .select("id,mode,state_token,current_step_id,last_inbound_message_sid")
+    .select("id,mode,state_token,current_step_id,last_inbound_message_sid,dropout_nudge_sent_at")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -186,6 +188,7 @@ async function fetchOrCreateConversationSession(
       state_token: existing.state_token,
       current_step_id: existing.current_step_id ?? null,
       last_inbound_message_sid: existing.last_inbound_message_sid ?? null,
+      dropout_nudge_sent_at: existing.dropout_nudge_sent_at ?? null,
     };
   }
 
@@ -197,8 +200,9 @@ async function fetchOrCreateConversationSession(
       state_token: fallbackStateToken,
       current_step_id: null,
       last_inbound_message_sid: null,
+      dropout_nudge_sent_at: null,
     })
-    .select("id,mode,state_token,current_step_id,last_inbound_message_sid")
+    .select("id,mode,state_token,current_step_id,last_inbound_message_sid,dropout_nudge_sent_at")
     .single();
 
   if (createError || !created?.id) {
@@ -211,6 +215,7 @@ async function fetchOrCreateConversationSession(
     state_token: created.state_token,
     current_step_id: created.current_step_id ?? null,
     last_inbound_message_sid: created.last_inbound_message_sid ?? null,
+    dropout_nudge_sent_at: created.dropout_nudge_sent_at ?? null,
   };
 }
 
@@ -375,6 +380,7 @@ async function persistInterviewTransition(params: {
       state_token: params.transition.next_session.state_token,
       current_step_id: params.transition.next_session.current_step_id,
       last_inbound_message_sid: params.transition.next_session.last_inbound_message_sid,
+      dropout_nudge_sent_at: params.transition.next_session.dropout_nudge_sent_at,
     })
     .eq("id", params.session.id);
 
@@ -489,6 +495,8 @@ function mapConversationEventType(action: string): string {
       return "interview_step_advanced";
     case "pause":
       return "interview_paused";
+    case "resume":
+      return "interview_resumed";
     case "complete":
       return "interview_completed";
     default:
