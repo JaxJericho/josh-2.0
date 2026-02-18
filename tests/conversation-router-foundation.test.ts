@@ -41,7 +41,7 @@ describe("conversation router foundation", () => {
   it("routes idle users with incomplete profile into interview engine", async () => {
     const supabase = buildSupabaseMock({
       user: { id: "usr_123" },
-      session: { mode: "idle", state_token: "idle" },
+      session: { id: "ses_123", mode: "idle", state_token: "idle" },
       profile: { is_complete_mvp: false, state: "partial" },
     });
 
@@ -51,6 +51,8 @@ describe("conversation router foundation", () => {
     });
 
     expect(decision.route).toBe("profile_interview_engine");
+    expect(decision.state.mode).toBe("interviewing");
+    expect(decision.state.state_token).toBe("interview:start_onboarding");
     expect(decision.next_transition).toBe("interview:start_onboarding");
   });
 
@@ -66,7 +68,8 @@ describe("conversation router foundation", () => {
       payload: samplePayload(),
     });
 
-    expect(decision.state.mode).toBe("idle");
+    expect(decision.state.mode).toBe("interviewing");
+    expect(decision.state.state_token).toBe("interview:start_onboarding");
     expect(decision.route).toBe("profile_interview_engine");
   });
 
@@ -101,6 +104,7 @@ function sampleDecision(route: RoutingDecision["route"]): RoutingDecision {
       mode: "idle",
       state_token: "idle",
     },
+    profile_is_complete_mvp: null,
     route,
     safety_override_applied: false,
     next_transition: "idle:awaiting_user_input",
@@ -110,7 +114,7 @@ function sampleDecision(route: RoutingDecision["route"]): RoutingDecision {
 function buildSupabaseMock(
   data: {
     user: { id: string } | null;
-    session: { mode: string | null; state_token: string | null } | null;
+    session: { id: string; mode: string | null; state_token: string | null } | null;
     profile: { is_complete_mvp: boolean; state: string | null } | null;
   },
 ) {
@@ -122,51 +126,84 @@ function buildSupabaseMock(
 
   return {
     from(table: string) {
-      return {
+      const queryState: Record<string, unknown> = {};
+
+      const query = {
         select() {
-          return {
-            eq() {
-              return {
-                async maybeSingle() {
-                  if (table === "users") {
-                    return { data: state.user, error: null };
-                  }
-                  if (table === "conversation_sessions") {
-                    return { data: state.session, error: null };
-                  }
-                  if (table === "profiles") {
-                    return { data: state.profile, error: null };
-                  }
-                  return { data: null, error: null };
-                },
-              };
-            },
-          };
+          return query;
         },
+        eq(column: string, value: unknown) {
+          queryState[column] = value;
+          return query;
+        },
+        async maybeSingle() {
+          if (table === "users") {
+            return { data: state.user, error: null };
+          }
+          if (table === "conversation_sessions") {
+            return { data: state.session, error: null };
+          }
+          if (table === "profiles") {
+            return { data: state.profile, error: null };
+          }
+          return { data: null, error: null };
+        },
+        async single() {
+          let sessionRow = state.session;
+          if (table === "conversation_sessions" && sessionRow) {
+            if (queryState.id && queryState.id !== sessionRow.id) {
+              return { data: null, error: null };
+            }
+            if (queryState.mode && queryState.mode !== sessionRow.mode) {
+              return { data: null, error: null };
+            }
+            const pendingUpdate = queryState.pending_update as
+              | { mode: string; state_token: string }
+              | undefined;
+            if (pendingUpdate) {
+              state.session = {
+                ...sessionRow,
+                mode: pendingUpdate.mode,
+                state_token: pendingUpdate.state_token,
+              };
+              sessionRow = state.session;
+            }
+            return {
+              data: {
+                id: sessionRow.id,
+                mode: sessionRow.mode,
+                state_token: sessionRow.state_token,
+              },
+              error: null,
+            };
+          }
+          return { data: null, error: null };
+        },
+      };
+
+      return {
         insert(payload: {
+          user_id: string;
           mode: string;
           state_token: string;
         }) {
-          return {
-            select() {
-              return {
-                async single() {
-                  if (table === "conversation_sessions") {
-                    state.session = {
-                      mode: payload.mode,
-                      state_token: payload.state_token,
-                    };
-                    return {
-                      data: state.session,
-                      error: null,
-                    };
-                  }
-                  return { data: null, error: null };
-                },
-              };
-            },
-          };
+          if (table === "conversation_sessions") {
+            state.session = {
+              id: "ses_new",
+              mode: payload.mode,
+              state_token: payload.state_token,
+            };
+          }
+          return query;
         },
+        update(payload: {
+          mode: string;
+          state_token: string;
+        }) {
+          queryState.pending_update = payload;
+          return query;
+        },
+        select: query.select,
       };
     },
   };

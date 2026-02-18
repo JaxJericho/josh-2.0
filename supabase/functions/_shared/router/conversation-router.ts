@@ -20,6 +20,7 @@ export type ConversationState = {
 export type RoutingDecision = {
   user_id: string;
   state: ConversationState;
+  profile_is_complete_mvp: boolean | null;
   route: RouterRoute;
   safety_override_applied: boolean;
   next_transition: string;
@@ -48,6 +49,20 @@ export type EngineDispatchResult = {
 type SupabaseClientLike = {
   from: (table: string) => any;
 };
+
+type ConversationSessionRow = {
+  id: string;
+  mode: string | null;
+  state_token: string | null;
+};
+
+type ProfileSummary = {
+  is_complete_mvp: boolean;
+  state: string | null;
+};
+
+const ONBOARDING_MODE: ConversationMode = "interviewing";
+const ONBOARDING_STATE_TOKEN = "interview:start_onboarding";
 
 const CONVERSATION_MODES: readonly ConversationMode[] = [
   "idle",
@@ -117,20 +132,41 @@ export async function routeConversationMessage(
   }
 
   const session = await fetchOrCreateConversationSession(params.supabase, user.id);
-
-  const state = validateConversationState(session.mode, session.state_token);
+  let state = validateConversationState(session.mode, session.state_token);
   const profile = await fetchProfileSummary(params.supabase, user.id);
   const shouldForceInterview = shouldRouteIdleUserToInterview(state, profile);
+
+  if (shouldForceInterview) {
+    const promotedSession = await promoteConversationSessionForOnboarding(
+      params.supabase,
+      session.id,
+    );
+    state = validateConversationState(
+      promotedSession.mode,
+      promotedSession.state_token,
+    );
+    if (
+      state.mode !== ONBOARDING_MODE ||
+      state.state_token !== ONBOARDING_STATE_TOKEN
+    ) {
+      throw new ConversationRouterError(
+        "INVALID_STATE",
+        "Session promotion failed to persist deterministic onboarding state."
+      );
+    }
+  }
+
   const route = shouldForceInterview
     ? "profile_interview_engine"
     : resolveRouteForState(state);
   const nextTransition = shouldForceInterview
-    ? "interview:start_onboarding"
+    ? ONBOARDING_STATE_TOKEN
     : resolveNextTransition(state, route);
 
   const decision: RoutingDecision = {
     user_id: user.id,
     state,
+    profile_is_complete_mvp: profile?.is_complete_mvp ?? null,
     route,
     safety_override_applied: params.safetyOverrideApplied ?? false,
     next_transition: nextTransition,
@@ -139,7 +175,9 @@ export async function routeConversationMessage(
   console.info("conversation_router.decision", {
     inbound_message_id: params.payload.inbound_message_id,
     user_id: decision.user_id,
-    prior_state: decision.state,
+    session_mode: decision.state.mode,
+    session_state_token: decision.state.state_token,
+    profile_is_complete_mvp: decision.profile_is_complete_mvp,
     routing_decision: {
       route: decision.route,
       next_transition: decision.next_transition,
@@ -222,10 +260,29 @@ export async function dispatchConversationRoute(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
   switch (input.decision.route) {
-    case "profile_interview_engine":
-      return runProfileInterviewEngine(input);
-    case "default_engine":
-      return runDefaultEngine(input);
+    case "profile_interview_engine": {
+      try {
+        const result = await runProfileInterviewEngine(input);
+        assertDispatchedEngineMatchesRoute(input.decision.route, result.engine);
+        return result;
+      } catch (error) {
+        const err = error as Error;
+        console.error("conversation_router.dispatch_failed", {
+          user_id: input.decision.user_id,
+          route: input.decision.route,
+          session_mode: input.decision.state.mode,
+          session_state_token: input.decision.state.state_token,
+          name: err?.name ?? "Error",
+          message: err?.message ?? String(error),
+        });
+        throw error;
+      }
+    }
+    case "default_engine": {
+      const result = await runDefaultEngine(input);
+      assertDispatchedEngineMatchesRoute(input.decision.route, result.engine);
+      return result;
+    }
     default:
       throw new ConversationRouterError(
         "INVALID_ROUTE",
@@ -261,10 +318,10 @@ async function fetchUserByPhone(
 async function fetchConversationSession(
   supabase: SupabaseClientLike,
   userId: string,
-): Promise<{ mode: string | null; state_token: string | null } | null> {
+): Promise<ConversationSessionRow | null> {
   const { data, error } = await supabase
     .from("conversation_sessions")
-    .select("mode,state_token")
+    .select("id,mode,state_token")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -275,11 +332,12 @@ async function fetchConversationSession(
     );
   }
 
-  if (!data) {
+  if (!data?.id) {
     return null;
   }
 
   return {
+    id: data.id,
     mode: data.mode ?? null,
     state_token: data.state_token ?? null,
   };
@@ -288,7 +346,7 @@ async function fetchConversationSession(
 async function fetchOrCreateConversationSession(
   supabase: SupabaseClientLike,
   userId: string,
-): Promise<{ mode: string | null; state_token: string | null }> {
+): Promise<ConversationSessionRow> {
   const existing = await fetchConversationSession(supabase, userId);
   if (existing) {
     return existing;
@@ -303,13 +361,42 @@ async function fetchOrCreateConversationSession(
       current_step_id: null,
       last_inbound_message_sid: null,
     })
+    .select("id,mode,state_token")
+    .single();
+
+  if (error || !data?.id) {
+    throw new ConversationRouterError(
+      "STATE_CREATE_FAILED",
+      "Unable to create default conversation state for routing."
+    );
+  }
+
+  return {
+    id: data.id,
+    mode: data.mode ?? null,
+    state_token: data.state_token ?? null,
+  };
+}
+
+async function promoteConversationSessionForOnboarding(
+  supabase: SupabaseClientLike,
+  sessionId: string,
+): Promise<{ mode: string | null; state_token: string | null }> {
+  const { data, error } = await supabase
+    .from("conversation_sessions")
+    .update({
+      mode: ONBOARDING_MODE,
+      state_token: ONBOARDING_STATE_TOKEN,
+    })
+    .eq("id", sessionId)
+    .eq("mode", "idle")
     .select("mode,state_token")
     .single();
 
   if (error || !data) {
     throw new ConversationRouterError(
-      "STATE_CREATE_FAILED",
-      "Unable to create default conversation state for routing."
+      "STATE_PROMOTION_FAILED",
+      "Unable to persist deterministic onboarding conversation state."
     );
   }
 
@@ -322,7 +409,7 @@ async function fetchOrCreateConversationSession(
 async function fetchProfileSummary(
   supabase: SupabaseClientLike,
   userId: string,
-): Promise<{ is_complete_mvp: boolean; state: string | null } | null> {
+): Promise<ProfileSummary | null> {
   const { data, error } = await supabase
     .from("profiles")
     .select("is_complete_mvp,state")
@@ -348,7 +435,7 @@ async function fetchProfileSummary(
 
 function shouldRouteIdleUserToInterview(
   state: ConversationState,
-  profile: { is_complete_mvp: boolean; state: string | null } | null,
+  profile: ProfileSummary | null,
 ): boolean {
   if (state.mode !== "idle") {
     return false;
@@ -358,11 +445,19 @@ function shouldRouteIdleUserToInterview(
     return true;
   }
 
-  if (profile.is_complete_mvp) {
-    return false;
-  }
+  return !profile.is_complete_mvp;
+}
 
-  return profile.state !== "complete_full";
+function assertDispatchedEngineMatchesRoute(
+  route: RouterRoute,
+  engine: RouterRoute,
+): void {
+  if (route !== engine) {
+    throw new ConversationRouterError(
+      "ENGINE_ROUTE_MISMATCH",
+      `Dispatch returned engine '${engine}' for route '${route}'.`
+    );
+  }
 }
 
 function isConversationMode(value: string): value is ConversationMode {
