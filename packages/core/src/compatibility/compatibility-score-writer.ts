@@ -1,9 +1,9 @@
-import { COMPATIBILITY_SIGNAL_TABLE } from "./compatibility-signal-writer";
-import { scorePair, type CompatibilityScoreResult, type CompatibilitySignalSnapshot } from "./scorer";
+import { COMPATIBILITY_SIGNAL_TABLE } from "./compatibility-signal-writer.ts";
+import { scorePair, type CompatibilityScoreResult, type CompatibilitySignalSnapshot } from "./scorer.ts";
 import {
   createSupabaseEntitlementsRepository,
   evaluateEntitlements,
-} from "../entitlements/evaluate-entitlements";
+} from "../entitlements/evaluate-entitlements.ts";
 
 export const COMPATIBILITY_SCORE_TABLE = "profile_compatibility_scores";
 

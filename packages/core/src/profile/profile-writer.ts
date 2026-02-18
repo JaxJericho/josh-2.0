@@ -2,7 +2,7 @@ import {
   INTERVIEW_QUESTION_STEP_IDS,
   type InterviewNormalizedAnswer,
   type InterviewQuestionStepId,
-} from "../interview/steps";
+} from "../interview/steps.ts";
 
 export type ProfileState =
   | "empty"
