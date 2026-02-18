@@ -4,6 +4,8 @@ import type {
 } from "../router/conversation-router.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { enforceWaitlistGate } from "../waitlist/waitlist-operations.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { handleInviteReply } from "../linkup/invite-replies.ts";
 
 const DEFAULT_ENGINE_STUB_REPLY = "JOSH router stub: default engine selected.";
 
@@ -21,6 +23,10 @@ export async function runDefaultEngine(
       engine: "default_engine",
       reply_message: waitlistGate.reply_message,
     };
+  }
+
+  if (input.decision.state.mode === "awaiting_invite_reply") {
+    return handleInviteReply(input);
   }
 
   return {
