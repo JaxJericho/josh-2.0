@@ -31,6 +31,10 @@
     "db:verify-types": "node scripts/verify-types.mjs",
     "doctor": "node scripts/doctor.mjs",
     "env:fingerprint": "node scripts/print-env-fingerprint.mjs",
+    "matching:run": "node scripts/run-matching-job.mjs",
+    "verify:matching:seed": "node scripts/verify/seed-matching-e2e.mjs",
+    "verify:matching:seed:rest": "node scripts/verify/seed-matching-e2e-rest.mjs",
+    "verify:matching:e2e": "node scripts/verify/run-matching-e2e.mjs",
     "build": "next build",
     "start": "next start"
   },
