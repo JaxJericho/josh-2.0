@@ -34,7 +34,6 @@ describe("onboarding interview e2e", () => {
       "B",
       "bars and late nights",
       "C",
-      "US-WA",
     ];
 
     let finalAction = "";

@@ -8,7 +8,6 @@ import {
 } from "../profile/profile-writer.ts";
 import {
   ACTIVE_INTERVIEW_QUESTION_STEP_IDS,
-  INTERVIEW_QUESTION_STEP_IDS,
   INTERVIEW_WRAP_MESSAGE,
   getInterviewStepById,
   isInterviewQuestionStepId,
@@ -16,6 +15,11 @@ import {
   type InterviewNormalizedAnswer,
   type InterviewQuestionStepId,
 } from "./steps.ts";
+import {
+  getSignalCoverageStatus,
+  selectNextQuestion,
+  type NextQuestionSelection,
+} from "./signal-coverage.ts";
 
 export type ConversationMode =
   | "idle"
@@ -120,16 +124,46 @@ export function fromInterviewStateToken(token: string): InterviewOrOnboardingSta
   return normalizeDeprecatedInterviewStepId(stepId);
 }
 
-export function nextInterviewQuestionStep(
-  currentStepId: InterviewQuestionStepId,
-): InterviewQuestionStepId | null {
-  const index = INTERVIEW_QUESTION_STEP_IDS.findIndex((stepId) => stepId === currentStepId);
-  if (index < 0) {
-    return null;
+function collectHistoryFragments(value: unknown): string[] {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized ? [normalized] : [];
   }
 
-  const next = INTERVIEW_QUESTION_STEP_IDS[index + 1];
-  return next ?? null;
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => collectHistoryFragments(entry));
+  }
+
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>)
+      .flatMap((entry) => collectHistoryFragments(entry));
+  }
+
+  return [];
+}
+
+function buildConversationHistory(
+  profile: ProfileRowForInterview,
+  latestInboundMessageText?: string,
+): string[] {
+  const progress = readInterviewProgress(profile.preferences);
+  const historyFromAnswers = progress
+    ? Object.values(progress.answers).flatMap((answer) => collectHistoryFragments(answer))
+    : [];
+
+  const latest = typeof latestInboundMessageText === "string"
+    ? latestInboundMessageText.trim()
+    : "";
+
+  if (latest.length === 0) {
+    return historyFromAnswers;
+  }
+
+  return [...historyFromAnswers, latest];
+}
+
+function pickNextQuestion(profile: ProfileRowForInterview): NextQuestionSelection | null {
+  return selectNextQuestion(profile, buildConversationHistory(profile));
 }
 
 export function resolveCurrentInterviewStep(params: {
@@ -158,12 +192,9 @@ export function resolveCurrentInterviewStep(params: {
     return normalizeDeprecatedInterviewStepId(progress.current_step_id);
   }
 
-  const lastStep = params.profile.last_interview_step;
-  if (lastStep && isInterviewQuestionStepId(lastStep)) {
-    const nextFromLast = nextInterviewQuestionStep(lastStep);
-    if (nextFromLast) {
-      return nextFromLast;
-    }
+  const selection = pickNextQuestion(params.profile);
+  if (selection?.questionId) {
+    return selection.questionId;
   }
 
   return ACTIVE_INTERVIEW_QUESTION_STEP_IDS[0] ?? INTERVIEW_ACTIVE_START_STEP_ID;
@@ -177,15 +208,21 @@ function buildCollectedAnswers(profile: ProfileRowForInterview): Record<string, 
   return progress.answers;
 }
 
+function applyProfilePatch(
+  profile: ProfileRowForInterview,
+  patch: ProfileUpdatePatch,
+): ProfileRowForInterview {
+  return {
+    ...profile,
+    ...patch,
+  };
+}
+
 export function buildInterviewTransitionPlan(
   input: BuildInterviewTransitionInput,
 ): InterviewTransitionPlan {
-  const currentStepId = resolveCurrentInterviewStep({
-    session: input.session,
-    profile: input.profile,
-  });
-
-  if (input.profile.is_complete_mvp || input.profile.state === "complete_mvp" || input.profile.state === "complete_full") {
+  const coverageStatus = getSignalCoverageStatus(input.profile);
+  if (coverageStatus.mvpComplete || input.profile.state === "complete_full") {
     return {
       action: "idempotent",
       reply_message: ALREADY_COMPLETE_PROFILE_MESSAGE,
@@ -203,6 +240,11 @@ export function buildInterviewTransitionPlan(
       profile_event_payload: null,
     };
   }
+
+  const currentStepId = resolveCurrentInterviewStep({
+    session: input.session,
+    profile: input.profile,
+  });
 
   if (input.session.last_inbound_message_sid === input.inbound_message_sid) {
     return {
@@ -314,7 +356,24 @@ export function buildInterviewTransitionPlan(
     };
   }
 
-  const nextStepId = nextInterviewQuestionStep(currentStepId);
+  const provisionalPatch = buildProfilePatchForInterviewAnswer({
+    profile: input.profile,
+    stepId: currentStepId,
+    answer: normalizedAnswer,
+    nextStepId: currentStepId,
+    nowIso: input.now_iso,
+  });
+
+  const profileAfterAnswer = applyProfilePatch(input.profile, provisionalPatch);
+  const nextSelection = selectNextQuestion(
+    profileAfterAnswer,
+    buildConversationHistory(profileAfterAnswer, input.inbound_message_text),
+  );
+  const postAnswerCoverage = getSignalCoverageStatus(profileAfterAnswer);
+  const nextStepId = postAnswerCoverage.mvpComplete
+    ? null
+    : (nextSelection?.questionId ?? currentStepId);
+
   const profilePatch = buildProfilePatchForInterviewAnswer({
     profile: input.profile,
     stepId: currentStepId,
@@ -323,17 +382,21 @@ export function buildInterviewTransitionPlan(
     nowIso: input.now_iso,
   });
 
-  const isComplete = nextStepId === null;
+  const isComplete = profilePatch.is_complete_mvp;
+  const activeNextStepId = nextStepId ?? currentStepId;
+  const plannedNextStepId = isComplete ? null : activeNextStepId;
 
   return {
     action: isComplete ? "complete" : "advance",
-    reply_message: isComplete ? INTERVIEW_WRAP_MESSAGE : getInterviewStepById(nextStepId).prompt,
+    reply_message: isComplete
+      ? INTERVIEW_WRAP_MESSAGE
+      : getInterviewStepById(activeNextStepId).prompt,
     current_step_id: currentStepId,
-    next_step_id: nextStepId,
+    next_step_id: plannedNextStepId,
     next_session: {
       mode: isComplete ? "idle" : "interviewing",
-      state_token: isComplete ? "idle" : toInterviewStateToken(nextStepId),
-      current_step_id: nextStepId,
+      state_token: isComplete ? "idle" : toInterviewStateToken(activeNextStepId),
+      current_step_id: plannedNextStepId,
       last_inbound_message_sid: input.inbound_message_sid,
     },
     profile_patch: profilePatch,
@@ -342,7 +405,9 @@ export function buildInterviewTransitionPlan(
     profile_event_payload: {
       step_id: currentStepId,
       answer: normalizedAnswer,
-      next_step_id: nextStepId,
+      next_step_id: plannedNextStepId,
+      next_signal_target: nextSelection?.signalTarget ?? null,
+      skipped_inferable_targets: nextSelection?.metadata?.skippedInferableTargets ?? [],
       profile_state: profilePatch.state,
       is_complete_mvp: profilePatch.is_complete_mvp,
       completeness_percent: profilePatch.completeness_percent,

@@ -4,6 +4,11 @@ import {
   type InterviewNormalizedAnswer,
   type InterviewQuestionStepId,
 } from "../interview/steps.ts";
+import {
+  getSignalCoverageStatus,
+  type InterviewSignalTarget,
+  type SignalCoverageStatus,
+} from "../interview/signal-coverage.ts";
 
 export type ProfileState =
   | "empty"
@@ -101,14 +106,6 @@ function toUniqueStepIds(stepIds: InterviewQuestionStepId[]): InterviewQuestionS
     }
   }
   return ordered;
-}
-
-function isActiveInterviewStepId(
-  stepId: InterviewQuestionStepId,
-): stepId is (typeof ACTIVE_INTERVIEW_QUESTION_STEP_IDS)[number] {
-  return ACTIVE_INTERVIEW_QUESTION_STEP_IDS.includes(
-    stepId as (typeof ACTIVE_INTERVIEW_QUESTION_STEP_IDS)[number],
-  );
 }
 
 export function readInterviewProgress(preferencesRaw: unknown): InterviewProgress | null {
@@ -272,6 +269,465 @@ function appendActivityPatterns(
   return nextPatterns;
 }
 
+type InterviewWriteTarget =
+  | InterviewSignalTarget
+  | "motive_weights"
+  | "interaction_style"
+  | "values_alignment_preference"
+  | "onboarding_consent";
+
+type InterviewSignalWriteContext = {
+  fingerprint: Record<string, unknown>;
+  boundaries: Record<string, unknown>;
+  preferences: Record<string, unknown>;
+  activeIntent: Record<string, unknown>;
+  activityPatterns: Array<Record<string, unknown>>;
+  countryCode: string | null;
+  stateCode: string | null;
+};
+
+type InterviewSignalWriter = (
+  context: InterviewSignalWriteContext,
+  answer: InterviewNormalizedAnswer,
+) => void;
+
+const STEP_TO_WRITE_TARGETS: Readonly<Record<InterviewQuestionStepId, readonly InterviewWriteTarget[]>> = {
+  intro_01: ["onboarding_consent"],
+  activity_01: ["activity_patterns"],
+  activity_02: ["top_activity_intent"],
+  motive_01: [
+    "motive_weights",
+    "connection_depth",
+    "novelty_seeking",
+    "emotional_directness",
+    "adventure_comfort",
+  ],
+  motive_02: [
+    "motive_weights",
+    "connection_depth",
+    "novelty_seeking",
+    "emotional_directness",
+    "adventure_comfort",
+  ],
+  style_01: ["interaction_style", "social_energy", "humor_style"],
+  style_02: ["conversation_style"],
+  pace_01: ["social_pace", "structure_preference"],
+  group_01: ["group_size_pref", "group_vs_1on1_preference"],
+  values_01: ["values_alignment_preference", "values_alignment_importance"],
+  boundaries_01: ["boundaries_asked", "conflict_tolerance"],
+  constraints_01: ["time_preferences"],
+  location_01: ["location_capture"],
+};
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readMotiveWeights(answer: InterviewNormalizedAnswer): Record<string, number> {
+  const raw = (answer as { motive_weights?: unknown }).motive_weights;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+
+  const motiveWeights = raw as Record<string, unknown>;
+  const merged: Record<string, number> = {};
+  for (const [key, value] of Object.entries(motiveWeights)) {
+    const parsed = asNumber(value);
+    if (parsed != null) {
+      merged[key] = parsed;
+    }
+  }
+
+  return merged;
+}
+
+function readStyleKeys(answer: InterviewNormalizedAnswer): string[] {
+  const raw = (answer as { style_keys?: unknown }).style_keys;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+function readTopActivity(answer: InterviewNormalizedAnswer): string | null {
+  const raw = (answer as { activity_key?: unknown }).activity_key;
+  return typeof raw === "string" && raw.trim().length > 0 ? raw : null;
+}
+
+function readActivityKeys(answer: InterviewNormalizedAnswer): string[] {
+  const raw = (answer as { activity_keys?: unknown }).activity_keys;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+function readPace(answer: InterviewNormalizedAnswer): "slow" | "medium" | "fast" | null {
+  const raw = (answer as { social_pace?: unknown }).social_pace;
+  if (raw === "slow" || raw === "medium" || raw === "fast") {
+    return raw;
+  }
+  return null;
+}
+
+function readGroupSize(answer: InterviewNormalizedAnswer): "2-3" | "4-6" | "7-10" | null {
+  const raw = (answer as { group_size_pref?: unknown }).group_size_pref;
+  if (raw === "2-3" || raw === "4-6" || raw === "7-10") {
+    return raw;
+  }
+  return null;
+}
+
+function readValuesAlignmentImportance(
+  answer: InterviewNormalizedAnswer,
+): "very" | "somewhat" | "not_a_big_deal" | null {
+  const raw = (answer as { values_alignment_importance?: unknown }).values_alignment_importance;
+  if (raw === "very" || raw === "somewhat" || raw === "not_a_big_deal") {
+    return raw;
+  }
+  return null;
+}
+
+function readBoundaries(
+  answer: InterviewNormalizedAnswer,
+): { no_thanks: string[]; skipped: boolean } {
+  const rawNoThanks = (answer as { no_thanks?: unknown }).no_thanks;
+  const rawSkipped = (answer as { skipped?: unknown }).skipped;
+  const noThanks = Array.isArray(rawNoThanks)
+    ? rawNoThanks.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  return {
+    no_thanks: noThanks,
+    skipped: typeof rawSkipped === "boolean" ? rawSkipped : false,
+  };
+}
+
+function readTimePreferences(answer: InterviewNormalizedAnswer): string[] {
+  const raw = (answer as { time_preferences?: unknown }).time_preferences;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
+function readLocation(
+  answer: InterviewNormalizedAnswer,
+): { country_code: string; state_code: string | null } | null {
+  const countryCode = (answer as { country_code?: unknown }).country_code;
+  const stateCode = (answer as { state_code?: unknown }).state_code;
+  if (typeof countryCode !== "string" || countryCode.length === 0) {
+    return null;
+  }
+  return {
+    country_code: countryCode,
+    state_code: typeof stateCode === "string" ? stateCode : null,
+  };
+}
+
+function readConsent(answer: InterviewNormalizedAnswer): "yes" | "later" | null {
+  const consent = (answer as { consent?: unknown }).consent;
+  if (consent === "yes" || consent === "later") {
+    return consent;
+  }
+  return null;
+}
+
+function mergeMotiveWeights(
+  activeIntent: Record<string, unknown>,
+  answer: InterviewNormalizedAnswer,
+): Record<string, unknown> {
+  const nextMotiveWeights = readMotiveWeights(answer);
+  if (Object.keys(nextMotiveWeights).length === 0) {
+    return activeIntent;
+  }
+
+  const existing = asObject(activeIntent.motive_weights);
+  return {
+    ...activeIntent,
+    motive_weights: {
+      ...existing,
+      ...nextMotiveWeights,
+    },
+  };
+}
+
+function deriveNoveltySeeking(answer: InterviewNormalizedAnswer): number | null {
+  const weights = readMotiveWeights(answer);
+  if (Object.keys(weights).length === 0) {
+    return null;
+  }
+
+  const adventure = weights.adventure ?? 0;
+  const fun = weights.fun ?? 0;
+  const novelty = Math.max(adventure, fun * 0.85);
+  return novelty > 0 ? Math.min(1, novelty) : null;
+}
+
+function deriveAdventureComfort(answer: InterviewNormalizedAnswer): number | null {
+  const weights = readMotiveWeights(answer);
+  const adventure = weights.adventure ?? 0;
+  return adventure > 0 ? Math.min(1, adventure) : null;
+}
+
+function deriveEmotionalDirectness(answer: InterviewNormalizedAnswer): number | null {
+  const weights = readMotiveWeights(answer);
+  if (Object.keys(weights).length === 0) {
+    return null;
+  }
+
+  const connection = weights.connection ?? 0;
+  const restorative = weights.restorative ?? 0;
+  const comfort = weights.comfort ?? 0;
+  const directness = Math.max(connection, restorative * 0.75, comfort * 0.65);
+  return directness > 0 ? Math.min(1, directness) : null;
+}
+
+function deriveSocialEnergy(answer: InterviewNormalizedAnswer): number | null {
+  const primaryStyle = readStyleKeys(answer)[0];
+  if (!primaryStyle) {
+    return null;
+  }
+
+  const SOCIAL_ENERGY_BY_STYLE: Record<string, number> = {
+    curious: 0.6,
+    funny: 0.72,
+    thoughtful: 0.52,
+    energetic: 0.84,
+  };
+
+  return SOCIAL_ENERGY_BY_STYLE[primaryStyle] ?? null;
+}
+
+function deriveHumorStyle(answer: InterviewNormalizedAnswer): string | null {
+  const primaryStyle = readStyleKeys(answer)[0];
+  if (!primaryStyle) {
+    return null;
+  }
+  if (primaryStyle === "funny") {
+    return "playful";
+  }
+  return primaryStyle;
+}
+
+function deriveStructurePreference(answer: InterviewNormalizedAnswer): string | null {
+  const pace = readPace(answer);
+  if (!pace) {
+    return null;
+  }
+
+  const STRUCTURE_BY_PACE: Record<typeof pace, string> = {
+    slow: "planned",
+    medium: "balanced",
+    fast: "spontaneous",
+  };
+
+  return STRUCTURE_BY_PACE[pace];
+}
+
+function deriveGroupPreference(answer: InterviewNormalizedAnswer): string | null {
+  const groupSize = readGroupSize(answer);
+  if (!groupSize) {
+    return null;
+  }
+
+  if (groupSize === "2-3") {
+    return "small_group";
+  }
+  if (groupSize === "4-6") {
+    return "balanced_group";
+  }
+  return "larger_group";
+}
+
+function deriveConflictTolerance(answer: InterviewNormalizedAnswer): number {
+  const boundaries = readBoundaries(answer);
+  if (boundaries.skipped) {
+    return 0.5;
+  }
+
+  const count = boundaries.no_thanks.length;
+  const score = 1 - Math.min(4, count) * 0.15;
+  return Math.max(0.3, Math.min(1, score));
+}
+
+const TARGET_WRITERS: Readonly<Record<InterviewWriteTarget, InterviewSignalWriter>> = {
+  activity_patterns: (context, answer) => {
+    context.activityPatterns = appendActivityPatterns(
+      context.activityPatterns,
+      readActivityKeys(answer),
+    );
+  },
+  top_activity_intent: (context, answer) => {
+    const activityKey = readTopActivity(answer);
+    if (!activityKey) {
+      return;
+    }
+    context.activeIntent = {
+      ...context.activeIntent,
+      activity_key: activityKey,
+    };
+  },
+  motive_weights: (context, answer) => {
+    context.activeIntent = mergeMotiveWeights(context.activeIntent, answer);
+  },
+  connection_depth: (context, answer) => {
+    const connection = readMotiveWeights(answer).connection;
+    if (connection != null) {
+      setFingerprintValue(context.fingerprint, "connection_depth", connection, 0.62);
+    }
+  },
+  novelty_seeking: (context, answer) => {
+    const noveltySeeking = deriveNoveltySeeking(answer);
+    if (noveltySeeking != null) {
+      setFingerprintValue(context.fingerprint, "novelty_seeking", noveltySeeking, 0.61);
+    }
+  },
+  emotional_directness: (context, answer) => {
+    const emotionalDirectness = deriveEmotionalDirectness(answer);
+    if (emotionalDirectness != null) {
+      setFingerprintValue(
+        context.fingerprint,
+        "emotional_directness",
+        emotionalDirectness,
+        0.58,
+      );
+    }
+  },
+  adventure_comfort: (context, answer) => {
+    const adventureComfort = deriveAdventureComfort(answer);
+    if (adventureComfort != null) {
+      setFingerprintValue(context.fingerprint, "adventure_comfort", adventureComfort, 0.6);
+    }
+  },
+  interaction_style: (context, answer) => {
+    const primaryStyle = readStyleKeys(answer)[0];
+    if (primaryStyle) {
+      setFingerprintValue(context.fingerprint, "interaction_style", primaryStyle, 0.72);
+    }
+  },
+  social_energy: (context, answer) => {
+    const socialEnergy = deriveSocialEnergy(answer);
+    if (socialEnergy != null) {
+      setFingerprintValue(context.fingerprint, "social_energy", socialEnergy, 0.68);
+    }
+  },
+  humor_style: (context, answer) => {
+    const humorStyle = deriveHumorStyle(answer);
+    if (humorStyle) {
+      setFingerprintValue(context.fingerprint, "humor_style", humorStyle, 0.6);
+    }
+  },
+  conversation_style: (context, answer) => {
+    const styleKeys = readStyleKeys(answer);
+    if (styleKeys.length > 0) {
+      setFingerprintValue(context.fingerprint, "conversation_style", styleKeys, 0.7);
+    }
+  },
+  social_pace: (context, answer) => {
+    const socialPace = readPace(answer);
+    if (socialPace) {
+      setFingerprintValue(context.fingerprint, "social_pace", socialPace, 0.8);
+    }
+  },
+  structure_preference: (context, answer) => {
+    const structurePreference = deriveStructurePreference(answer);
+    if (structurePreference) {
+      setFingerprintValue(
+        context.fingerprint,
+        "structure_preference",
+        structurePreference,
+        0.66,
+      );
+    }
+  },
+  group_size_pref: (context, answer) => {
+    const groupSizePreference = readGroupSize(answer);
+    if (groupSizePreference) {
+      context.preferences.group_size_pref = groupSizePreference;
+    }
+  },
+  group_vs_1on1_preference: (context, answer) => {
+    const groupPreference = deriveGroupPreference(answer);
+    if (groupPreference) {
+      setFingerprintValue(
+        context.fingerprint,
+        "group_vs_1on1_preference",
+        groupPreference,
+        0.65,
+      );
+    }
+  },
+  values_alignment_preference: (context, answer) => {
+    const valuesAlignmentImportance = readValuesAlignmentImportance(answer);
+    if (valuesAlignmentImportance) {
+      context.preferences.values_alignment_importance = valuesAlignmentImportance;
+    }
+  },
+  values_alignment_importance: (context, answer) => {
+    const valuesAlignmentImportance = readValuesAlignmentImportance(answer);
+    if (valuesAlignmentImportance) {
+      setFingerprintValue(
+        context.fingerprint,
+        "values_alignment_importance",
+        valuesAlignmentImportance,
+        0.74,
+      );
+    }
+  },
+  boundaries_asked: (context, answer) => {
+    const boundaries = readBoundaries(answer);
+    context.boundaries.no_thanks = boundaries.no_thanks;
+    context.boundaries.skipped = boundaries.skipped;
+  },
+  conflict_tolerance: (context, answer) => {
+    setFingerprintValue(
+      context.fingerprint,
+      "conflict_tolerance",
+      deriveConflictTolerance(answer),
+      0.58,
+    );
+  },
+  time_preferences: (context, answer) => {
+    const timePreferences = readTimePreferences(answer);
+    if (timePreferences.length > 0) {
+      context.preferences.time_preferences = timePreferences;
+    }
+  },
+  onboarding_consent: (context, answer) => {
+    const consent = readConsent(answer);
+    if (consent) {
+      context.preferences.onboarding_consent = consent;
+    }
+  },
+  location_capture: (context, answer) => {
+    const location = readLocation(answer);
+    if (!location) {
+      return;
+    }
+    context.countryCode = location.country_code;
+    context.stateCode = location.state_code;
+  },
+};
+
+function computeCoverageCompletenessPercent(coverageStatus: SignalCoverageStatus): number {
+  const total = coverageStatus.covered.length + coverageStatus.uncovered.length;
+  if (total <= 0) {
+    return 0;
+  }
+  return Math.round((coverageStatus.covered.length / total) * 100);
+}
+
+function applySignalWriters(params: {
+  stepId: InterviewQuestionStepId;
+  answer: InterviewNormalizedAnswer;
+  context: InterviewSignalWriteContext;
+}): void {
+  const targets = STEP_TO_WRITE_TARGETS[params.stepId] ?? [];
+  for (const target of targets) {
+    TARGET_WRITERS[target](params.context, params.answer);
+  }
+}
+
 export function buildProfilePatchForInterviewAnswer(params: {
   profile: ProfileRowForInterview;
   stepId: InterviewQuestionStepId;
@@ -279,95 +735,23 @@ export function buildProfilePatchForInterviewAnswer(params: {
   nextStepId: InterviewQuestionStepId | null;
   nowIso: string;
 }): ProfileUpdatePatch {
-  const fingerprint = asObject(params.profile.fingerprint);
-  const boundaries = asObject(params.profile.boundaries);
-  const preferences = asObject(params.profile.preferences);
-  let activeIntent = asObject(params.profile.active_intent);
-  let activityPatterns = asObjectArray(params.profile.activity_patterns);
-  let countryCode = params.profile.country_code;
-  let stateCode = params.profile.state_code;
+  const context: InterviewSignalWriteContext = {
+    fingerprint: asObject(params.profile.fingerprint),
+    boundaries: asObject(params.profile.boundaries),
+    preferences: asObject(params.profile.preferences),
+    activeIntent: asObject(params.profile.active_intent),
+    activityPatterns: asObjectArray(params.profile.activity_patterns),
+    countryCode: params.profile.country_code,
+    stateCode: params.profile.state_code,
+  };
 
-  if (params.stepId === "activity_01") {
-    const answer = params.answer as { activity_keys: string[] };
-    activityPatterns = appendActivityPatterns(activityPatterns, answer.activity_keys);
-  }
+  applySignalWriters({
+    stepId: params.stepId,
+    answer: params.answer,
+    context,
+  });
 
-  if (params.stepId === "activity_02") {
-    const answer = params.answer as { activity_key: string };
-    activeIntent = {
-      ...activeIntent,
-      activity_key: answer.activity_key,
-    };
-  }
-
-  if (params.stepId === "motive_01" || params.stepId === "motive_02") {
-    const answer = params.answer as { motive_weights: Record<string, number> };
-    activeIntent = {
-      ...activeIntent,
-      motive_weights: {
-        ...(asObject(activeIntent.motive_weights) as Record<string, number>),
-        ...answer.motive_weights,
-      },
-    };
-
-    if (answer.motive_weights.connection) {
-      setFingerprintValue(
-        fingerprint,
-        "connection_depth",
-        answer.motive_weights.connection,
-        0.62,
-      );
-    }
-  }
-
-  if (params.stepId === "style_01") {
-    const answer = params.answer as { style_keys: string[] };
-    setFingerprintValue(fingerprint, "interaction_style", answer.style_keys[0], 0.72);
-  }
-
-  if (params.stepId === "style_02") {
-    const answer = params.answer as { style_keys: string[] };
-    setFingerprintValue(fingerprint, "conversation_style", answer.style_keys, 0.7);
-  }
-
-  if (params.stepId === "pace_01") {
-    const answer = params.answer as { social_pace: string };
-    setFingerprintValue(fingerprint, "social_pace", answer.social_pace, 0.8);
-  }
-
-  if (params.stepId === "group_01") {
-    const answer = params.answer as { group_size_pref: string };
-    preferences.group_size_pref = answer.group_size_pref;
-  }
-
-  if (params.stepId === "values_01") {
-    const answer = params.answer as { values_alignment_importance: string };
-    preferences.values_alignment_importance = answer.values_alignment_importance;
-  }
-
-  if (params.stepId === "boundaries_01") {
-    const answer = params.answer as { no_thanks: string[]; skipped: boolean };
-    boundaries.no_thanks = answer.no_thanks;
-    boundaries.skipped = answer.skipped;
-  }
-
-  if (params.stepId === "constraints_01") {
-    const answer = params.answer as { time_preferences: string[] };
-    preferences.time_preferences = answer.time_preferences;
-  }
-
-  if (params.stepId === "intro_01") {
-    const answer = params.answer as { consent: "yes" | "later" };
-    preferences.onboarding_consent = answer.consent;
-  }
-
-  if (params.stepId === "location_01") {
-    const answer = params.answer as { country_code: string; state_code: string | null };
-    countryCode = answer.country_code;
-    stateCode = answer.state_code;
-  }
-
-  const existingProgress = readInterviewProgress(preferences) ?? {
+  const existingProgress = readInterviewProgress(context.preferences) ?? {
     version: 1,
     status: "in_progress" as const,
     step_index: toInterviewStepIndex(params.stepId),
@@ -387,13 +771,21 @@ export function buildProfilePatchForInterviewAnswer(params: {
     [params.stepId]: params.answer,
   };
 
-  const completedCount = completedStepIds.filter(isActiveInterviewStepId).length;
-  const requiredCount = ACTIVE_INTERVIEW_QUESTION_STEP_IDS.length;
-  const completenessPercent = Math.round((completedCount / requiredCount) * 100);
-  const isComplete = completedCount >= requiredCount;
+  const coverageStatus = getSignalCoverageStatus({
+    country_code: context.countryCode,
+    last_interview_step: params.stepId,
+    fingerprint: context.fingerprint,
+    activity_patterns: context.activityPatterns,
+    boundaries: context.boundaries,
+    preferences: context.preferences,
+    active_intent: context.activeIntent,
+  });
+
+  const isComplete = coverageStatus.mvpComplete;
+  const completenessPercent = computeCoverageCompletenessPercent(coverageStatus);
   const nextState: ProfileState = isComplete ? "complete_mvp" : "partial";
 
-  preferences.interview_progress = {
+  context.preferences.interview_progress = {
     version: 1,
     status: isComplete ? "complete" : "in_progress",
     step_index: toInterviewStepIndex(params.nextStepId),
@@ -406,14 +798,14 @@ export function buildProfilePatchForInterviewAnswer(params: {
   return {
     state: nextState,
     is_complete_mvp: isComplete,
-    country_code: countryCode,
-    state_code: stateCode,
+    country_code: context.countryCode,
+    state_code: context.stateCode,
     last_interview_step: params.stepId,
-    preferences,
-    fingerprint,
-    activity_patterns: activityPatterns,
-    boundaries,
-    active_intent: activeIntent,
+    preferences: context.preferences,
+    fingerprint: context.fingerprint,
+    activity_patterns: context.activityPatterns,
+    boundaries: context.boundaries,
+    active_intent: context.activeIntent,
     completeness_percent: completenessPercent,
     completed_at: isComplete ? params.nowIso : params.profile.completed_at,
     status_reason: isComplete ? "interview_complete_mvp" : "interview_in_progress",
