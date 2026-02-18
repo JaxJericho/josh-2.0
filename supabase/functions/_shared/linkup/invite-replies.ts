@@ -15,6 +15,7 @@ export async function handleInviteReply(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
   const linkupId = await resolveActiveLinkupId(input);
+  const smsEncryptionKey = readOptionalDenoEnv("SMS_BODY_ENCRYPTION_KEY");
 
   if (!linkupId) {
     return {
@@ -27,12 +28,13 @@ export async function handleInviteReply(
     rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string } | null }>;
   };
 
-  const { data, error } = await supabaseWithRpc.rpc("linkup_apply_invite_reply", {
+  const { data, error } = await supabaseWithRpc.rpc("linkup_apply_invite_reply_with_coordination", {
     p_user_id: input.decision.user_id,
     p_linkup_id: linkupId,
     p_inbound_message_id: input.payload.inbound_message_id,
     p_inbound_message_sid: input.payload.inbound_message_sid,
     p_message_text: input.payload.body_raw,
+    p_sms_encryption_key: smsEncryptionKey,
   });
 
   if (error) {
@@ -120,4 +122,22 @@ function mapReplyMessage(status: string): string {
     default:
       return FALLBACK_REPLY;
   }
+}
+
+function readOptionalDenoEnv(name: string): string | null {
+  const denoGlobal = globalThis as typeof globalThis & {
+    Deno?: {
+      env?: {
+        get?: (envName: string) => string | undefined;
+      };
+    };
+  };
+
+  const value = denoGlobal.Deno?.env?.get?.(name);
+  if (!value) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }

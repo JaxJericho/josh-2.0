@@ -37,6 +37,8 @@
     "verify:matching:e2e": "node scripts/verify/run-matching-e2e.mjs",
     "verify:linkup:seed": "node scripts/verify/seed-linkup-e2e.mjs",
     "verify:linkup:e2e": "node scripts/verify/run-linkup-e2e.mjs",
+    "verify:coordination:seed": "node scripts/verify/seed-coordination-e2e.mjs",
+    "verify:coordination:e2e": "node scripts/verify/run-coordination-e2e.mjs",
     "build": "next build",
     "start": "next start"
   },
