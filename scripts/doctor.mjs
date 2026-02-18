@@ -1,11 +1,13 @@
 import fs from "fs";
 import path from "path";
+import { pathToFileURL } from "url";
 
 const CWD = process.cwd();
 const CONTRACT_PATH = path.join(CWD, "docs", "runbooks", "environment-contract.md");
 const ENV_FILES = [".env.local", ".env"];
 const VALID_ENVS = new Set(["local", "staging", "production"]);
 const REQUIRED_ONE_OF = [["TWILIO_MESSAGING_SERVICE_SID", "TWILIO_FROM_NUMBER"]];
+const STRIPE_WEBHOOK_SECRET_PATTERN = /^whsec_[A-Za-z0-9]+$/;
 
 const results = [];
 let passCount = 0;
@@ -183,8 +185,28 @@ function isConditionalRequirement(row) {
   return /near-term|planned|placeholder|only if|build-time optional|\boptional\b|deprecated|legacy/.test(text);
 }
 
+export function isDbUrlVar(name) {
+  return name.endsWith("_DB_URL");
+}
+
 function isLikelyUrlVar(name) {
+  if (name === "STRIPE_WEBHOOK_SECRET" || isDbUrlVar(name)) {
+    return false;
+  }
   return name.endsWith("_URL") || name === "APP_BASE_URL" || name.includes("WEBHOOK") || name.includes("CALLBACK");
+}
+
+export function isValidStripeWebhookSecret(value) {
+  return isSet(value) && STRIPE_WEBHOOK_SECRET_PATTERN.test(value.trim());
+}
+
+export function isValidDbUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "postgres:" || parsed.protocol === "postgresql:";
+  } catch {
+    return false;
+  }
 }
 
 function validateUrlFormat(name, value) {
@@ -204,6 +226,22 @@ function validateUrlFormat(name, value) {
   } catch {
     addResult("FAIL", "Format", `${name} is not a valid URL.`);
   }
+}
+
+function validateDbUrlFormat(name, value) {
+  if (isValidDbUrl(value)) {
+    addResult("PASS", "Format", `${name} is a valid PostgreSQL URL.`);
+    return;
+  }
+  addResult("FAIL", "Format", `${name} must be a valid PostgreSQL URL using postgres:// or postgresql:// scheme.`);
+}
+
+function validateStripeWebhookSecretFormat(value) {
+  if (isValidStripeWebhookSecret(value)) {
+    addResult("PASS", "Format", "STRIPE_WEBHOOK_SECRET matches expected whsec_ pattern.");
+    return;
+  }
+  addResult("FAIL", "Format", "STRIPE_WEBHOOK_SECRET must start with whsec_ and contain only alphanumeric characters after the prefix.");
 }
 
 function detectEnvironment() {
@@ -358,20 +396,25 @@ async function checkSupabaseConnectivity() {
 }
 
 function checkUrlVars() {
-  const names = new Set();
+  const urlNames = new Set();
+  const dbUrlNames = new Set();
 
   for (const name of Object.keys(process.env)) {
+    if (isDbUrlVar(name)) {
+      dbUrlNames.add(name);
+      continue;
+    }
     if (isLikelyUrlVar(name)) {
-      names.add(name);
+      urlNames.add(name);
     }
   }
 
-  if (names.has("APP_BASE_URL") && !isSet(process.env.APP_BASE_URL)) {
+  if (urlNames.has("APP_BASE_URL") && !isSet(process.env.APP_BASE_URL)) {
     addResult("FAIL", "Format", "APP_BASE_URL is present but empty.");
   }
 
-  const sorted = Array.from(names).sort();
-  for (const name of sorted) {
+  const sortedUrls = Array.from(urlNames).sort();
+  for (const name of sortedUrls) {
     const value = process.env[name];
     if (!isSet(value)) {
       continue;
@@ -379,8 +422,21 @@ function checkUrlVars() {
     validateUrlFormat(name, value);
   }
 
-  if (sorted.length === 0) {
-    addResult("WARN", "Format", "No URL-like environment variables were detected for validation.");
+  const sortedDbUrls = Array.from(dbUrlNames).sort();
+  for (const name of sortedDbUrls) {
+    const value = process.env[name];
+    if (!isSet(value)) {
+      continue;
+    }
+    validateDbUrlFormat(name, value);
+  }
+
+  if (isSet(process.env.STRIPE_WEBHOOK_SECRET)) {
+    validateStripeWebhookSecretFormat(process.env.STRIPE_WEBHOOK_SECRET);
+  }
+
+  if (sortedUrls.length === 0 && sortedDbUrls.length === 0 && !isSet(process.env.STRIPE_WEBHOOK_SECRET)) {
+    addResult("WARN", "Format", "No URL/db URL/webhook secret variables were detected for format validation.");
   }
 }
 
@@ -417,4 +473,6 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}
