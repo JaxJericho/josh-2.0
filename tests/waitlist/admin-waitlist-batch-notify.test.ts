@@ -117,10 +117,6 @@ describe("admin waitlist batch notify", () => {
           created_at: "2026-02-17T00:01:00.000Z",
         }),
       ],
-      userPhones: new Map([
-        ["usr_1", "+15550000001"],
-        ["usr_2", "+15550000002"],
-      ]),
     });
 
     const dryRun = await executeWaitlistBatchNotify({
@@ -177,7 +173,6 @@ describe("admin waitlist batch notify", () => {
     const repository = new InMemoryWaitlistRepository({
       regions: [],
       entries: [],
-      userPhones: new Map(),
     });
 
     await expect(
@@ -197,18 +192,15 @@ describe("admin waitlist batch notify", () => {
 class InMemoryWaitlistRepository implements WaitlistBatchNotifyRepository {
   private regions: WaitlistBatchRegion[];
   private entries: WaitlistBatchEntry[];
-  private userPhones: Map<string, string>;
-  private outboundKeys: Set<string>;
+  private activationKeys: Set<string>;
 
   constructor(input: {
     regions: WaitlistBatchRegion[];
     entries: WaitlistBatchEntry[];
-    userPhones: Map<string, string>;
   }) {
     this.regions = input.regions.map((region) => ({ ...region }));
     this.entries = input.entries.map((row) => ({ ...row }));
-    this.userPhones = new Map(input.userPhones);
-    this.outboundKeys = new Set<string>();
+    this.activationKeys = new Set<string>();
   }
 
   async findRegionBySlug(slug: string): Promise<WaitlistBatchRegion | null> {
@@ -245,30 +237,15 @@ class InMemoryWaitlistRepository implements WaitlistBatchNotifyRepository {
     return claim.claimed;
   }
 
-  async getUserPhones(userIds: string[]): Promise<Map<string, string>> {
-    const subset = new Map<string, string>();
-    for (const userId of userIds) {
-      const phone = this.userPhones.get(userId);
-      if (phone) {
-        subset.set(userId, phone);
-      }
-    }
-    return subset;
-  }
-
-  async encryptBody(plaintext: string): Promise<string> {
-    return `cipher:${plaintext}`;
-  }
-
-  async enqueueWaitlistNotificationJob(input: {
+  async startOnboardingForActivatedUser(input: {
     user_id: string;
-    to_e164: string;
-    body_ciphertext: string;
+    profile_id: string;
+    waitlist_entry_id: string;
     idempotency_key: string;
-    run_at: string;
+    activated_at: string;
   }): Promise<EnqueueResult> {
-    if (!this.outboundKeys.has(input.idempotency_key)) {
-      this.outboundKeys.add(input.idempotency_key);
+    if (!this.activationKeys.has(input.idempotency_key)) {
+      this.activationKeys.add(input.idempotency_key);
       return "inserted";
     }
     return "duplicate";

@@ -29,7 +29,7 @@ describe("conversation router foundation", () => {
     const route = resolveRouteForState(state);
     const nextTransition = resolveNextTransition(state, route);
 
-    expect(route).toBe("profile_interview_engine");
+    expect(route).toBe("onboarding_engine");
     expect(nextTransition).toBe("onboarding:awaiting_opening_response");
   });
 
@@ -67,7 +67,7 @@ describe("conversation router foundation", () => {
       payload: samplePayload(),
     });
 
-    expect(decision.route).toBe("profile_interview_engine");
+    expect(decision.route).toBe("onboarding_engine");
     expect(decision.state.mode).toBe("interviewing");
     expect(decision.state.state_token).toBe("onboarding:awaiting_opening_response");
     expect(decision.next_transition).toBe("onboarding:awaiting_opening_response");
@@ -87,7 +87,7 @@ describe("conversation router foundation", () => {
 
     expect(decision.state.mode).toBe("interviewing");
     expect(decision.state.state_token).toBe("onboarding:awaiting_opening_response");
-    expect(decision.route).toBe("profile_interview_engine");
+    expect(decision.route).toBe("onboarding_engine");
   });
 
   it("dispatches deterministic default engine response", async () => {

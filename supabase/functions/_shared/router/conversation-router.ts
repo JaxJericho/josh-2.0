@@ -2,6 +2,8 @@
 import { runDefaultEngine } from "../engines/default-engine.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { runProfileInterviewEngine } from "../engines/profile-interview-engine.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { runOnboardingEngine } from "../engines/onboarding-engine.ts";
 
 export type ConversationMode =
   | "idle"
@@ -10,7 +12,7 @@ export type ConversationMode =
   | "awaiting_invite_reply"
   | "safety_hold";
 
-export type RouterRoute = "profile_interview_engine" | "default_engine";
+export type RouterRoute = "profile_interview_engine" | "default_engine" | "onboarding_engine";
 
 export type ConversationState = {
   mode: ConversationMode;
@@ -43,11 +45,12 @@ export type EngineDispatchInput = {
 
 export type EngineDispatchResult = {
   engine: RouterRoute;
-  reply_message: string;
+  reply_message: string | null;
 };
 
 type SupabaseClientLike = {
   from: (table: string) => any;
+  rpc?: (fn: string, args?: Record<string, unknown>) => Promise<any>;
 };
 
 type ConversationSessionRow = {
@@ -170,7 +173,7 @@ export async function routeConversationMessage(
   }
 
   const route = shouldForceInterview
-    ? "profile_interview_engine"
+    ? "onboarding_engine"
     : resolveRouteForState(state);
   const nextTransition = shouldForceInterview
     ? ONBOARDING_STATE_TOKEN
@@ -261,7 +264,7 @@ export function resolveNextTransition(
   state: ConversationState,
   route: RouterRoute,
 ): string {
-  const expectedRoute = ROUTE_BY_MODE[state.mode];
+  const expectedRoute = resolveRouteForState(state);
   if (route !== expectedRoute) {
     throw new ConversationRouterError(
       "ILLEGAL_TRANSITION_ATTEMPT",
@@ -285,9 +288,7 @@ export function resolveNextTransition(
 }
 
 function resolveOnboardingRoute(_stateToken: string): RouterRoute {
-  // Stub for the dedicated onboarding handler; onboarding currently dispatches
-  // through the interview engine until onboarding delivery is implemented.
-  return "profile_interview_engine";
+  return "onboarding_engine";
 }
 
 function resolveInterviewRoute(_stateToken: string): RouterRoute {
@@ -324,6 +325,24 @@ export async function dispatchConversationRoute(
     case "profile_interview_engine": {
       try {
         const result = await runProfileInterviewEngine(input);
+        assertDispatchedEngineMatchesRoute(input.decision.route, result.engine);
+        return result;
+      } catch (error) {
+        const err = error as Error;
+        console.error("conversation_router.dispatch_failed", {
+          user_id: input.decision.user_id,
+          route: input.decision.route,
+          session_mode: input.decision.state.mode,
+          session_state_token: input.decision.state.state_token,
+          name: err?.name ?? "Error",
+          message: err?.message ?? String(error),
+        });
+        throw error;
+      }
+    }
+    case "onboarding_engine": {
+      try {
+        const result = await runOnboardingEngine(input);
         assertDispatchedEngineMatchesRoute(input.decision.route, result.engine);
         return result;
       } catch (error) {
