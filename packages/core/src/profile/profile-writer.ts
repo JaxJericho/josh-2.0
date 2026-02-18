@@ -9,6 +9,7 @@ import {
   type InterviewSignalTarget,
   type SignalCoverageStatus,
 } from "../interview/signal-coverage.ts";
+import type { InterviewExtractOutput } from "../../../llm/src/schemas/interview-extract-output.schema.ts";
 
 export type ProfileState =
   | "empty"
@@ -810,6 +811,155 @@ export function buildProfilePatchForInterviewAnswer(params: {
     completed_at: isComplete ? params.nowIso : params.profile.completed_at,
     status_reason: isComplete ? "interview_complete_mvp" : "interview_in_progress",
     state_changed_at: nextState !== params.profile.state ? params.nowIso : params.profile.state_changed_at,
+  };
+}
+
+function mergeActivityPatternsFromExtraction(
+  activityPatterns: Array<Record<string, unknown>>,
+  extractionOutput: InterviewExtractOutput,
+): Array<Record<string, unknown>> {
+  const additions = extractionOutput.extracted.activityPatternsAdd ?? [];
+  if (additions.length === 0) {
+    return activityPatterns;
+  }
+
+  const nextPatterns = [...activityPatterns];
+
+  for (const addition of additions) {
+    const existingIndex = nextPatterns.findIndex((entry) =>
+      String(entry.activity_key ?? "").toLowerCase() === addition.activity_key.toLowerCase()
+    );
+
+    const merged = {
+      ...(existingIndex >= 0 ? nextPatterns[existingIndex] : {}),
+      activity_key: addition.activity_key,
+      motive_weights: { ...addition.motive_weights },
+      constraints: addition.constraints ? { ...addition.constraints } : undefined,
+      preferred_windows: addition.preferred_windows ? [...addition.preferred_windows] : undefined,
+      confidence: addition.confidence,
+      source: "interview_llm",
+    } satisfies Record<string, unknown>;
+
+    if (existingIndex >= 0) {
+      nextPatterns[existingIndex] = merged;
+    } else {
+      nextPatterns.push(merged);
+    }
+  }
+
+  return nextPatterns;
+}
+
+function mergeActiveIntentFromExtraction(
+  activeIntentRaw: Record<string, unknown>,
+  extractionOutput: InterviewExtractOutput,
+): Record<string, unknown> {
+  const additions = extractionOutput.extracted.activityPatternsAdd ?? [];
+  if (additions.length === 0) {
+    return activeIntentRaw;
+  }
+
+  const existingMotiveWeights = asObject(activeIntentRaw.motive_weights) as Record<string, number>;
+  const nextMotiveWeights: Record<string, number> = { ...existingMotiveWeights };
+
+  for (const addition of additions) {
+    for (const [motive, weight] of Object.entries(addition.motive_weights)) {
+      const previous = typeof nextMotiveWeights[motive] === "number" ? nextMotiveWeights[motive] : 0;
+      nextMotiveWeights[motive] = Math.max(previous, weight);
+    }
+  }
+
+  return {
+    ...activeIntentRaw,
+    motive_weights: nextMotiveWeights,
+  };
+}
+
+function mergeFingerprintFromExtraction(
+  fingerprint: Record<string, unknown>,
+  extractionOutput: InterviewExtractOutput,
+): Record<string, unknown> {
+  const nextFingerprint = { ...fingerprint };
+  for (const patch of extractionOutput.extracted.fingerprintPatches ?? []) {
+    setFingerprintValue(
+      nextFingerprint,
+      patch.key,
+      patch.range_value,
+      patch.confidence,
+    );
+  }
+  return nextFingerprint;
+}
+
+function mergeObjectPatch(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!patch) {
+    return current;
+  }
+  return {
+    ...current,
+    ...patch,
+  };
+}
+
+export function applyInterviewExtractOutputToProfilePatch(params: {
+  profilePatch: ProfileUpdatePatch;
+  extractionOutput: InterviewExtractOutput;
+  nowIso: string;
+}): ProfileUpdatePatch {
+  const fingerprint = mergeFingerprintFromExtraction(
+    asObject(params.profilePatch.fingerprint),
+    params.extractionOutput,
+  );
+  const activityPatterns = mergeActivityPatternsFromExtraction(
+    asObjectArray(params.profilePatch.activity_patterns),
+    params.extractionOutput,
+  );
+  const boundaries = mergeObjectPatch(
+    asObject(params.profilePatch.boundaries),
+    params.extractionOutput.extracted.boundariesPatch,
+  );
+  const preferences = mergeObjectPatch(
+    asObject(params.profilePatch.preferences),
+    params.extractionOutput.extracted.preferencesPatch,
+  );
+  const activeIntent = mergeActiveIntentFromExtraction(
+    asObject(params.profilePatch.active_intent),
+    params.extractionOutput,
+  );
+
+  const coverageStatus = getSignalCoverageStatus({
+    country_code: params.profilePatch.country_code,
+    last_interview_step: params.profilePatch.last_interview_step,
+    fingerprint,
+    activity_patterns: activityPatterns,
+    boundaries,
+    preferences,
+    active_intent: activeIntent,
+  });
+
+  const isComplete = coverageStatus.mvpComplete;
+  const nextState: ProfileState = isComplete ? "complete_mvp" : "partial";
+
+  return {
+    ...params.profilePatch,
+    state: nextState,
+    is_complete_mvp: isComplete,
+    fingerprint,
+    activity_patterns: activityPatterns,
+    boundaries,
+    preferences,
+    active_intent: activeIntent,
+    completeness_percent: computeCoverageCompletenessPercent(coverageStatus),
+    completed_at: isComplete
+      ? (params.profilePatch.completed_at ?? params.nowIso)
+      : params.profilePatch.completed_at,
+    status_reason: isComplete ? "interview_complete_mvp" : "interview_in_progress",
+    state_changed_at: nextState !== params.profilePatch.state
+      ? params.nowIso
+      : params.profilePatch.state_changed_at,
   };
 }
 
