@@ -3,7 +3,7 @@ import {
   normalizeProfileSignals,
   type NormalizedSignalVectors,
   type StructuredProfileForCompatibility,
-} from "./normalizer.ts";
+} from "./normalizer";
 
 export const COMPATIBILITY_SIGNAL_TABLE = "profile_compatibility_signals";
 

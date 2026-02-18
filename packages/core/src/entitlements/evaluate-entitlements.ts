@@ -1,4 +1,4 @@
-import type { WaitlistStatus } from "../regions/waitlist-routing.ts";
+import type { WaitlistStatus } from "../regions/waitlist-routing";
 
 export type ProfileEntitlementRow = {
   can_initiate: boolean;
