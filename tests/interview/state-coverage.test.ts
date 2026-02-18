@@ -48,7 +48,7 @@ function createSession(currentStepId: string): InterviewSessionSnapshot {
 }
 
 describe("interview state progression with signal coverage", () => {
-  it("buildInterviewTransitionPlan chooses the next question from uncovered coverage targets", () => {
+  it("buildInterviewTransitionPlan chooses the next question from uncovered coverage targets", async () => {
     const profile = createProfile({
       preferences: {
         group_size_pref: "2-3",
@@ -88,12 +88,15 @@ describe("interview state progression with signal coverage", () => {
       active_intent: { activity_key: "coffee" },
     });
 
-    const transition = buildInterviewTransitionPlan({
+    const transition = await buildInterviewTransitionPlan({
       inbound_message_sid: "SM_COVERAGE_0001",
       inbound_message_text: "A",
       now_iso: "2026-02-18T00:00:00.000Z",
       session: createSession("values_01"),
       profile,
+      llm_extractor: async () => {
+        throw new Error("llm_disabled_in_state_coverage_test");
+      },
     });
 
     expect(transition.action).toBe("advance");
@@ -101,7 +104,7 @@ describe("interview state progression with signal coverage", () => {
     expect(transition.next_step_id).toBe("boundaries_01");
   });
 
-  it("completion is triggered only when mvp coverage thresholds are met", () => {
+  it("completion is triggered only when mvp coverage thresholds are met", async () => {
     const profile = createProfile({
       preferences: {
         group_size_pref: "2-3",
@@ -153,12 +156,15 @@ describe("interview state progression with signal coverage", () => {
       active_intent: { activity_key: "coffee" },
     });
 
-    const transition = buildInterviewTransitionPlan({
+    const transition = await buildInterviewTransitionPlan({
       inbound_message_sid: "SM_COVERAGE_0002",
       inbound_message_text: "C",
       now_iso: "2026-02-18T00:00:00.000Z",
       session: createSession("constraints_01"),
       profile,
+      llm_extractor: async () => {
+        throw new Error("llm_disabled_in_state_coverage_test");
+      },
     });
 
     expect(transition.action).toBe("complete");

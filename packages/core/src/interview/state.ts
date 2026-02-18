@@ -1,4 +1,5 @@
 import {
+  applyInterviewExtractOutputToProfilePatch,
   buildProfilePatchForInterviewAnswer,
   buildProfilePatchForInterviewPause,
   buildProfilePatchForInterviewStart,
@@ -20,6 +21,12 @@ import {
   selectNextQuestion,
   type NextQuestionSelection,
 } from "./signal-coverage.ts";
+import {
+  extractInterviewSignals,
+  InterviewExtractorError,
+  type InterviewExtractInput,
+} from "../../../llm/src/interview-extractor.ts";
+import type { InterviewExtractOutput } from "../../../llm/src/schemas/interview-extract-output.schema.ts";
 
 export type ConversationMode =
   | "idle"
@@ -66,6 +73,8 @@ export type BuildInterviewTransitionInput = {
   now_iso: string;
   session: InterviewSessionSnapshot;
   profile: ProfileRowForInterview;
+  llm_extractor?: (input: InterviewExtractInput) => Promise<InterviewExtractOutput>;
+  llm_request_guard?: Set<string>;
 };
 
 export const ALREADY_COMPLETE_PROFILE_MESSAGE =
@@ -218,9 +227,151 @@ function applyProfilePatch(
   };
 }
 
-export function buildInterviewTransitionPlan(
+function toQuestionTarget(stepId: InterviewQuestionStepId): string {
+  switch (stepId) {
+    case "activity_01":
+      return "activity_patterns";
+    case "activity_02":
+      return "top_activity_intent";
+    case "motive_01":
+      return "connection_depth";
+    case "motive_02":
+      return "novelty_seeking";
+    case "style_01":
+      return "social_energy";
+    case "style_02":
+      return "conversation_style";
+    case "pace_01":
+      return "social_pace";
+    case "group_01":
+      return "group_size_pref";
+    case "values_01":
+      return "values_alignment_importance";
+    case "boundaries_01":
+      return "boundaries_asked";
+    case "constraints_01":
+      return "time_preferences";
+    case "location_01":
+      return "location_capture";
+    case "intro_01":
+      return "onboarding_consent";
+    default:
+      return stepId;
+  }
+}
+
+function normalizeActivityKeysFromExtraction(
+  extraction: InterviewExtractOutput,
+): string[] {
+  const keys = (extraction.extracted.activityPatternsAdd ?? [])
+    .map((entry) => entry.activity_key.trim())
+    .filter(Boolean);
+  return Array.from(new Set(keys)).slice(0, 3);
+}
+
+function deriveStoredAnswerFromExtraction(
+  stepId: InterviewQuestionStepId,
+  extraction: InterviewExtractOutput,
+): InterviewNormalizedAnswer {
+  const activityKeys = normalizeActivityKeysFromExtraction(extraction);
+  switch (stepId) {
+    case "activity_01":
+      return { activity_keys: activityKeys };
+    case "activity_02":
+      return { activity_key: activityKeys[0] ?? "coffee" };
+    case "motive_01":
+    case "motive_02": {
+      const motiveWeights = extraction.extracted.activityPatternsAdd?.[0]?.motive_weights ?? {};
+      return { motive_weights: motiveWeights };
+    }
+    case "style_01":
+    case "style_02":
+      return { style_keys: [] };
+    case "pace_01":
+      return { social_pace: "medium" };
+    case "group_01":
+      return { group_size_pref: "4-6" };
+    case "values_01":
+      return { values_alignment_importance: "somewhat" };
+    case "boundaries_01":
+      return { no_thanks: [], skipped: true };
+    case "constraints_01":
+      return { time_preferences: ["evenings"] };
+    case "location_01":
+      return { country_code: "US", state_code: null };
+    case "intro_01":
+      return { consent: "yes" };
+    default:
+      return { activity_keys: [] };
+  }
+}
+
+function canAttemptLlmExtraction(input: BuildInterviewTransitionInput): boolean {
+  const guard = input.llm_request_guard ?? new Set<string>();
+  const key = `${input.profile.user_id}:${input.inbound_message_sid}`;
+  if (guard.has(key)) {
+    return false;
+  }
+  guard.add(key);
+  return true;
+}
+
+async function maybeExtractWithLlm(params: {
+  input: BuildInterviewTransitionInput;
+  currentStepId: InterviewQuestionStepId;
+  currentStepPrompt: string;
+}): Promise<{
+  extractionOutput: InterviewExtractOutput | null;
+  extractionErrorCode: string | null;
+}> {
+  if (!canAttemptLlmExtraction(params.input)) {
+    return {
+      extractionOutput: null,
+      extractionErrorCode: "rate_limited",
+    };
+  }
+
+  const extractor = params.input.llm_extractor ?? extractInterviewSignals;
+  try {
+    const extractionOutput = await extractor({
+      userId: params.input.profile.user_id,
+      inboundMessageSid: params.input.inbound_message_sid,
+      stepId: params.currentStepId,
+      questionTarget: toQuestionTarget(params.currentStepId),
+      questionText: params.currentStepPrompt,
+      userAnswerText: params.input.inbound_message_text,
+      recentConversationTurns: buildConversationHistory(params.input.profile)
+        .slice(-6)
+        .map((text) => ({ role: "user" as const, text })),
+      currentProfile: {
+        fingerprint: (params.input.profile.fingerprint as Record<string, unknown>) ?? {},
+        activityPatterns: (params.input.profile.activity_patterns as Array<Record<string, unknown>>) ?? [],
+        boundaries: (params.input.profile.boundaries as Record<string, unknown>) ?? {},
+        preferences: (params.input.profile.preferences as Record<string, unknown>) ?? {},
+      },
+    });
+
+    return {
+      extractionOutput,
+      extractionErrorCode: null,
+    };
+  } catch (error) {
+    if (error instanceof InterviewExtractorError) {
+      return {
+        extractionOutput: null,
+        extractionErrorCode: error.code,
+      };
+    }
+    return {
+      extractionOutput: null,
+      extractionErrorCode: "unknown_error",
+    };
+  }
+}
+
+export async function buildInterviewTransitionPlan(
   input: BuildInterviewTransitionInput,
-): InterviewTransitionPlan {
+): Promise<InterviewTransitionPlan> {
   const coverageStatus = getSignalCoverageStatus(input.profile);
   if (coverageStatus.mvpComplete || input.profile.state === "complete_full") {
     return {
@@ -308,11 +459,21 @@ export function buildInterviewTransitionPlan(
     };
   }
 
-  const parsed = currentStep.parse(input.inbound_message_text, {
+  const deterministicParsed = currentStep.parse(input.inbound_message_text, {
     collectedAnswers: buildCollectedAnswers(input.profile),
   });
 
-  if (!parsed.ok) {
+  const llmExtraction = await maybeExtractWithLlm({
+    input,
+    currentStepId,
+    currentStepPrompt: currentStep.prompt,
+  });
+
+  const extractionOutput = llmExtraction.extractionOutput;
+  const extractionSource = extractionOutput ? "llm" : "deterministic";
+  const extractionFailureCode = llmExtraction.extractionErrorCode;
+
+  if (!extractionOutput && !deterministicParsed.ok) {
     return {
       action: "retry",
       reply_message: currentStep.retry_prompt,
@@ -331,7 +492,9 @@ export function buildInterviewTransitionPlan(
     };
   }
 
-  const normalizedAnswer = parsed.value as InterviewNormalizedAnswer;
+  const normalizedAnswer = deterministicParsed.ok
+    ? (deterministicParsed.value as InterviewNormalizedAnswer)
+    : deriveStoredAnswerFromExtraction(currentStepId, extractionOutput as InterviewExtractOutput);
 
   if (currentStepId === "intro_01" && (normalizedAnswer as { consent?: string }).consent === "later") {
     return {
@@ -356,13 +519,21 @@ export function buildInterviewTransitionPlan(
     };
   }
 
-  const provisionalPatch = buildProfilePatchForInterviewAnswer({
+  let provisionalPatch = buildProfilePatchForInterviewAnswer({
     profile: input.profile,
     stepId: currentStepId,
     answer: normalizedAnswer,
     nextStepId: currentStepId,
     nowIso: input.now_iso,
   });
+
+  if (extractionOutput) {
+    provisionalPatch = applyInterviewExtractOutputToProfilePatch({
+      profilePatch: provisionalPatch,
+      extractionOutput,
+      nowIso: input.now_iso,
+    });
+  }
 
   const profileAfterAnswer = applyProfilePatch(input.profile, provisionalPatch);
   const nextSelection = selectNextQuestion(
@@ -374,13 +545,21 @@ export function buildInterviewTransitionPlan(
     ? null
     : (nextSelection?.questionId ?? currentStepId);
 
-  const profilePatch = buildProfilePatchForInterviewAnswer({
+  let profilePatch = buildProfilePatchForInterviewAnswer({
     profile: input.profile,
     stepId: currentStepId,
     answer: normalizedAnswer,
     nextStepId,
     nowIso: input.now_iso,
   });
+
+  if (extractionOutput) {
+    profilePatch = applyInterviewExtractOutputToProfilePatch({
+      profilePatch,
+      extractionOutput,
+      nowIso: input.now_iso,
+    });
+  }
 
   const isComplete = profilePatch.is_complete_mvp;
   const activeNextStepId = nextStepId ?? currentStepId;
@@ -407,6 +586,8 @@ export function buildInterviewTransitionPlan(
       answer: normalizedAnswer,
       next_step_id: plannedNextStepId,
       next_signal_target: nextSelection?.signalTarget ?? null,
+      extraction_source: extractionSource,
+      extraction_fallback_reason: extractionFailureCode,
       skipped_inferable_targets: nextSelection?.metadata?.skippedInferableTargets ?? [],
       profile_state: profilePatch.state,
       is_complete_mvp: profilePatch.is_complete_mvp,

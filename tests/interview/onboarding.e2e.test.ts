@@ -14,12 +14,12 @@ type InterviewHarnessState = {
 };
 
 describe("onboarding interview e2e", () => {
-  it("golden path: new user completes onboarding and profile is marked complete", () => {
+  it("golden path: new user completes onboarding and profile is marked complete", async () => {
     const state = createHarnessState();
 
     applyTransition(
       state,
-      runTurn(state, "SM_ONB_0001", "hey"),
+      await runTurn(state, "SM_ONB_0001", "hey"),
     );
 
     const answers = [
@@ -39,7 +39,7 @@ describe("onboarding interview e2e", () => {
     let finalAction = "";
     for (let index = 0; index < answers.length; index += 1) {
       const sid = `SM_ONB_${String(index + 2).padStart(4, "0")}`;
-      const turn = runTurn(state, sid, answers[index]);
+      const turn = await runTurn(state, sid, answers[index]);
       finalAction = turn.action;
       applyTransition(state, turn);
     }
@@ -52,11 +52,11 @@ describe("onboarding interview e2e", () => {
     expect(state.session.current_step_id).toBeNull();
   });
 
-  it("failure path: invalid answer retries and does not advance step", () => {
+  it("failure path: invalid answer retries and does not advance step", async () => {
     const state = createHarnessState();
-    applyTransition(state, runTurn(state, "SM_RETRY_0001", "hello"));
+    applyTransition(state, await runTurn(state, "SM_RETRY_0001", "hello"));
 
-    const retryTurn = runTurn(state, "SM_RETRY_0002", "maybe");
+    const retryTurn = await runTurn(state, "SM_RETRY_0002", "maybe");
     applyTransition(state, retryTurn);
 
     expect(retryTurn.action).toBe("retry");
@@ -64,16 +64,16 @@ describe("onboarding interview e2e", () => {
     expect(state.profile.last_interview_step).toBeNull();
   });
 
-  it("resume path: interruption resumes at the correct next step", () => {
+  it("resume path: interruption resumes at the correct next step", async () => {
     const state = createHarnessState();
 
-    applyTransition(state, runTurn(state, "SM_RESUME_0001", "hello"));
-    applyTransition(state, runTurn(state, "SM_RESUME_0002", "coffee, walk, museum"));
-    applyTransition(state, runTurn(state, "SM_RESUME_0003", "walk"));
+    applyTransition(state, await runTurn(state, "SM_RESUME_0001", "hello"));
+    applyTransition(state, await runTurn(state, "SM_RESUME_0002", "coffee, walk, museum"));
+    applyTransition(state, await runTurn(state, "SM_RESUME_0003", "walk"));
 
     expect(state.session.current_step_id).toBe("motive_01");
 
-    const resumedTurn = runTurn(state, "SM_RESUME_0004", "deeper conversation and calm reset");
+    const resumedTurn = await runTurn(state, "SM_RESUME_0004", "deeper conversation and calm reset");
     applyTransition(state, resumedTurn);
 
     expect(resumedTurn.action).toBe("advance");
@@ -81,16 +81,16 @@ describe("onboarding interview e2e", () => {
     expect(state.session.current_step_id).toBe("motive_02");
   });
 
-  it("idempotency path: replaying same inbound message sid does not double-advance", () => {
+  it("idempotency path: replaying same inbound message sid does not double-advance", async () => {
     const state = createHarnessState();
 
-    applyTransition(state, runTurn(state, "SM_IDEM_0001", "hello"));
-    applyTransition(state, runTurn(state, "SM_IDEM_0002", "coffee, walk, museum"));
+    applyTransition(state, await runTurn(state, "SM_IDEM_0001", "hello"));
+    applyTransition(state, await runTurn(state, "SM_IDEM_0002", "coffee, walk, museum"));
 
     const beforeReplayStep = state.session.current_step_id;
     const beforeReplayLastStep = state.profile.last_interview_step;
 
-    const replayTurn = runTurn(state, "SM_IDEM_0002", "yes");
+    const replayTurn = await runTurn(state, "SM_IDEM_0002", "yes");
     applyTransition(state, replayTurn);
 
     expect(replayTurn.action).toBe("idempotent");
@@ -98,7 +98,7 @@ describe("onboarding interview e2e", () => {
     expect(state.profile.last_interview_step).toBe(beforeReplayLastStep);
   });
 
-  it("runtime guard: deprecated interview:intro_01 token auto-advances to activity_01", () => {
+  it("runtime guard: deprecated interview:intro_01 token auto-advances to activity_01", async () => {
     const state = createHarnessState();
     state.session = {
       mode: "interviewing",
@@ -107,14 +107,14 @@ describe("onboarding interview e2e", () => {
       last_inbound_message_sid: null,
     };
 
-    const transition = runTurn(state, "SM_GUARD_0001", "coffee, walk, museum");
+    const transition = await runTurn(state, "SM_GUARD_0001", "coffee, walk, museum");
 
     expect(transition.action).toBe("advance");
     expect(transition.current_step_id).toBe("activity_01");
     expect(transition.next_step_id).toBe("activity_02");
   });
 
-  it("throws for unknown onboarding token", () => {
+  it("throws for unknown onboarding token", async () => {
     const state = createHarnessState();
     state.session = {
       mode: "interviewing",
@@ -123,8 +123,8 @@ describe("onboarding interview e2e", () => {
       last_inbound_message_sid: null,
     };
 
-    expect(() => runTurn(state, "SM_BAD_ONB_0001", "hello"))
-      .toThrowError("Unknown onboarding state token 'onboarding:foo'.");
+    await expect(runTurn(state, "SM_BAD_ONB_0001", "hello"))
+      .rejects.toThrowError("Unknown onboarding state token 'onboarding:foo'.");
   });
 });
 
@@ -139,12 +139,15 @@ function runTurn(
     now_iso: "2026-02-16T12:00:00.000Z",
     session: state.session,
     profile: state.profile,
+    llm_extractor: async () => {
+      throw new Error("llm_disabled_in_onboarding_e2e_test");
+    },
   });
 }
 
 function applyTransition(
   state: InterviewHarnessState,
-  transition: ReturnType<typeof buildInterviewTransitionPlan>,
+  transition: Awaited<ReturnType<typeof buildInterviewTransitionPlan>>,
 ): void {
   state.session = {
     mode: transition.next_session.mode,

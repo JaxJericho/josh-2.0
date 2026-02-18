@@ -139,7 +139,7 @@ export async function runProfileInterviewEngine(
     };
   }
 
-  const transition = buildInterviewTransitionPlan({
+  const transition = await buildInterviewTransitionPlan({
     inbound_message_sid: input.payload.inbound_message_sid,
     inbound_message_text: input.payload.body_raw,
     now_iso: nowIso,
@@ -307,7 +307,7 @@ async function persistInterviewTransition(params: {
   inboundMessageId: string;
   session: ConversationSessionRow;
   profile: ProfileRow;
-  transition: ReturnType<typeof buildInterviewTransitionPlan>;
+  transition: Awaited<ReturnType<typeof buildInterviewTransitionPlan>>;
 }): Promise<{ reply_message_override: string | null }> {
   const conversationIdempotencyKey =
     `profile_interview:conversation:${params.userId}:${params.inboundMessageSid}:${params.transition.action}`;
