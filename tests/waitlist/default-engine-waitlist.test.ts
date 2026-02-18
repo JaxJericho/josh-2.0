@@ -242,6 +242,7 @@ function decisionFor(userId: string) {
       mode: "idle" as const,
       state_token: "idle",
     },
+    profile_is_complete_mvp: null,
     route: "default_engine" as const,
     safety_override_applied: false,
     next_transition: "idle:awaiting_user_input",

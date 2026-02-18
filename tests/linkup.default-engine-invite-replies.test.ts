@@ -76,6 +76,7 @@ function decision(mode: "awaiting_invite_reply" | "idle") {
       mode,
       state_token: mode === "awaiting_invite_reply" ? "invite:awaiting_reply" : "idle",
     },
+    profile_is_complete_mvp: null,
     route: "default_engine" as const,
     safety_override_applied: false,
     next_transition: mode === "awaiting_invite_reply"

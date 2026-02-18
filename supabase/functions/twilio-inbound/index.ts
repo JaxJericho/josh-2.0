@@ -12,6 +12,7 @@ const HELP_KEYWORDS = new Set(["HELP", "INFO"]);
 
 const STOP_REPLY = "You are opted out of JOSH SMS. Reply START to resubscribe.";
 const HELP_REPLY = "JOSH help: Reply STOP to opt out. Reply START to resubscribe.";
+const BUILD_VERSION = "4.1B-DETERMINISTIC-ROUTING-01";
 
 const encoder = new TextEncoder();
 
@@ -84,6 +85,13 @@ Deno.serve(async (req) => {
     const bodyNormalized = normalizeBody(bodyRaw);
     const command = detectCommand(bodyNormalized);
 
+    console.info("twilio.inbound_request", {
+      build_version: BUILD_VERSION,
+      request_id: requestId,
+      inbound_message_sid: messageSid,
+      command,
+    });
+
     phase = "db_init";
     const supabaseUrl = requireEnv("SUPABASE_URL");
     const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -131,6 +139,7 @@ Deno.serve(async (req) => {
     if (insertError) {
       if (isDuplicateSidError(insertError)) {
         console.info("twilio.inbound_duplicate_sid", {
+          build_version: BUILD_VERSION,
           request_id: requestId,
           inbound_message_sid: messageSid,
           command,
@@ -143,6 +152,7 @@ Deno.serve(async (req) => {
     const isDuplicate = !insertedRows || insertedRows.length === 0;
     if (isDuplicate) {
       console.info("twilio.inbound_duplicate_sid", {
+        build_version: BUILD_VERSION,
         request_id: requestId,
         inbound_message_sid: messageSid,
         command,
@@ -158,6 +168,7 @@ Deno.serve(async (req) => {
     if (command === "STOP") {
       phase = "opt_out";
       console.info("twilio.override_applied", {
+        build_version: BUILD_VERSION,
         request_id: requestId,
         override_type: "STOP",
         inbound_message_id: inboundMessageId,
@@ -172,6 +183,7 @@ Deno.serve(async (req) => {
 
     if (command === "HELP") {
       console.info("twilio.override_applied", {
+        build_version: BUILD_VERSION,
         request_id: requestId,
         override_type: "HELP",
         inbound_message_id: inboundMessageId,
@@ -195,6 +207,17 @@ Deno.serve(async (req) => {
       safetyOverrideApplied: false,
     });
 
+    console.info("twilio.router_decision", {
+      build_version: BUILD_VERSION,
+      request_id: requestId,
+      inbound_message_id: inboundMessageId,
+      user_id: routingDecision.user_id,
+      session_mode: routingDecision.state.mode,
+      session_state_token: routingDecision.state.state_token,
+      profile_is_complete_mvp: routingDecision.profile_is_complete_mvp,
+      route: routingDecision.route,
+    });
+
     phase = "dispatch";
     const dispatchResult = await dispatchConversationRoute({
       supabase,
@@ -203,9 +226,13 @@ Deno.serve(async (req) => {
     });
 
     console.info("twilio.router_dispatch_completed", {
+      build_version: BUILD_VERSION,
       request_id: requestId,
       inbound_message_id: inboundMessageId,
       user_id: routingDecision.user_id,
+      session_mode: routingDecision.state.mode,
+      session_state_token: routingDecision.state.state_token,
+      profile_is_complete_mvp: routingDecision.profile_is_complete_mvp,
       route: routingDecision.route,
       engine: dispatchResult.engine,
     });
@@ -214,6 +241,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     const err = error as Error;
     console.error("twilio.unhandled_error", {
+      build_version: BUILD_VERSION,
       request_id: requestId,
       phase,
       name: err?.name ?? "Error",
