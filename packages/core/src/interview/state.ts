@@ -7,6 +7,7 @@ import {
   type ProfileUpdatePatch,
 } from "../profile/profile-writer.ts";
 import {
+  ACTIVE_INTERVIEW_QUESTION_STEP_IDS,
   INTERVIEW_QUESTION_STEP_IDS,
   INTERVIEW_WRAP_MESSAGE,
   getInterviewStepById,
@@ -66,22 +67,57 @@ export type BuildInterviewTransitionInput = {
 export const ALREADY_COMPLETE_PROFILE_MESSAGE =
   "You're all set. If you want to tweak your profile, text me what to change.";
 
+const INTERVIEW_DEPRECATED_INTRO_STEP_ID: InterviewQuestionStepId = "intro_01";
+const INTERVIEW_ACTIVE_START_STEP_ID: InterviewQuestionStepId = "activity_01";
+
+export const ONBOARDING_STATE_TOKENS = [
+  "onboarding:awaiting_opening_response",
+  "onboarding:awaiting_explanation_response",
+  "onboarding:awaiting_interview_start",
+] as const;
+
+export type OnboardingStateToken = (typeof ONBOARDING_STATE_TOKENS)[number];
+export type InterviewOrOnboardingStateToken = InterviewQuestionStepId | OnboardingStateToken;
+
+const ONBOARDING_STATE_TOKEN_SET: ReadonlySet<OnboardingStateToken> = new Set(ONBOARDING_STATE_TOKENS);
+
 export function toInterviewStateToken(stepId: InterviewQuestionStepId): string {
   return `interview:${stepId}`;
 }
 
-export function fromInterviewStateToken(token: string): InterviewQuestionStepId | null {
+export function isOnboardingStateToken(token: string): token is OnboardingStateToken {
+  return ONBOARDING_STATE_TOKEN_SET.has(token as OnboardingStateToken);
+}
+
+function normalizeDeprecatedInterviewStepId(stepId: InterviewQuestionStepId): InterviewQuestionStepId {
+  return stepId === INTERVIEW_DEPRECATED_INTRO_STEP_ID
+    ? INTERVIEW_ACTIVE_START_STEP_ID
+    : stepId;
+}
+
+export function fromInterviewStateToken(token: string): InterviewOrOnboardingStateToken | null {
   const normalized = token.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.startsWith("onboarding:")) {
+    if (!isOnboardingStateToken(normalized)) {
+      throw new Error(`Unknown onboarding state token '${normalized}'.`);
+    }
+    return normalized;
+  }
+
   if (!normalized.startsWith("interview:")) {
     return null;
   }
 
   const stepId = normalized.slice("interview:".length);
   if (!isInterviewStepId(stepId) || !isInterviewQuestionStepId(stepId)) {
-    return null;
+    throw new Error(`Unknown interview state token '${normalized}'.`);
   }
 
-  return stepId;
+  return normalizeDeprecatedInterviewStepId(stepId);
 }
 
 export function nextInterviewQuestionStep(
@@ -100,19 +136,26 @@ export function resolveCurrentInterviewStep(params: {
   session: InterviewSessionSnapshot;
   profile: ProfileRowForInterview;
 }): InterviewQuestionStepId {
-  const sessionCurrent = params.session.current_step_id;
-  if (sessionCurrent && isInterviewQuestionStepId(sessionCurrent)) {
-    return sessionCurrent;
+  const tokenFromSession = fromInterviewStateToken(params.session.state_token);
+  if (params.session.mode === "interviewing" && tokenFromSession === null) {
+    throw new Error(`Unknown interview state token '${params.session.state_token}'.`);
   }
 
-  const fromToken = fromInterviewStateToken(params.session.state_token);
-  if (fromToken) {
-    return fromToken;
+  const sessionCurrent = params.session.current_step_id;
+  if (sessionCurrent && isInterviewQuestionStepId(sessionCurrent)) {
+    return normalizeDeprecatedInterviewStepId(sessionCurrent);
+  }
+
+  if (tokenFromSession) {
+    if (isOnboardingStateToken(tokenFromSession)) {
+      return INTERVIEW_ACTIVE_START_STEP_ID;
+    }
+    return tokenFromSession;
   }
 
   const progress = readInterviewProgress(params.profile.preferences);
   if (progress?.current_step_id) {
-    return progress.current_step_id;
+    return normalizeDeprecatedInterviewStepId(progress.current_step_id);
   }
 
   const lastStep = params.profile.last_interview_step;
@@ -123,7 +166,7 @@ export function resolveCurrentInterviewStep(params: {
     }
   }
 
-  return INTERVIEW_QUESTION_STEP_IDS[0];
+  return ACTIVE_INTERVIEW_QUESTION_STEP_IDS[0] ?? INTERVIEW_ACTIVE_START_STEP_ID;
 }
 
 function buildCollectedAnswers(profile: ProfileRowForInterview): Record<string, unknown> {
