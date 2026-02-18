@@ -25,7 +25,7 @@ import {
   type TimePreferenceAnswer,
   type TopActivityAnswer,
   type ValuesAnswer,
-} from "./validators";
+} from "./validators.ts";
 
 export const INTERVIEW_STEP_IDS = [
   "intro_01",

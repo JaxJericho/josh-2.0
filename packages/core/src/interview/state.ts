@@ -5,7 +5,7 @@ import {
   readInterviewProgress,
   type ProfileRowForInterview,
   type ProfileUpdatePatch,
-} from "../profile/profile-writer";
+} from "../profile/profile-writer.ts";
 import {
   INTERVIEW_QUESTION_STEP_IDS,
   INTERVIEW_WRAP_MESSAGE,
@@ -14,7 +14,7 @@ import {
   isInterviewStepId,
   type InterviewNormalizedAnswer,
   type InterviewQuestionStepId,
-} from "./steps";
+} from "./steps.ts";
 
 export type ConversationMode =
   | "idle"

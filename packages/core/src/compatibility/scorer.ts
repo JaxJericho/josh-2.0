@@ -5,7 +5,7 @@ import {
   COMPATIBILITY_SCORE_SCALE_MAX,
   COMPATIBILITY_SCORE_VERSION,
   COMPATIBILITY_WEIGHT_SUM,
-} from "./scoring-version";
+} from "./scoring-version.ts";
 
 export type CompatibilitySignalSnapshot = {
   interest_vector: number[];
