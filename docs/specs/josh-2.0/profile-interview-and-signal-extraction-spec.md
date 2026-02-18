@@ -155,7 +155,7 @@ The catalog is implemented as a stable list of steps with IDs.
 
 ### Step IDs
 
-* `intro_01`  
+* `intro_01` (deprecated in Phase 8)  
 * `activity_01`  
 * `activity_02`  
 * `motive_01`  
@@ -171,9 +171,13 @@ The catalog is implemented as a stable list of steps with IDs.
 
 You may add more later, but these IDs should stay stable.
 
+`intro_01` is deprecated. Onboarding sequence (Conversation Behavior Spec) replaces `intro_01` functionality.
+
 ### Step Content (MVP)
 
 #### intro\_01
+
+Deprecated in Phase 8. The onboarding sequence now owns this behavior.
 
 * Purpose: set expectations, ask consent to continue.  
 * Message: short and friendly.

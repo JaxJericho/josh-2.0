@@ -21,6 +21,18 @@ describe("conversation router foundation", () => {
     expect(nextTransition).toBe("interview:awaiting_next_input");
   });
 
+  it("routes onboarding interviewing tokens before interview-token handling", () => {
+    const state = validateConversationState(
+      "interviewing",
+      "onboarding:awaiting_opening_response",
+    );
+    const route = resolveRouteForState(state);
+    const nextTransition = resolveNextTransition(state, route);
+
+    expect(route).toBe("profile_interview_engine");
+    expect(nextTransition).toBe("onboarding:awaiting_opening_response");
+  });
+
   it("throws explicit error when state token is missing", () => {
     expect(() => validateConversationState("idle", ""))
       .toThrow(ConversationRouterError);
@@ -28,6 +40,11 @@ describe("conversation router foundation", () => {
 
   it("throws explicit error when mode is invalid", () => {
     expect(() => validateConversationState("unknown_mode", "idle"))
+      .toThrow(ConversationRouterError);
+  });
+
+  it("throws explicit error for unknown onboarding state tokens", () => {
+    expect(() => validateConversationState("interviewing", "onboarding:foo"))
       .toThrow(ConversationRouterError);
   });
 
@@ -52,8 +69,8 @@ describe("conversation router foundation", () => {
 
     expect(decision.route).toBe("profile_interview_engine");
     expect(decision.state.mode).toBe("interviewing");
-    expect(decision.state.state_token).toBe("interview:start_onboarding");
-    expect(decision.next_transition).toBe("interview:start_onboarding");
+    expect(decision.state.state_token).toBe("onboarding:awaiting_opening_response");
+    expect(decision.next_transition).toBe("onboarding:awaiting_opening_response");
   });
 
   it("creates default session when conversation state is missing", async () => {
@@ -69,7 +86,7 @@ describe("conversation router foundation", () => {
     });
 
     expect(decision.state.mode).toBe("interviewing");
-    expect(decision.state.state_token).toBe("interview:start_onboarding");
+    expect(decision.state.state_token).toBe("onboarding:awaiting_opening_response");
     expect(decision.route).toBe("profile_interview_engine");
   });
 

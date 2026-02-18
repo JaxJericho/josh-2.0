@@ -1,4 +1,5 @@
 import {
+  ACTIVE_INTERVIEW_QUESTION_STEP_IDS,
   INTERVIEW_QUESTION_STEP_IDS,
   type InterviewNormalizedAnswer,
   type InterviewQuestionStepId,
@@ -81,9 +82,12 @@ function asObjectArray(value: unknown): Array<Record<string, unknown>> {
 
 function toInterviewStepIndex(stepId: InterviewQuestionStepId | null): number {
   if (!stepId) {
-    return INTERVIEW_QUESTION_STEP_IDS.length;
+    return ACTIVE_INTERVIEW_QUESTION_STEP_IDS.length;
   }
-  const index = INTERVIEW_QUESTION_STEP_IDS.findIndex((candidate) => candidate === stepId);
+  const normalizedStepId = stepId === "intro_01" ? "activity_01" : stepId;
+  const index = ACTIVE_INTERVIEW_QUESTION_STEP_IDS.findIndex(
+    (candidate) => candidate === normalizedStepId,
+  );
   return index >= 0 ? index : 0;
 }
 
@@ -97,6 +101,14 @@ function toUniqueStepIds(stepIds: InterviewQuestionStepId[]): InterviewQuestionS
     }
   }
   return ordered;
+}
+
+function isActiveInterviewStepId(
+  stepId: InterviewQuestionStepId,
+): stepId is (typeof ACTIVE_INTERVIEW_QUESTION_STEP_IDS)[number] {
+  return ACTIVE_INTERVIEW_QUESTION_STEP_IDS.includes(
+    stepId as (typeof ACTIVE_INTERVIEW_QUESTION_STEP_IDS)[number],
+  );
 }
 
 export function readInterviewProgress(preferencesRaw: unknown): InterviewProgress | null {
@@ -375,8 +387,8 @@ export function buildProfilePatchForInterviewAnswer(params: {
     [params.stepId]: params.answer,
   };
 
-  const completedCount = completedStepIds.length;
-  const requiredCount = INTERVIEW_QUESTION_STEP_IDS.length;
+  const completedCount = completedStepIds.filter(isActiveInterviewStepId).length;
+  const requiredCount = ACTIVE_INTERVIEW_QUESTION_STEP_IDS.length;
   const completenessPercent = Math.round((completedCount / requiredCount) * 100);
   const isComplete = completedCount >= requiredCount;
   const nextState: ProfileState = isComplete ? "complete_mvp" : "partial";

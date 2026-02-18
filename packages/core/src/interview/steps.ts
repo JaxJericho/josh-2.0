@@ -28,6 +28,7 @@ import {
 } from "./validators.ts";
 
 export const INTERVIEW_STEP_IDS = [
+  // DEPRECATED in Phase 8 (Replaced by onboarding sequence)
   "intro_01",
   "activity_01",
   "activity_02",
@@ -51,6 +52,10 @@ export const INTERVIEW_QUESTION_STEP_IDS = INTERVIEW_STEP_IDS.filter(
 ) as Exclude<InterviewStepId, "wrap_01">[];
 
 export type InterviewQuestionStepId = (typeof INTERVIEW_QUESTION_STEP_IDS)[number];
+
+export const ACTIVE_INTERVIEW_QUESTION_STEP_IDS = INTERVIEW_QUESTION_STEP_IDS.filter(
+  (stepId) => stepId !== "intro_01",
+) as Exclude<InterviewQuestionStepId, "intro_01">[];
 
 export type InterviewNormalizedAnswerByStep = {
   intro_01: IntroAnswer;
@@ -95,6 +100,7 @@ export const INTERVIEW_WRAP_MESSAGE =
 
 export const ONBOARDING_INTERVIEW_STEPS: readonly InterviewStep[] = [
   {
+    // DEPRECATED in Phase 8 (Replaced by onboarding sequence)
     id: "intro_01",
     kind: "question",
     prompt:

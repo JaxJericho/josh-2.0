@@ -62,7 +62,20 @@ type ProfileSummary = {
 };
 
 const ONBOARDING_MODE: ConversationMode = "interviewing";
-const ONBOARDING_STATE_TOKEN = "interview:start_onboarding";
+const ONBOARDING_STATE_TOKEN = "onboarding:awaiting_opening_response";
+const ONBOARDING_STATE_TOKENS = [
+  "onboarding:awaiting_opening_response",
+  "onboarding:awaiting_explanation_response",
+  "onboarding:awaiting_interview_start",
+] as const;
+type OnboardingStateToken = (typeof ONBOARDING_STATE_TOKENS)[number];
+type InterviewingStateTokenKind = "onboarding" | "interview";
+
+const ONBOARDING_STATE_TOKEN_SET: ReadonlySet<OnboardingStateToken> = new Set(
+  ONBOARDING_STATE_TOKENS,
+);
+const INTERVIEW_TOKEN_PATTERN = /^interview:[a-z0-9_]+$/;
+const ONBOARDING_TOKEN_PATTERN = /^onboarding:[a-z_]+$/;
 
 const CONVERSATION_MODES: readonly ConversationMode[] = [
   "idle",
@@ -99,8 +112,8 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
 };
 
 const LEGAL_TRANSITIONS_BY_MODE: Record<ConversationMode, ReadonlySet<string>> = {
-  idle: new Set(["idle:awaiting_user_input", "interview:start_onboarding"]),
-  interviewing: new Set(["interview:awaiting_next_input"]),
+  idle: new Set(["idle:awaiting_user_input", ONBOARDING_STATE_TOKEN]),
+  interviewing: new Set(["interview:awaiting_next_input", ...ONBOARDING_STATE_TOKENS]),
   linkup_forming: new Set(["linkup:awaiting_details"]),
   awaiting_invite_reply: new Set(["invite:awaiting_reply"]),
   safety_hold: new Set(["safety:hold_enforced"]),
@@ -222,6 +235,10 @@ export function validateConversationState(
     );
   }
 
+  if (modeRaw === "interviewing") {
+    classifyInterviewingStateToken(stateToken);
+  }
+
   return {
     mode: modeRaw,
     state_token: stateToken,
@@ -229,6 +246,14 @@ export function validateConversationState(
 }
 
 export function resolveRouteForState(state: ConversationState): RouterRoute {
+  if (state.mode === "interviewing") {
+    const interviewingStateKind = classifyInterviewingStateToken(state.state_token);
+    if (interviewingStateKind === "onboarding") {
+      return resolveOnboardingRoute(state.state_token);
+    }
+    return resolveInterviewRoute(state.state_token);
+  }
+
   return ROUTE_BY_MODE[state.mode];
 }
 
@@ -244,7 +269,10 @@ export function resolveNextTransition(
     );
   }
 
-  const nextTransition = NEXT_TRANSITION_BY_MODE[state.mode];
+  const nextTransition = state.mode === "interviewing" &&
+      classifyInterviewingStateToken(state.state_token) === "onboarding"
+    ? state.state_token
+    : NEXT_TRANSITION_BY_MODE[state.mode];
   const allowedTransitions = LEGAL_TRANSITIONS_BY_MODE[state.mode];
   if (!allowedTransitions.has(nextTransition)) {
     throw new ConversationRouterError(
@@ -254,6 +282,39 @@ export function resolveNextTransition(
   }
 
   return nextTransition;
+}
+
+function resolveOnboardingRoute(_stateToken: string): RouterRoute {
+  // Stub for the dedicated onboarding handler; onboarding currently dispatches
+  // through the interview engine until onboarding delivery is implemented.
+  return "profile_interview_engine";
+}
+
+function resolveInterviewRoute(_stateToken: string): RouterRoute {
+  return "profile_interview_engine";
+}
+
+function classifyInterviewingStateToken(
+  stateToken: string,
+): InterviewingStateTokenKind {
+  if (ONBOARDING_TOKEN_PATTERN.test(stateToken)) {
+    if (!ONBOARDING_STATE_TOKEN_SET.has(stateToken as OnboardingStateToken)) {
+      throw new ConversationRouterError(
+        "INVALID_STATE",
+        `Unknown onboarding state token '${stateToken}'.`
+      );
+    }
+    return "onboarding";
+  }
+
+  if (INTERVIEW_TOKEN_PATTERN.test(stateToken)) {
+    return "interview";
+  }
+
+  throw new ConversationRouterError(
+    "INVALID_STATE",
+    `Unknown interviewing state token '${stateToken}'.`
+  );
 }
 
 export async function dispatchConversationRoute(
