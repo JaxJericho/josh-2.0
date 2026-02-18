@@ -61,14 +61,12 @@ export type WaitlistBatchNotifyRepository = {
     entryIds: string[],
     claimedAtIso: string,
   ) => Promise<WaitlistBatchEntry[]>;
-  getUserPhones: (userIds: string[]) => Promise<Map<string, string>>;
-  encryptBody: (plaintext: string) => Promise<string>;
-  enqueueWaitlistNotificationJob: (input: {
+  startOnboardingForActivatedUser: (input: {
     user_id: string;
-    to_e164: string;
-    body_ciphertext: string;
+    profile_id: string;
+    waitlist_entry_id: string;
     idempotency_key: string;
-    run_at: string;
+    activated_at: string;
   }) => Promise<EnqueueResult>;
 };
 
@@ -141,7 +139,7 @@ export function buildWaitlistNotificationIdempotencyKey(input: {
   profileId: string;
   templateVersion: NotificationTemplateVersion;
 }): string {
-  return `region_launch_notify:${input.regionId}:${input.profileId}:${input.templateVersion}`;
+  return `waitlist_activation_onboarding:${input.regionId}:${input.profileId}:${input.templateVersion}`;
 }
 
 export function resolveRegionBySlug(
@@ -192,7 +190,7 @@ export function claimWaitlistEntriesCas(
 
     const claimedEntry: WaitlistBatchEntry = {
       ...entry,
-      status: "notified",
+      status: "activated",
       last_notified_at: claimedAtIso,
       notified_at: entry.notified_at ?? claimedAtIso,
       updated_at: claimedAtIso,
@@ -288,41 +286,22 @@ export async function executeWaitlistBatchNotify(params: {
     };
   }
 
-  const userIds = uniqueStrings(claimed.map((entry) => entry.user_id));
-  const userPhones = await params.repository.getUserPhones(userIds);
-
   let attemptedSendCount = 0;
   let sentCount = 0;
 
   for (const entry of claimed) {
     attemptedSendCount += 1;
-    const toE164 = userPhones.get(entry.user_id) ?? null;
-    if (!toE164) {
-      errors.push({
-        code: "MISSING_PHONE",
-        message: "Unable to enqueue notification because user phone is missing.",
-        entry_id: entry.id,
-      });
-      continue;
-    }
-
     try {
-      const message = renderWaitlistNotificationTemplate({
-        version: params.request.notification_template_version,
-        regionDisplayName: region.display_name,
-      });
-      const bodyCiphertext = await params.repository.encryptBody(message);
-
-      const enqueueResult = await params.repository.enqueueWaitlistNotificationJob({
+      const enqueueResult = await params.repository.startOnboardingForActivatedUser({
         user_id: entry.user_id,
-        to_e164: toE164,
-        body_ciphertext: bodyCiphertext,
+        profile_id: entry.profile_id,
+        waitlist_entry_id: entry.id,
         idempotency_key: buildWaitlistNotificationIdempotencyKey({
           regionId: entry.region_id,
           profileId: entry.profile_id,
           templateVersion: params.request.notification_template_version,
         }),
-        run_at: nowIso,
+        activated_at: nowIso,
       });
 
       if (enqueueResult === "inserted" || enqueueResult === "duplicate") {
@@ -462,10 +441,6 @@ function redactOperationalErrorMessage(message: string): string {
     .replace(/[A-Za-z0-9_=-]{24,}/g, "[redacted]")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return Array.from(new Set(values));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

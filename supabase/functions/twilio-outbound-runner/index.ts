@@ -1,4 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  resolveTwilioStatusCallbackUrl,
+  sendTwilioRestMessage,
+} from "../_shared/twilio/send-message.ts";
 
 type SmsOutboundJob = {
   id: string;
@@ -56,7 +61,10 @@ Deno.serve(async (req) => {
     const twilioMessagingServiceSid = Deno.env.get("TWILIO_MESSAGING_SERVICE_SID") ?? null;
     const twilioFromNumber = Deno.env.get("TWILIO_FROM_NUMBER") ?? null;
 
-    const statusCallbackUrl = resolveStatusCallbackUrl();
+    const statusCallbackUrl = resolveTwilioStatusCallbackUrl({
+      explicitUrl: Deno.env.get("TWILIO_STATUS_CALLBACK_URL"),
+      projectRef: Deno.env.get("PROJECT_REF"),
+    });
 
     phase = "supabase_init";
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
@@ -150,7 +158,7 @@ Deno.serve(async (req) => {
       }
 
       phase = "send";
-      const sendResult = await sendTwilioMessage({
+      const sendResult = await sendTwilioRestMessage({
         accountSid: twilioAccountSid,
         authToken: twilioAuthToken,
         idempotencyKey: job.idempotency_key,
@@ -334,114 +342,6 @@ function computeBackoffMs(attempt: number): number {
     BACKOFF_BASE_SECONDS * Math.pow(2, exp)
   );
   return delaySeconds * 1000;
-}
-
-type TwilioSendInput = {
-  accountSid: string;
-  authToken: string;
-  idempotencyKey: string;
-  to: string;
-  from: string;
-  body: string;
-  messagingServiceSid: string | null;
-  statusCallbackUrl: string | null;
-};
-
-type TwilioSendResult =
-  | {
-      ok: true;
-      sid: string;
-      status: string | null;
-    }
-  | {
-      ok: false;
-      retryable: boolean;
-      errorMessage: string;
-    };
-
-async function sendTwilioMessage(
-  input: TwilioSendInput
-): Promise<TwilioSendResult> {
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${input.accountSid}/Messages.json`;
-  const payload = new URLSearchParams();
-  payload.set("To", input.to);
-  payload.set("Body", input.body);
-
-  if (input.messagingServiceSid) {
-    payload.set("MessagingServiceSid", input.messagingServiceSid);
-  } else {
-    payload.set("From", input.from);
-  }
-
-  if (input.statusCallbackUrl) {
-    payload.set("StatusCallback", input.statusCallbackUrl);
-  }
-
-  const auth = btoa(`${input.accountSid}:${input.authToken}`);
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Idempotency-Key": input.idempotencyKey,
-        "content-type": "application/x-www-form-urlencoded",
-      },
-      body: payload.toString(),
-    });
-
-    const json = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      const errorCode = json?.code ? `code=${json.code}` : null;
-      const errorMessage = json?.message ?? response.statusText;
-      const retryable = isRetryableStatus(response.status);
-      return {
-        ok: false,
-        retryable,
-        errorMessage: [errorCode, errorMessage].filter(Boolean).join(" "),
-      };
-    }
-
-    const sid = json?.sid as string | undefined;
-    if (!sid) {
-      return {
-        ok: false,
-        retryable: false,
-        errorMessage: "Twilio response missing sid",
-      };
-    }
-
-    return {
-      ok: true,
-      sid,
-      status: json?.status ?? null,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      retryable: true,
-      errorMessage: (error as Error)?.message ?? "Twilio request failed",
-    };
-  }
-}
-
-function isRetryableStatus(status: number): boolean {
-  return status === 408 || status === 429 || (status >= 500 && status < 600);
-}
-
-function resolveStatusCallbackUrl(): string | null {
-  const explicit = Deno.env.get("TWILIO_STATUS_CALLBACK_URL");
-  if (explicit) {
-    return explicit;
-  }
-
-  const projectRef = Deno.env.get("PROJECT_REF");
-  if (!projectRef) {
-    return null;
-  }
-
-  return `https://${projectRef}.supabase.co/functions/v1/twilio-status-callback`;
 }
 
 function jsonResponse(payload: Record<string, unknown>, status = 200): Response {

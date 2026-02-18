@@ -10,6 +10,8 @@ import {
   type WaitlistBatchRegion,
   WaitlistBatchNotifyError,
 } from "../_shared/waitlist/admin-waitlist-batch-notify.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { startOnboardingForActivatedUser } from "../_shared/engines/onboarding-engine.ts";
 
 const textEncoder = new TextEncoder();
 
@@ -48,7 +50,6 @@ Deno.serve(async (req) => {
     });
     const repository = createRepository({
       supabase: serviceClient,
-      encryptionKey: requireEnv("SMS_BODY_ENCRYPTION_KEY"),
     });
 
     phase = "execute";
@@ -94,7 +95,6 @@ Deno.serve(async (req) => {
 
 function createRepository(input: {
   supabase: ReturnType<typeof createClient>;
-  encryptionKey: string;
 }): WaitlistBatchNotifyRepository {
   return {
     findRegionBySlug: async (slug: string): Promise<WaitlistBatchRegion | null> => {
@@ -170,7 +170,8 @@ function createRepository(input: {
       const { data, error } = await input.supabase
         .from("waitlist_entries")
         .update({
-          status: "notified",
+          status: "activated",
+          activated_at: claimedAtIso,
           last_notified_at: claimedAtIso,
           notified_at: claimedAtIso,
         })
@@ -189,69 +190,13 @@ function createRepository(input: {
       return normalizeEntries(data ?? []);
     },
 
-    getUserPhones: async (userIds: string[]): Promise<Map<string, string>> => {
-      if (userIds.length === 0) {
-        return new Map<string, string>();
-      }
-
-      const { data, error } = await input.supabase
-        .from("users")
-        .select("id,phone_e164")
-        .in("id", userIds);
-
-      if (error) {
-        throw new Error("Unable to load user phones for waitlist notifications.");
-      }
-
-      const byUserId = new Map<string, string>();
-      for (const row of data ?? []) {
-        if (row?.id && row?.phone_e164) {
-          byUserId.set(row.id, row.phone_e164);
-        }
-      }
-      return byUserId;
-    },
-
-    encryptBody: async (plaintext: string): Promise<string> => {
-      const { data, error } = await input.supabase.rpc("encrypt_sms_body", {
-        plaintext,
-        key: input.encryptionKey,
+    startOnboardingForActivatedUser: async (payload): Promise<"inserted" | "duplicate"> => {
+      return startOnboardingForActivatedUser({
+        supabase: input.supabase,
+        userId: payload.user_id,
+        correlationId: payload.waitlist_entry_id,
+        activationIdempotencyKey: payload.idempotency_key,
       });
-
-      if (error || !data) {
-        throw new Error("Unable to encrypt outbound waitlist notification body.");
-      }
-      return data as string;
-    },
-
-    enqueueWaitlistNotificationJob: async (payload): Promise<"inserted" | "duplicate"> => {
-      const { data, error } = await input.supabase
-        .from("sms_outbound_jobs")
-        .insert(
-          {
-            user_id: payload.user_id,
-            to_e164: payload.to_e164,
-            body_ciphertext: payload.body_ciphertext,
-            body_iv: null,
-            body_tag: null,
-            key_version: 1,
-            purpose: "region_launch_notify",
-            status: "pending",
-            run_at: payload.run_at,
-            idempotency_key: payload.idempotency_key,
-          },
-          {
-            onConflict: "idempotency_key",
-            ignoreDuplicates: true,
-          },
-        )
-        .select("id");
-
-      if (error) {
-        throw new Error("Unable to enqueue waitlist notification job.");
-      }
-
-      return (data?.length ?? 0) > 0 ? "inserted" : "duplicate";
     },
   };
 }

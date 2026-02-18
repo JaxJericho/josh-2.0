@@ -237,7 +237,7 @@ Deno.serve(async (req) => {
       engine: dispatchResult.engine,
     });
 
-    return twimlResponse(dispatchResult.reply_message);
+    return twimlResponse(dispatchResult.reply_message ?? undefined);
   } catch (error) {
     const err = error as Error;
     console.error("twilio.unhandled_error", {
