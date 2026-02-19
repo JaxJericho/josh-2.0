@@ -67,6 +67,22 @@ export async function runOnboardingEngine(
     };
   }
 
+  // Atomic compare-and-swap: claim this inbound SID on the session row.
+  // If another concurrent request already claimed this SID, bail out to
+  // prevent duplicate processing (Twilio retries, edge function replays).
+  const sidClaimed = await claimInboundMessageSid(
+    input.supabase,
+    session.id,
+    session.last_inbound_message_sid,
+    input.payload.inbound_message_sid,
+  );
+  if (!sidClaimed) {
+    return {
+      engine: "onboarding_engine",
+      reply_message: null,
+    };
+  }
+
   const profileId = await fetchProfileId(input.supabase, input.decision.user_id);
   if (profileId) {
     const evaluation = await evaluateEntitlements({
@@ -469,6 +485,34 @@ async function fetchOrCreateConversationSession(
   };
 }
 
+async function claimInboundMessageSid(
+  supabase: EngineDispatchInput["supabase"],
+  sessionId: string,
+  previousSid: string | null,
+  incomingSid: string,
+): Promise<boolean> {
+  // Atomic UPDATE with WHERE on previous SID value prevents two concurrent
+  // requests from both proceeding past the guard.
+  let query = supabase
+    .from("conversation_sessions")
+    .update({ last_inbound_message_sid: incomingSid })
+    .eq("id", sessionId);
+
+  if (previousSid) {
+    query = query.eq("last_inbound_message_sid", previousSid);
+  } else {
+    query = query.is("last_inbound_message_sid", null);
+  }
+
+  const { data, error } = await query.select("id").maybeSingle();
+
+  if (error) {
+    throw new Error("Unable to claim inbound message SID on session.");
+  }
+
+  return Boolean(data?.id);
+}
+
 async function persistConversationSessionState(params: {
   supabase: EngineDispatchInput["supabase"];
   sessionId: string;
@@ -608,6 +652,15 @@ async function enqueueAndRecordOutboundMessageJob(params: {
   runAtIso: string;
   twilio: OutboundTwilioConfig;
 }): Promise<void> {
+  // Skip enqueue if a job with this idempotency key already exists (sent or pending).
+  const existingJob = await fetchOutboundJobByIdempotencyKey(
+    params.supabase,
+    params.idempotencyKey,
+  );
+  if (existingJob) {
+    return;
+  }
+
   const encryptedBody = await encryptBody(params.supabase, params.body, params.twilio.encryptionKey);
 
   const resolvedFromE164 = params.twilio.fromE164 ?? params.fallbackFromE164 ?? "";
@@ -656,6 +709,16 @@ async function sendAndRecordOutboundMessage(params: {
   body: string;
   twilio: OutboundTwilioConfig;
 }): Promise<void> {
+  // Pre-send dedupe: skip Twilio call entirely when a job with this
+  // idempotency key has already been sent (or is being sent by the runner).
+  const existingJob = await fetchOutboundJobByIdempotencyKey(
+    params.supabase,
+    params.idempotencyKey,
+  );
+  if (existingJob) {
+    return;
+  }
+
   const encryptedBody = await encryptBody(params.supabase, params.body, params.twilio.encryptionKey);
 
   const fromNumberForTwilio = params.twilio.fromE164 ?? params.fallbackFromE164 ?? "";
@@ -740,6 +803,24 @@ async function sendAndRecordOutboundMessage(params: {
   if (error && !isDuplicateKeyError(error)) {
     throw new Error("Unable to persist onboarding outbound sms message.");
   }
+}
+
+async function fetchOutboundJobByIdempotencyKey(
+  supabase: EngineDispatchInput["supabase"],
+  idempotencyKey: string,
+): Promise<{ id: string; status: string } | null> {
+  const { data, error } = await supabase
+    .from("sms_outbound_jobs")
+    .select("id,status")
+    .eq("idempotency_key", idempotencyKey)
+    .maybeSingle();
+
+  if (error) {
+    // Non-fatal: fall through to let the insert's onConflict handle duplicates.
+    return null;
+  }
+
+  return data?.id ? { id: data.id, status: data.status } : null;
 }
 
 function onboardingOutboundPurpose(messageKey: OnboardingOutboundMessageKey): string {
