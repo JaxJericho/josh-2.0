@@ -95,7 +95,7 @@ For each ticket:
 
 ## Phase 0 — Foundations And Setup
 
-### Ticket 0.1 — Repo Baseline Quality Gates (Completed)
+- [x] ### ~~Ticket 0.1 — Repo Baseline Quality Gates (Completed)~~
 
 Goal: Establish repeatable, explicit quality gates for local \+ CI.
 
@@ -114,7 +114,9 @@ Notes:
 * ESLint toolchain was pinned for compatibility (ensure versions remain aligned with your Next.js version).  
 * Typecheck may depend on Next-generated `.next/types` in some setups; verify `pnpm typecheck` passes from a clean state.
 
-### Ticket 0.2 — Environment Contract \+ Secrets Map
+### 
+
+- [x] ### ~~Ticket 0.2 — Environment Contract \+ Secrets Map~~
 
 Goal: No guessing. Every environment variable and endpoint is explicit.
 
@@ -128,7 +130,9 @@ Verification:
 
 * `pnpm doctor` returns green locally
 
-### Ticket 0.3 — Vercel Provisioning (Staging \+ Production) (Completed)
+### 
+
+- [x] ### ~~Ticket 0.3 — Vercel Provisioning (Staging \+ Production) (Completed)~~
 
 Goal: Fresh Vercel setup with stable URLs early, so Twilio/Stripe webhooks don’t churn.
 
@@ -139,7 +143,9 @@ Confirmed Vercel URLs:
 * Staging: `https://josh-2-0-staging.vercel.app`  
 * Production: `https://josh-2-0-production.vercel.app`
 
-  ### Ticket 0.4 — Environment Variables Skeleton (Staging \+ Production)
+  ### 
+
+- [x] ### ~~Ticket 0.4 — Environment Variables Skeleton (Staging \+ Production)~~
 
 Goal: Standardize env var names and ensure each environment has a complete set.
 
@@ -152,13 +158,13 @@ Staging env vars added (Vercel Project: staging, scope: Production):
 * `SUPABASE_ANON_KEY`  
 * `SUPABASE_SERVICE_ROLE_KEY`
 
-  ### Ticket 0.5 — Custom Domain Wiring (Production) (Completed)
+- [x] ### ~~Ticket 0.5 — Custom Domain Wiring (Production) (Completed)~~
 
 Goal: Attach `www.callmejosh.ai` to production and make it the canonical customer URL.
 
 Status: Completed.
 
-### Ticket 0.6 — Doctor Script \+ Preflight Checklist
+- [x] ### ~~Ticket 0.6 — Doctor Script \+ Preflight Checklist~~
 
 Goal: A single command that verifies environment variables \+ basic connectivity (without printing secrets).
 
@@ -173,7 +179,7 @@ Verification:
 
 ## Phase 1 — Database Foundation
 
-### Ticket 1.1 — Provision Fresh Supabase Projects (Staging \+ Production)
+- [ ] ### Ticket 1.1 — Provision Fresh Supabase Projects (Staging \+ Production)
 
 Goal: Start from zero with clean Supabase projects and a repeatable migration-first workflow.
 
@@ -198,7 +204,9 @@ Verification:
 * You can connect with the Supabase client in staging  
 * No tables exist yet (fresh baseline)
 
-### Ticket 1.2 — Canonical Schema Migrations (MVP)
+### 
+
+- [x] ### ~~Ticket 1.2 — Canonical Schema Migrations (MVP)~~
 
 Goal: Implement the complete schema needed for MVP.
 
@@ -224,7 +232,9 @@ Verification:
 * Migration apply clean  
 * `pnpm db:lint` (if implemented)
 
-### Ticket 1.3 — RLS \+ Roles \+ Admin Access Model
+### 
+
+- [x] ### ~~Ticket 1.3 — RLS \+ Roles \+ Admin Access Model~~
 
 Goal: Secure the DB while keeping admin operations practical.
 
@@ -247,7 +257,7 @@ Verification:
 
 ## Phase 2 — Messaging Core (Twilio)
 
-### Ticket 2.1 — Twilio Staging A2P/Campaign Fix Runbook
+- [x] ### ~~Ticket 2.1 — Twilio Staging A2P/Campaign Fix Runbook~~
 
 Goal: Resolve the staging campaign rejection and make staging Twilio functional.
 
@@ -260,7 +270,9 @@ Verification:
 
 * Staging number can send outbound successfully
 
-### Ticket 2.2 — Twilio Inbound Webhook (Intake)
+### 
+
+- [x] ### ~~Ticket 2.2 — Twilio Inbound Webhook (Intake)~~
 
 Goal: Receive inbound SMS, validate, store, and enqueue.
 
@@ -285,7 +297,9 @@ Verification:
 * Twilio test webhook succeeds  
 * Duplicate webhook does not duplicate rows
 
-### Ticket 2.3 — Outbound Send Pipeline
+### 
+
+- [x] ### ~~Ticket 2.3 — Outbound Send Pipeline~~
 
 Goal: All outbound messages are sent via jobs with retries.
 
@@ -304,7 +318,9 @@ Verification:
 * Create job → message delivered  
 * Retry behavior does not double-send
 
-### Ticket 2.4 — Twilio Status Callback
+### 
+
+- [x] ### ~~Ticket 2.4 — Twilio Status Callback~~
 
 Goal: Persist delivery outcomes.
 
@@ -324,7 +340,7 @@ Verification:
 
 ## Phase 3 — Scheduler And Runners
 
-### Ticket 3.1 — Vercel Cron Runner (Staging)
+- [x] ### ~~Ticket 3.1 — Vercel Cron Runner (Staging)~~
 
 Goal: Scheduled outbound runner works end-to-end.
 
@@ -337,7 +353,9 @@ Verification:
 
 * Cron triggers and sends queued jobs
 
-### Ticket 3.2 — Backfill/Reconcile Runner
+### 
+
+- [x] ### ~~Ticket 3.2 — Backfill/Reconcile Runner~~
 
 Goal: Handle missed callbacks and reconcile message statuses.
 
@@ -351,7 +369,7 @@ Verification:
 
 ## Phase 4 — Conversation System (Interview \+ Updates)
 
-### Ticket 4.1 — Conversation Session Model \+ Router
+- [x] ### ~~Ticket 4.1 — Conversation Session Model \+ Router~~
 
 Goal: Deterministic state machine for SMS conversations.
 
@@ -370,7 +388,9 @@ Verification:
 
 * Restart mid-interview resumes correctly
 
-### Ticket 4.2 — Onboarding Interview Implementation
+### 
+
+- [x] ### ~~Ticket 4.2 — Onboarding Interview Implementation~~
 
 Goal: Implement the MVP interview and persist a structured profile.
 
@@ -385,7 +405,9 @@ Verification:
 * New user completes interview  
 * Profile stored and marked complete
 
-### Ticket 4.3 — Profile Update Flow Triggered From Dashboard
+### 
+
+- [ ] ### Ticket 4.3 — Profile Update Flow Triggered From Dashboard
 
 Goal: Dashboard action starts an SMS flow to update selected fields.
 
@@ -399,7 +421,9 @@ Verification:
 * Update selected fields only  
 * Audit log entry created
 
-### Ticket 4.4 — Prompt Pack \+ Guardrails
+### 
+
+- [ ] ### Ticket 4.4 — Prompt Pack \+ Guardrails
 
 Goal: JOSH voice is consistent and output is safe.
 
@@ -412,6 +436,23 @@ Deliverables:
 Verification:
 
 * Golden tests for representative flows
+
+- [ ] Ticket 4.5 — Compatibility Pipeline E2E Proof
+
+Goal: Compatibility pipeline is deterministic, idempotent, and verifiable end-to-end in staging.
+
+* Deliverables:  
+* Deterministic staging seed script (non-migration)  
+* E2E runner script for signals → scoring → persistence  
+* Runbook documenting exact verification commands  
+* Idempotency proof via replay
+
+Verification:
+
+* CLI seed \+ run twice  
+* SQL row count unchanged on replay  
+* Score \+ version verified in DB  
+* All merge gates pass
 
 ## Phase 5 — Regions \+ Waitlist
 
@@ -739,3 +780,98 @@ You decided to delete all prior DBs and start completely fresh. This plan now as
 Operational rule:
 
 * If a schema change is needed, it is always expressed as a migration (never “click ops” in the dashboard as the source of truth).
+
+# JOSH 2.0 Comprehensive Build Plan
+
+This document is a complete, end-to-end build plan for a production-ready rebuild of JOSH 2.0.
+
+## Scope, Assumptions, And Decisions
+
+### What We Are Building (MVP)
+
+* LinkUps-only (no 1:1 intro mode in MVP)  
+* SMS-first onboarding interview that builds a structured compatibility profile  
+* Profile update flow triggered from the dashboard that continues over SMS  
+* Region gating \+ waitlist  
+* Entitlements \+ billing (Stripe) with admin override for testing  
+* Safety system (STOP/HELP precedence, keyword detection, holds, block/report)  
+* LinkUp orchestration (candidate selection → invites → quorum lock → coordination → post-event)  
+* Admin dashboard (users, messaging, LinkUps, safety, billing, regions)  
+* Observability full stack (logs \+ metrics \+ alerting) from day 1
+
+### Environments
+
+* Local: developer machine \+ local tooling  
+* Staging: Supabase \+ Twilio staging number (A2P/campaign must be fixed) \+ Vercel staging  
+* Production: separate Supabase \+ Twilio production number \+ Vercel production
+
+### Key Calls I’m Making To Unblock The Plan (You Can Flip These Later)
+
+Because some answers were “A/B”, this plan proceeds with explicit defaults:
+
+* Twilio outbound: Messaging Service (default) with ability to fall back to a single number if needed.  
+* Staging DB: Rebaseline recommended (fresh schema via migrations) because you do not need to preserve data; we’ll keep the option to “adopt existing” if you prefer.  
+* Stripe: Enabled in MVP, but with an admin entitlement override so you can test everything regardless of payment.  
+* LLM provider: OpenAI first (fastest path), with abstraction for adding Anthropic later.
+
+### Non-Negotiable Reliability Rules
+
+* Idempotency for all webhooks (Twilio, Stripe) and scheduled runners  
+* DB uniqueness constraints for external IDs (Twilio SIDs, Stripe event IDs)  
+* State transitions in transactions (LinkUp lock and invite acceptance)  
+* Correlation IDs and structured logs everywhere  
+* Secrets isolated per environment
+
+## System Architecture
+
+### High-Level Components
+
+8. Web App (Next.js on Vercel)  
+   * Marketing site  
+   * Member dashboard (PWA)  
+   * Admin dashboard (PWA)  
+   * API routes for Twilio/Stripe webhooks and cron runners  
+9. Data Layer (Supabase)  
+   * Postgres schema \+ migrations  
+   * RLS where appropriate  
+   * Edge Functions optional (we will decide per endpoint; the plan works with Vercel API routes as primary)  
+10. Messaging (Twilio)  
+    * Inbound webhook → message intake  
+    * Outbound send pipeline → Twilio Messaging Service  
+    * Status callbacks → delivery receipts  
+11. Billing (Stripe)  
+    * Checkout \+ portal  
+    * Webhooks derive entitlements and subscription state  
+12. Scheduler  
+    * Vercel Cron → protected runner endpoint  
+13. LLM Layer  
+    * Deterministic parsing first  
+    * LLM fallback for classification/extraction  
+    * Strict JSON schemas \+ validators  
+14. Observability  
+    * Structured logs  
+    * Error tracking  
+    * Metrics \+ alerts
+
+## Repo Structure
+
+### Target Monorepo Layout
+
+* `apps/web/` — Next.js app (site \+ member dashboard \+ admin)  
+* `packages/core/` — shared domain logic (state machines, validators, scoring)  
+* `packages/db/` — typed DB client, migrations helpers, SQL utilities  
+* `packages/messaging/` — Twilio helpers, idempotency, templates  
+* `packages/llm/` — provider abstraction \+ prompt pack \+ JSON validation  
+* `supabase/` — migrations \+ seed scripts  
+* `docs/` — canonical docs, runbooks, environment contract  
+* `scripts/` — doctor, seed, test harnesses
+
+## Build Loop Workflow (How We Execute Tickets)
+
+For each ticket:
+
+6. Create branch `ticket/<id>-<slug>`  
+7. Implement  
+8. Verify locally (lint/typecheck/tests)  
+9. Open PR with checklist (env vars, migrations, dashboards)  
+10. Merge when green
