@@ -204,32 +204,51 @@ async function ensureProfileForUser() {
 }
 
 async function ensureEligibleWaitlistEntry(params) {
-  const payload = {
+  const resetPayload = {
     user_id: TEST_USER_ID,
     profile_id: params.profileId,
     region_id: WAITLIST_REGION_ID,
     status: params.eligibleStatus,
     source: "sms",
-    joined_at: WAITLIST_ENTRY_ANCHOR_ISO,
-    created_at: WAITLIST_ENTRY_ANCHOR_ISO,
     last_notified_at: null,
     notified_at: null,
     activated_at: null,
   };
 
-  const { data, error } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("waitlist_entries")
-    .upsert(payload, {
-      onConflict: "user_id,region_id",
-      ignoreDuplicates: false,
-    })
+    .select("id")
+    .eq("user_id", TEST_USER_ID)
+    .eq("region_id", WAITLIST_REGION_ID)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingError) {
+    fail(`Unable to select existing waitlist entry: ${formatSupabaseError(existingError)}`);
+  }
+
+  const query = existing?.id
+    ? supabase
+      .from("waitlist_entries")
+      .update(resetPayload)
+      .eq("id", existing.id)
+    : supabase
+      .from("waitlist_entries")
+      .insert({
+        ...resetPayload,
+        joined_at: WAITLIST_ENTRY_ANCHOR_ISO,
+        created_at: WAITLIST_ENTRY_ANCHOR_ISO,
+      });
+
+  const { data, error } = await query
     .select(
       "id,user_id,profile_id,region_id,status,last_notified_at,notified_at,activated_at",
     )
     .single();
 
   if (error || !data?.id) {
-    fail(`Unable to upsert waitlist entry: ${formatSupabaseError(error)}`);
+    fail(`Unable to ensure waitlist entry: ${formatSupabaseError(error)}`);
   }
   if (data.status !== params.eligibleStatus) {
     fail(
