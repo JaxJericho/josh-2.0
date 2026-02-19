@@ -29,6 +29,14 @@ const regionLaunchTemplateNeedle = "[template:v1]";
 const regionLaunchBodyNeedle = "JOSH is now live in";
 const openingPurpose = "onboarding_onboarding_opening";
 const explanationPurpose = "onboarding_onboarding_explanation";
+const explanationBurstPurposes = [
+  "onboarding_onboarding_message_1",
+  "onboarding_onboarding_message_2",
+  "onboarding_onboarding_message_3",
+  "onboarding_onboarding_message_4",
+];
+const onboardingDelayCadenceMs = 8000;
+const scheduleCadenceToleranceMs = 1000;
 
 assertValidUrl(supabaseUrl, "SUPABASE_URL");
 
@@ -48,6 +56,10 @@ const onboardingOpeningStateToken = loadStringConstant({
 const onboardingExplanationStateToken = loadStringConstant({
   filePath: ONBOARDING_CONSTANTS_PATH,
   constName: "ONBOARDING_AWAITING_EXPLANATION_RESPONSE",
+});
+const onboardingInterviewStartStateToken = loadStringConstant({
+  filePath: ONBOARDING_CONSTANTS_PATH,
+  constName: "ONBOARDING_AWAITING_INTERVIEW_START",
 });
 const canonicalClaimedWaitlistStatus = loadClaimedWaitlistStatus({
   filePath: WAITLIST_SHARED_CONTRACT_PATH,
@@ -77,6 +89,8 @@ const runReport = {
   start_route_decision: null,
   post_start_state_token: null,
   onboarding_jobs_since_start: null,
+  post_explanation_state_token: null,
+  explanation_jobs_since_reply: null,
   reference_timestamp: null,
   legacy_recovery_applied: false,
 };
@@ -139,6 +153,7 @@ async function main() {
     await verifyStartAdvancesOnboarding({
       openingStateToken: onboardingOpeningStateToken,
       expectedNextStateToken: onboardingExplanationStateToken,
+      expectedInterviewStateToken: onboardingInterviewStartStateToken,
       referenceTimestampIso: referenceTimestamp,
     });
   }
@@ -693,6 +708,28 @@ async function verifyStartAdvancesOnboarding(params) {
     referenceTimestampIso: params.referenceTimestampIso,
     requireExplanation: true,
   });
+  const explanationReplySentAtIso = new Date().toISOString();
+  await invokeSignedTwilioInbound({ body: "YES" });
+
+  const postExplanationSession = await fetchConversationSessionOrNull();
+  runReport.post_explanation_state_token = postExplanationSession?.state_token ?? null;
+  if (!postExplanationSession?.id) {
+    fail("Conversation session disappeared after explanation confirmation.");
+  }
+  if (postExplanationSession.state_token !== params.expectedInterviewStateToken) {
+    fail(
+      `Explanation confirmation did not advance to expected onboarding token. Expected '${params.expectedInterviewStateToken}', got '${postExplanationSession.state_token}'.`,
+    );
+  }
+
+  const explanationJobsSinceReply = await listOnboardingOutboundJobsSince({
+    referenceTimestampIso: explanationReplySentAtIso,
+  });
+  runReport.explanation_jobs_since_reply = explanationJobsSinceReply.length;
+  assertDelayedExplanationBurstSchedule({
+    onboardingJobs: explanationJobsSinceReply,
+  });
+
   await assertNoRegionLaunchNotifySince({
     referenceTimestampIso: params.referenceTimestampIso,
   });
@@ -719,8 +756,62 @@ async function assertOnboardingMessageSequence(params) {
   if (params.requireExplanation && explanationIndex < 0) {
     fail(`Expected ${explanationPurpose} outbound job after START verification.`);
   }
+  if (!params.requireExplanation && explanationIndex >= 0) {
+    fail("onboarding_explanation appeared before affirmative opening response.");
+  }
   if (explanationIndex >= 0 && explanationIndex <= 0) {
     fail("onboarding_explanation appeared before onboarding_opening.");
+  }
+}
+
+function assertDelayedExplanationBurstSchedule(params) {
+  const burstJobs = params.onboardingJobs.filter((job) =>
+    explanationBurstPurposes.includes(String(job.purpose ?? ""))
+  );
+  if (burstJobs.length !== explanationBurstPurposes.length) {
+    const foundPurposes = burstJobs.map((job) => String(job.purpose ?? "null"));
+    fail(
+      `Expected ${explanationBurstPurposes.length} delayed explanation jobs after explanation confirmation; found ${burstJobs.length}. Purposes: ${foundPurposes.join(", ") || "none"}.`,
+    );
+  }
+
+  const jobsByPurpose = new Map();
+  for (const job of burstJobs) {
+    if (!jobsByPurpose.has(job.purpose)) {
+      jobsByPurpose.set(job.purpose, job);
+    }
+  }
+
+  const orderedJobs = explanationBurstPurposes.map((purpose) => {
+    const job = jobsByPurpose.get(purpose);
+    if (!job) {
+      fail(`Missing expected onboarding burst purpose '${purpose}' after explanation confirmation.`);
+    }
+    if (!job.run_at) {
+      fail(`Missing run_at for onboarding burst purpose '${purpose}'.`);
+    }
+    return job;
+  });
+
+  for (let i = 1; i < orderedJobs.length; i += 1) {
+    const previous = Date.parse(String(orderedJobs[i - 1].run_at));
+    const current = Date.parse(String(orderedJobs[i].run_at));
+    if (!Number.isFinite(previous) || !Number.isFinite(current)) {
+      fail("Unable to parse onboarding burst run_at timestamps for cadence validation.");
+    }
+    if (current <= previous) {
+      fail(
+        `Onboarding burst run_at must strictly increase. Found '${orderedJobs[i - 1].purpose}' run_at='${orderedJobs[i - 1].run_at}' and '${orderedJobs[i].purpose}' run_at='${orderedJobs[i].run_at}'.`,
+      );
+    }
+
+    const diffMs = current - previous;
+    const minExpected = onboardingDelayCadenceMs - scheduleCadenceToleranceMs;
+    if (diffMs < minExpected) {
+      fail(
+        `Onboarding burst cadence is too short between '${orderedJobs[i - 1].purpose}' and '${orderedJobs[i].purpose}'. Expected >= ${minExpected}ms, got ${diffMs}ms.`,
+      );
+    }
   }
 }
 
@@ -834,7 +925,7 @@ async function countOnboardingOutboundJobsSince(params) {
 async function listOnboardingOutboundJobsSince(params) {
   const { data, error } = await supabase
     .from("sms_outbound_jobs")
-    .select("id,purpose,created_at,twilio_message_sid")
+    .select("id,purpose,created_at,run_at,status,twilio_message_sid")
     .eq("user_id", TEST_USER_ID)
     .like("purpose", "onboarding_%")
     .gte("created_at", params.referenceTimestampIso)
@@ -1200,6 +1291,8 @@ function emitReport(outcome) {
   const startRouteDecision = runReport.start_route_decision ?? "n/a";
   const postStartStateToken = runReport.post_start_state_token ?? "n/a";
   const onboardingJobsSinceStart = runReport.onboarding_jobs_since_start ?? "n/a";
+  const postExplanationStateToken = runReport.post_explanation_state_token ?? "n/a";
+  const explanationJobsSinceReply = runReport.explanation_jobs_since_reply ?? "n/a";
   const referenceTimestamp = runReport.reference_timestamp ?? "n/a";
   const legacyRecoveryApplied = runReport.legacy_recovery_applied ? "true" : "false";
 
@@ -1217,6 +1310,9 @@ function emitReport(outcome) {
   );
   console.log(
     `[${SCRIPT_TAG}] start_transition_checked=${startChecked} pre_start_state_token=${preStartStateToken} start_route_decision=${startRouteDecision} post_start_state_token=${postStartStateToken} onboarding_jobs_since_start=${onboardingJobsSinceStart}`,
+  );
+  console.log(
+    `[${SCRIPT_TAG}] post_explanation_state_token=${postExplanationStateToken} explanation_jobs_since_reply=${explanationJobsSinceReply}`,
   );
   console.log(`[${SCRIPT_TAG}] legacy_recovery_applied=${legacyRecoveryApplied}`);
 }

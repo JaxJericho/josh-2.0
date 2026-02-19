@@ -5,9 +5,9 @@ import {
   ONBOARDING_AWAITING_INTERVIEW_START,
   ONBOARDING_AWAITING_OPENING_RESPONSE,
   handleOnboardingInbound,
-  sendOnboardingBurst,
   startOnboardingForUser,
   type OnboardingOutboundMessageKey,
+  type OnboardingOutboundPlanStep,
   type OnboardingStateToken,
 } from "../../../../packages/core/src/onboarding/onboarding-engine.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
@@ -147,37 +147,20 @@ export async function runOnboardingEngine(
   });
 
   if (onboardingStateToken === ONBOARDING_AWAITING_EXPLANATION_RESPONSE) {
-    await sendOnboardingBurst({
-      currentStateToken: onboardingStateToken,
-      burstIdempotencyKeyPrefix: `onboarding:burst:${input.decision.user_id}:${input.payload.inbound_message_sid}`,
-      sendMessage: async (sendInput) => {
-        await sendAndRecordOutboundMessage({
-          supabase: input.supabase,
-          userId: input.decision.user_id,
-          toE164: input.payload.from_e164,
-          fallbackFromE164: input.payload.to_e164,
-          correlationId: input.payload.inbound_message_id,
-          idempotencyKey: sendInput.idempotencyKey,
-          messageKey: sendInput.messageKey,
-          body: sendInput.body,
-          twilio,
-        });
-      },
-      persistState: async (persistInput) => {
-        await persistConversationSessionState({
-          supabase: input.supabase,
-          sessionId: session.id,
-          mode: "interviewing",
-          stateToken: persistInput.nextStateToken,
-          currentStepId: null,
-          lastInboundMessageSid: input.payload.inbound_message_sid,
-        });
-      },
+    await enqueueOnboardingOutboundPlan({
+      supabase: input.supabase,
+      userId: input.decision.user_id,
+      toE164: input.payload.from_e164,
+      fallbackFromE164: input.payload.to_e164,
+      correlationId: input.payload.inbound_message_id,
+      inboundMessageSid: input.payload.inbound_message_sid,
+      outboundPlan: inboundResult.outboundPlan,
+      twilio,
     });
   } else {
     for (const step of inboundResult.outboundPlan) {
       if (step.kind === "delay") {
-        await new Promise((r) => setTimeout(r, 8000));
+        await new Promise((r) => setTimeout(r, step.ms));
         continue;
       }
 
@@ -193,18 +176,18 @@ export async function runOnboardingEngine(
         twilio,
       });
     }
-
-    await persistConversationSessionState({
-      supabase: input.supabase,
-      sessionId: session.id,
-      mode: "interviewing",
-      stateToken: inboundResult.nextStateToken,
-      currentStepId: inboundResult.nextStateToken === INTERVIEW_ACTIVITY_01_STATE_TOKEN
-        ? "activity_01"
-        : null,
-      lastInboundMessageSid: input.payload.inbound_message_sid,
-    });
   }
+
+  await persistConversationSessionState({
+    supabase: input.supabase,
+    sessionId: session.id,
+    mode: "interviewing",
+    stateToken: inboundResult.nextStateToken,
+    currentStepId: inboundResult.nextStateToken === INTERVIEW_ACTIVITY_01_STATE_TOKEN
+      ? "activity_01"
+      : null,
+    lastInboundMessageSid: input.payload.inbound_message_sid,
+  });
 
   if (
     inboundResult.handoffToInterview &&
@@ -544,6 +527,90 @@ async function insertConversationEvent(params: {
 
   if (error && !isDuplicateKeyError(error)) {
     throw new Error("Unable to persist onboarding conversation event.");
+  }
+}
+
+async function enqueueOnboardingOutboundPlan(params: {
+  supabase: EngineDispatchInput["supabase"];
+  userId: string;
+  toE164: string;
+  fallbackFromE164: string | null;
+  correlationId: string | null;
+  inboundMessageSid: string;
+  outboundPlan: OnboardingOutboundPlanStep[];
+  twilio: OutboundTwilioConfig;
+}): Promise<void> {
+  const baseTimestampMs = Date.now();
+  let delayMs = 0;
+
+  for (const step of params.outboundPlan) {
+    if (step.kind === "delay") {
+      delayMs += step.ms;
+      continue;
+    }
+
+    const runAtIso = new Date(baseTimestampMs + delayMs).toISOString();
+    await enqueueAndRecordOutboundMessageJob({
+      supabase: params.supabase,
+      userId: params.userId,
+      toE164: params.toE164,
+      fallbackFromE164: params.fallbackFromE164,
+      correlationId: params.correlationId,
+      idempotencyKey: `onboarding:${step.message_key}:${params.userId}:${params.inboundMessageSid}`,
+      messageKey: step.message_key,
+      body: step.body,
+      runAtIso,
+      twilio: params.twilio,
+    });
+  }
+}
+
+async function enqueueAndRecordOutboundMessageJob(params: {
+  supabase: EngineDispatchInput["supabase"];
+  userId: string;
+  toE164: string;
+  fallbackFromE164: string | null;
+  correlationId: string | null;
+  idempotencyKey: string;
+  messageKey: OnboardingOutboundMessageKey;
+  body: string;
+  runAtIso: string;
+  twilio: OutboundTwilioConfig;
+}): Promise<void> {
+  const encryptedBody = await encryptBody(params.supabase, params.body, params.twilio.encryptionKey);
+  const resolvedFromE164 = params.twilio.fromE164 ?? params.fallbackFromE164 ?? "";
+
+  if (!resolvedFromE164) {
+    throw new Error("Unable to resolve outbound from_e164 for onboarding delivery.");
+  }
+
+  const { error: outboundJobError } = await params.supabase
+    .from("sms_outbound_jobs")
+    .insert(
+      {
+        user_id: params.userId,
+        to_e164: params.toE164,
+        from_e164: resolvedFromE164,
+        body_ciphertext: encryptedBody,
+        body_iv: null,
+        body_tag: null,
+        key_version: 1,
+        purpose: onboardingOutboundPurpose(params.messageKey),
+        status: "pending",
+        twilio_message_sid: null,
+        attempts: 0,
+        next_attempt_at: null,
+        last_error: null,
+        last_status_at: null,
+        run_at: params.runAtIso,
+        correlation_id: params.correlationId,
+        idempotency_key: params.idempotencyKey,
+      },
+      { onConflict: "idempotency_key", ignoreDuplicates: true },
+    );
+
+  if (outboundJobError && !isDuplicateKeyError(outboundJobError)) {
+    throw new Error("Unable to persist onboarding outbound job.");
   }
 }
 

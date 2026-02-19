@@ -76,8 +76,28 @@ export function detectOnboardingIntent(inputText: string): OnboardingIntentDecis
     };
   }
 
+  if (
+    normalized === "yes" ||
+    normalized === "y" ||
+    normalized === "start" ||
+    normalized === "unstop" ||
+    normalized === "ok" ||
+    normalized === "okay" ||
+    normalized === "sure" ||
+    normalized === "yep" ||
+    normalized === "yeah" ||
+    normalized === "affirmative" ||
+    normalized === "ready" ||
+    normalized === "lets go"
+  ) {
+    return {
+      advance: true,
+      pause: false,
+    };
+  }
+
   return {
-    advance: true,
+    advance: false,
     pause: false,
   };
 }
@@ -90,6 +110,13 @@ export function handleOnboardingInbound(params: {
 
   if (params.stateToken === ONBOARDING_AWAITING_OPENING_RESPONSE) {
     if (intent.pause) {
+      return {
+        nextStateToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
+        outboundPlan: [buildSendStep("onboarding_later", ONBOARDING_LATER)],
+      };
+    }
+
+    if (!intent.advance) {
       return {
         nextStateToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
         outboundPlan: [buildSendStep("onboarding_later", ONBOARDING_LATER)],
@@ -111,6 +138,7 @@ export function handleOnboardingInbound(params: {
         buildSendStep("onboarding_message_2", ONBOARDING_MESSAGE_2),
         { kind: "delay", ms: 8000 },
         buildSendStep("onboarding_message_3", ONBOARDING_MESSAGE_3),
+        { kind: "delay", ms: 8000 },
         buildSendStep("onboarding_message_4", ONBOARDING_MESSAGE_4),
       ],
     };
@@ -202,6 +230,7 @@ export async function sendOnboardingBurst(params: {
     body: ONBOARDING_MESSAGE_3,
     idempotencyKey: `${params.burstIdempotencyKeyPrefix}:message_3`,
   });
+  await delay(8000);
 
   await params.sendMessage({
     messageKey: "onboarding_message_4",

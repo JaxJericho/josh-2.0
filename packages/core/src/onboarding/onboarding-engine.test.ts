@@ -11,11 +11,12 @@ import {
 } from "./onboarding-engine";
 
 describe("onboarding intent detection", () => {
-  it("advances on affirmative and arbitrary responses", () => {
+  it("advances only on affirmative opening responses", () => {
     expect(detectOnboardingIntent("yes")).toEqual({ advance: true, pause: false });
     expect(detectOnboardingIntent("ok")).toEqual({ advance: true, pause: false });
     expect(detectOnboardingIntent("sure")).toEqual({ advance: true, pause: false });
-    expect(detectOnboardingIntent("random text")).toEqual({ advance: true, pause: false });
+    expect(detectOnboardingIntent("START")).toEqual({ advance: true, pause: false });
+    expect(detectOnboardingIntent("random text")).toEqual({ advance: false, pause: false });
   });
 
   it("pauses on explicit later/no responses", () => {
@@ -26,7 +27,7 @@ describe("onboarding intent detection", () => {
 });
 
 describe("onboarding state transitions", () => {
-  it("opening reply advances to explanation token unless paused", () => {
+  it("opening reply advances only on affirmative input", () => {
     const advance = handleOnboardingInbound({
       stateToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
       inputText: "yes",
@@ -48,6 +49,16 @@ describe("onboarding state transitions", () => {
       message_key: "onboarding_explanation",
     });
 
+    const nonAffirmative = handleOnboardingInbound({
+      stateToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
+      inputText: "tell me more",
+    });
+    expect(nonAffirmative.nextStateToken).toBe(ONBOARDING_AWAITING_OPENING_RESPONSE);
+    expect(nonAffirmative.outboundPlan[0]).toMatchObject({
+      kind: "send",
+      message_key: "onboarding_later",
+    });
+
     const pause = handleOnboardingInbound({
       stateToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
       inputText: "later",
@@ -66,7 +77,7 @@ describe("onboarding state transitions", () => {
     });
 
     expect(result.nextStateToken).toBe(ONBOARDING_AWAITING_INTERVIEW_START);
-    expect(result.outboundPlan).toHaveLength(6);
+    expect(result.outboundPlan).toHaveLength(7);
     expect(result.outboundPlan[0]).toMatchObject({
       kind: "send",
       message_key: "onboarding_message_1",
@@ -81,7 +92,8 @@ describe("onboarding state transitions", () => {
       kind: "send",
       message_key: "onboarding_message_3",
     });
-    expect(result.outboundPlan[5]).toMatchObject({
+    expect(result.outboundPlan[5]).toEqual({ kind: "delay", ms: 8000 });
+    expect(result.outboundPlan[6]).toMatchObject({
       kind: "send",
       message_key: "onboarding_message_4",
     });
@@ -141,7 +153,7 @@ describe("onboarding send orchestration", () => {
     expect(persistState).not.toHaveBeenCalled();
   });
 
-  it("sends onboarding burst with two deterministic 8000ms delays", async () => {
+  it("sends onboarding burst with deterministic 8000ms delays between each explanation message", async () => {
     const sendMessage = vi.fn(async () => undefined);
     const persistState = vi.fn(async () => undefined);
     const delay = vi.fn(async () => undefined);
@@ -156,9 +168,10 @@ describe("onboarding send orchestration", () => {
 
     expect(result.didSendBurst).toBe(true);
     expect(sendMessage).toHaveBeenCalledTimes(4);
-    expect(delay).toHaveBeenCalledTimes(2);
+    expect(delay).toHaveBeenCalledTimes(3);
     expect(delay).toHaveBeenNthCalledWith(1, 8000);
     expect(delay).toHaveBeenNthCalledWith(2, 8000);
+    expect(delay).toHaveBeenNthCalledWith(3, 8000);
     expect(persistState).toHaveBeenCalledWith({
       nextStateToken: ONBOARDING_AWAITING_INTERVIEW_START,
     });

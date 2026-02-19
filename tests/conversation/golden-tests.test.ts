@@ -165,6 +165,7 @@ describe("conversation golden tests", () => {
       { kind: "send", message_key: "onboarding_message_2", body: ONBOARDING_MESSAGE_2 },
       { kind: "delay", ms: 8000 },
       { kind: "send", message_key: "onboarding_message_3", body: ONBOARDING_MESSAGE_3 },
+      { kind: "delay", ms: 8000 },
       { kind: "send", message_key: "onboarding_message_4", body: ONBOARDING_MESSAGE_4 },
     ]);
 
@@ -190,6 +191,7 @@ describe("conversation golden tests", () => {
     ]);
     expect(delay).toHaveBeenNthCalledWith(1, 8000);
     expect(delay).toHaveBeenNthCalledWith(2, 8000);
+    expect(delay).toHaveBeenNthCalledWith(3, 8000);
   });
 
   it("rich interview path completes in fewer exchanges than sparse path", async () => {
