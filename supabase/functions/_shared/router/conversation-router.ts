@@ -321,17 +321,28 @@ function classifyInterviewingStateToken(
 export async function dispatchConversationRoute(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
-  switch (input.decision.route) {
+  const resolvedRoute = resolveRouteForState(input.decision.state);
+  if (resolvedRoute !== input.decision.route) {
+    console.warn("conversation_router.route_corrected", {
+      user_id: input.decision.user_id,
+      requested_route: input.decision.route,
+      resolved_route: resolvedRoute,
+      session_mode: input.decision.state.mode,
+      session_state_token: input.decision.state.state_token,
+    });
+  }
+
+  switch (resolvedRoute) {
     case "profile_interview_engine": {
       try {
         const result = await runProfileInterviewEngine(input);
-        assertDispatchedEngineMatchesRoute(input.decision.route, result.engine);
+        assertDispatchedEngineMatchesRoute(resolvedRoute, result.engine);
         return result;
       } catch (error) {
         const err = error as Error;
         console.error("conversation_router.dispatch_failed", {
           user_id: input.decision.user_id,
-          route: input.decision.route,
+          route: resolvedRoute,
           session_mode: input.decision.state.mode,
           session_state_token: input.decision.state.state_token,
           name: err?.name ?? "Error",
@@ -343,13 +354,13 @@ export async function dispatchConversationRoute(
     case "onboarding_engine": {
       try {
         const result = await runOnboardingEngine(input);
-        assertDispatchedEngineMatchesRoute(input.decision.route, result.engine);
+        assertDispatchedEngineMatchesRoute(resolvedRoute, result.engine);
         return result;
       } catch (error) {
         const err = error as Error;
         console.error("conversation_router.dispatch_failed", {
           user_id: input.decision.user_id,
-          route: input.decision.route,
+          route: resolvedRoute,
           session_mode: input.decision.state.mode,
           session_state_token: input.decision.state.state_token,
           name: err?.name ?? "Error",
@@ -360,7 +371,7 @@ export async function dispatchConversationRoute(
     }
     case "default_engine": {
       const result = await runDefaultEngine(input);
-      assertDispatchedEngineMatchesRoute(input.decision.route, result.engine);
+      assertDispatchedEngineMatchesRoute(resolvedRoute, result.engine);
       return result;
     }
     default:

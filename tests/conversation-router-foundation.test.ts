@@ -101,6 +101,17 @@ describe("conversation router foundation", () => {
     expect(result.engine).toBe("default_engine");
     expect(result.reply_message).toContain("default engine selected");
   });
+
+  it("dispatches by normalized state route when decision route is stale", async () => {
+    const decision = sampleDecision("profile_interview_engine");
+    const result = await dispatchConversationRoute({
+      supabase: buildSupabaseMock({ user: null, session: null, profile: null }),
+      decision,
+      payload: samplePayload(),
+    });
+
+    expect(result.engine).toBe("default_engine");
+  });
 });
 
 function samplePayload(): NormalizedInboundMessagePayload {

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 const SCRIPT_TAG = "staging-onboarding-e2e";
@@ -41,6 +42,10 @@ const onboardingOpeningStateToken = loadStringConstant({
   filePath: ONBOARDING_CONSTANTS_PATH,
   constName: "ONBOARDING_AWAITING_OPENING_RESPONSE",
 });
+const onboardingExplanationStateToken = loadStringConstant({
+  filePath: ONBOARDING_CONSTANTS_PATH,
+  constName: "ONBOARDING_AWAITING_EXPLANATION_RESPONSE",
+});
 const canonicalClaimedWaitlistStatus = loadClaimedWaitlistStatus({
   filePath: WAITLIST_SHARED_CONTRACT_PATH,
 });
@@ -64,6 +69,9 @@ const runReport = {
   waitlist_last_notified_at: null,
   session_state_token: null,
   sms_messages_since_reference: null,
+  start_transition_checked: false,
+  post_start_state_token: null,
+  onboarding_jobs_since_start: null,
   reference_timestamp: null,
   legacy_recovery_applied: false,
 };
@@ -122,6 +130,13 @@ async function main() {
 
   if (outboundSmsCount < 1) {
     fail("Expected at least one outbound sms_messages row after waitlist claim.");
+  }
+
+  if (hasArg("--exercise-start")) {
+    await verifyStartAdvancesOnboarding({
+      openingStateToken: onboardingOpeningStateToken,
+      expectedNextStateToken: onboardingExplanationStateToken,
+    });
   }
 
   printReport({
@@ -188,6 +203,7 @@ async function assertWaitlistRegion() {
 }
 
 async function resetUserState() {
+  await deleteRowsByUserId("conversation_events");
   await deleteRowsByUserId("profile_events");
   await deleteRowsByUserId("sms_messages");
   await deleteRowsByUserId("sms_outbound_jobs", { optionalTable: true });
@@ -197,6 +213,7 @@ async function resetUserState() {
 async function verifyResetCounts() {
   const requiredTables = [
     "conversation_sessions",
+    "conversation_events",
     "sms_messages",
     "profile_events",
   ];
@@ -523,6 +540,110 @@ async function countOutboundSmsSinceActivation(params) {
   return Number(count ?? 0);
 }
 
+async function verifyStartAdvancesOnboarding(params) {
+  const currentSession = await fetchConversationSessionOrNull();
+  if (!currentSession?.id) {
+    fail("Missing conversation session before START verification.");
+  }
+
+  if (currentSession.state_token !== params.openingStateToken) {
+    warn(
+      `START verification expected '${params.openingStateToken}' but found '${String(currentSession.state_token ?? "null")}'. Normalizing session token for deterministic check.`,
+    );
+
+    const { error: normalizeError } = await supabase
+      .from("conversation_sessions")
+      .update({
+        mode: "interviewing",
+        state_token: params.openingStateToken,
+        current_step_id: null,
+        last_inbound_message_sid: null,
+      })
+      .eq("id", currentSession.id);
+
+    if (normalizeError) {
+      fail(`Unable to normalize session before START verification: ${formatSupabaseError(normalizeError)}`);
+    }
+  }
+
+  const sentAtIso = new Date().toISOString();
+  await invokeSignedTwilioInbound({ body: "START" });
+
+  const postStartSession = await fetchConversationSessionOrNull();
+  runReport.start_transition_checked = true;
+  runReport.post_start_state_token = postStartSession?.state_token ?? null;
+
+  if (!postStartSession?.id) {
+    fail("Conversation session disappeared after START verification.");
+  }
+  if (String(postStartSession.state_token).startsWith("interview:")) {
+    fail(
+      `START incorrectly handed off to interview. Expected onboarding token, got '${postStartSession.state_token}'.`,
+    );
+  }
+  if (postStartSession.state_token !== params.expectedNextStateToken) {
+    fail(
+      `START did not advance to expected onboarding token. Expected '${params.expectedNextStateToken}', got '${postStartSession.state_token}'.`,
+    );
+  }
+
+  const onboardingJobsSinceStart = await countOnboardingOutboundJobsSince({
+    referenceTimestampIso: sentAtIso,
+  });
+  runReport.onboarding_jobs_since_start = onboardingJobsSinceStart;
+
+  if (onboardingJobsSinceStart < 1) {
+    fail("Expected at least one onboarding sms_outbound_jobs row after START verification.");
+  }
+}
+
+async function invokeSignedTwilioInbound(params) {
+  const authToken = requiredEnv("TWILIO_AUTH_TOKEN");
+  const endpoint = `${stripTrailingSlash(supabaseUrl)}/functions/v1/twilio-inbound`;
+  const toE164 = readOptionalEnv("TWILIO_FROM_NUMBER") ?? TEST_PHONE_E164;
+  const messageSid = buildTwilioMessageSid();
+
+  const payload = new URLSearchParams({
+    From: TEST_PHONE_E164,
+    To: toE164,
+    Body: params.body,
+    MessageSid: messageSid,
+    NumMedia: "0",
+  });
+
+  const signature = computeTwilioSignature(endpoint, payload, authToken);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "x-twilio-signature": signature,
+    },
+    body: payload.toString(),
+  });
+
+  const responseBody = await response.text();
+  if (!response.ok) {
+    fail(
+      `twilio-inbound START verification failed with HTTP ${response.status}: ${truncate(responseBody, 400)}`,
+    );
+  }
+}
+
+async function countOnboardingOutboundJobsSince(params) {
+  const { count, error } = await supabase
+    .from("sms_outbound_jobs")
+    .select("id", { head: true, count: "exact" })
+    .eq("user_id", TEST_USER_ID)
+    .like("purpose", "onboarding_%")
+    .gte("created_at", params.referenceTimestampIso);
+
+  if (error) {
+    fail(`Unable to count onboarding sms_outbound_jobs rows: ${formatSupabaseError(error)}`);
+  }
+
+  return Number(count ?? 0);
+}
+
 async function deleteRowsByUserId(table, options = {}) {
   const { error } = await supabase
     .from(table)
@@ -566,6 +687,10 @@ function printReport(params) {
   runReport.sms_messages_since_reference = params.outboundSmsCount;
   runReport.reference_timestamp = params.referenceTimestampIso;
   emitReport("PASS");
+}
+
+function hasArg(flag) {
+  return process.argv.includes(flag);
 }
 
 function requiredEnv(name) {
@@ -724,6 +849,23 @@ function parseJson(raw) {
   }
 }
 
+function buildTwilioMessageSid() {
+  const randomHex = crypto.randomBytes(16).toString("hex");
+  return `SM${randomHex}`;
+}
+
+function computeTwilioSignature(url, params, authToken) {
+  const keys = Array.from(new Set(params.keys())).sort();
+  let base = url;
+  for (const key of keys) {
+    const values = params.getAll(key);
+    for (const value of values) {
+      base += key + value;
+    }
+  }
+  return crypto.createHmac("sha1", authToken).update(base).digest("base64");
+}
+
 function isMissingTableError(error) {
   const code = String(error?.code ?? "");
   const details = String(error?.details ?? "");
@@ -784,6 +926,9 @@ function emitReport(outcome) {
   const lastNotifiedAt = runReport.waitlist_last_notified_at ?? "null";
   const stateToken = runReport.session_state_token ?? "n/a";
   const smsCount = runReport.sms_messages_since_reference ?? "n/a";
+  const startChecked = runReport.start_transition_checked ? "true" : "false";
+  const postStartStateToken = runReport.post_start_state_token ?? "n/a";
+  const onboardingJobsSinceStart = runReport.onboarding_jobs_since_start ?? "n/a";
   const referenceTimestamp = runReport.reference_timestamp ?? "n/a";
   const legacyRecoveryApplied = runReport.legacy_recovery_applied ? "true" : "false";
 
@@ -798,6 +943,9 @@ function emitReport(outcome) {
   console.log(`[${SCRIPT_TAG}] session_state_token=${stateToken}`);
   console.log(
     `[${SCRIPT_TAG}] sms_messages_since_reference=${smsCount} reference_timestamp=${referenceTimestamp}`,
+  );
+  console.log(
+    `[${SCRIPT_TAG}] start_transition_checked=${startChecked} post_start_state_token=${postStartStateToken} onboarding_jobs_since_start=${onboardingJobsSinceStart}`,
   );
   console.log(`[${SCRIPT_TAG}] legacy_recovery_applied=${legacyRecoveryApplied}`);
 }
