@@ -59,8 +59,29 @@ select
   (select count(*) from public.conversation_sessions where user_id = '221956bd-c214-4e61-bb95-223d2136b60a') as conversation_sessions_count,
   (select count(*) from public.sms_messages where user_id = '221956bd-c214-4e61-bb95-223d2136b60a') as sms_messages_count,
   (select count(*) from public.profiles where user_id = '221956bd-c214-4e61-bb95-223d2136b60a') as profiles_count,
-  (select count(*) from public.profile_events where user_id = '221956bd-c214-4e61-bb95-223d2136b60a') as profile_events_count,
-  (select count(*) from public.sms_outbound_jobs where user_id = '221956bd-c214-4e61-bb95-223d2136b60a') as sms_outbound_jobs_count;
+  (select count(*) from public.profile_events where user_id = '221956bd-c214-4e61-bb95-223d2136b60a') as profile_events_count;
+```
+
+Optional check if `public.sms_outbound_jobs` exists:
+
+```sql
+do $$
+declare
+  outbound_jobs_count bigint;
+begin
+  if to_regclass('public.sms_outbound_jobs') is null then
+    raise notice 'sms_outbound_jobs table not present; skip count check';
+    return;
+  end if;
+
+  select count(*)
+  into outbound_jobs_count
+  from public.sms_outbound_jobs
+  where user_id = '221956bd-c214-4e61-bb95-223d2136b60a';
+
+  raise notice 'sms_outbound_jobs_count=%', outbound_jobs_count;
+end
+$$;
 ```
 
 ## 2) Ensure `waitlist_entries` Eligibility
