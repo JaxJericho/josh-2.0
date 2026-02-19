@@ -169,36 +169,25 @@ export async function runOnboardingEngine(
     inputText: input.payload.body_raw,
   });
 
-  if (onboardingStateToken === ONBOARDING_AWAITING_EXPLANATION_RESPONSE) {
-    await enqueueOnboardingOutboundPlan({
+  // Spec: all onboarding steps use in-process sequential delivery via
+  // Twilio REST API with real delays — NOT the outbound job queue.
+  for (const step of inboundResult.outboundPlan) {
+    if (step.kind === "delay") {
+      await new Promise((r) => setTimeout(r, step.ms));
+      continue;
+    }
+
+    await sendAndRecordOutboundMessage({
       supabase: input.supabase,
       userId: input.decision.user_id,
       toE164: input.payload.from_e164,
       fallbackFromE164: input.payload.to_e164,
       correlationId: input.payload.inbound_message_id,
-      inboundMessageSid: input.payload.inbound_message_sid,
-      outboundPlan: inboundResult.outboundPlan,
+      idempotencyKey: `onboarding:${step.message_key}:${input.decision.user_id}:${input.payload.inbound_message_sid}`,
+      messageKey: step.message_key,
+      body: step.body,
       twilio,
     });
-  } else {
-    for (const step of inboundResult.outboundPlan) {
-      if (step.kind === "delay") {
-        await new Promise((r) => setTimeout(r, step.ms));
-        continue;
-      }
-
-      await sendAndRecordOutboundMessage({
-        supabase: input.supabase,
-        userId: input.decision.user_id,
-        toE164: input.payload.from_e164,
-        fallbackFromE164: input.payload.to_e164,
-        correlationId: input.payload.inbound_message_id,
-        idempotencyKey: `onboarding:${step.message_key}:${input.decision.user_id}:${input.payload.inbound_message_sid}`,
-        messageKey: step.message_key,
-        body: step.body,
-        twilio,
-      });
-    }
   }
 
   await persistConversationSessionState({

@@ -11,12 +11,19 @@ import {
 } from "./onboarding-engine";
 
 describe("onboarding intent detection", () => {
-  it("advances only on affirmative opening responses", () => {
+  it("advances on affirmative opening responses", () => {
     expect(detectOnboardingIntent("yes")).toEqual({ advance: true, pause: false });
     expect(detectOnboardingIntent("ok")).toEqual({ advance: true, pause: false });
     expect(detectOnboardingIntent("sure")).toEqual({ advance: true, pause: false });
     expect(detectOnboardingIntent("START")).toEqual({ advance: true, pause: false });
-    expect(detectOnboardingIntent("random text")).toEqual({ advance: false, pause: false });
+  });
+
+  it("advances on ambiguous or neutral replies (spec: ambiguous advances)", () => {
+    expect(detectOnboardingIntent("random text")).toEqual({ advance: true, pause: false });
+    expect(detectOnboardingIntent("sounds good")).toEqual({ advance: true, pause: false });
+    expect(detectOnboardingIntent("tell me more")).toEqual({ advance: true, pause: false });
+    expect(detectOnboardingIntent("awesome")).toEqual({ advance: true, pause: false });
+    expect(detectOnboardingIntent("sweet")).toEqual({ advance: true, pause: false });
   });
 
   it("pauses on explicit later/no responses", () => {
@@ -49,14 +56,15 @@ describe("onboarding state transitions", () => {
       message_key: "onboarding_explanation",
     });
 
-    const nonAffirmative = handleOnboardingInbound({
+    // Spec: ambiguous replies advance the flow
+    const ambiguous = handleOnboardingInbound({
       stateToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
       inputText: "tell me more",
     });
-    expect(nonAffirmative.nextStateToken).toBe(ONBOARDING_AWAITING_OPENING_RESPONSE);
-    expect(nonAffirmative.outboundPlan[0]).toMatchObject({
+    expect(ambiguous.nextStateToken).toBe(ONBOARDING_AWAITING_EXPLANATION_RESPONSE);
+    expect(ambiguous.outboundPlan[0]).toMatchObject({
       kind: "send",
-      message_key: "onboarding_later",
+      message_key: "onboarding_explanation",
     });
 
     const pause = handleOnboardingInbound({
@@ -96,6 +104,29 @@ describe("onboarding state transitions", () => {
     expect(result.outboundPlan[6]).toMatchObject({
       kind: "send",
       message_key: "onboarding_message_4",
+    });
+  });
+
+  it("explanation reply pauses on explicit negative (no/later)", () => {
+    const pause = handleOnboardingInbound({
+      stateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
+      inputText: "no",
+    });
+    expect(pause.nextStateToken).toBe(ONBOARDING_AWAITING_EXPLANATION_RESPONSE);
+    expect(pause.outboundPlan).toHaveLength(1);
+    expect(pause.outboundPlan[0]).toMatchObject({
+      kind: "send",
+      message_key: "onboarding_later",
+    });
+
+    const later = handleOnboardingInbound({
+      stateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
+      inputText: "later",
+    });
+    expect(later.nextStateToken).toBe(ONBOARDING_AWAITING_EXPLANATION_RESPONSE);
+    expect(later.outboundPlan[0]).toMatchObject({
+      kind: "send",
+      message_key: "onboarding_later",
     });
   });
 
