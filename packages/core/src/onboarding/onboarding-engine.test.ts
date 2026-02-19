@@ -38,6 +38,16 @@ describe("onboarding state transitions", () => {
       message_key: "onboarding_explanation",
     });
 
+    const startAdvance = handleOnboardingInbound({
+      stateToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
+      inputText: "START",
+    });
+    expect(startAdvance.nextStateToken).toBe(ONBOARDING_AWAITING_EXPLANATION_RESPONSE);
+    expect(startAdvance.outboundPlan[0]).toMatchObject({
+      kind: "send",
+      message_key: "onboarding_explanation",
+    });
+
     const pause = handleOnboardingInbound({
       stateToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
       inputText: "later",

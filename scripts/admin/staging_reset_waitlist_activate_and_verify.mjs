@@ -555,6 +555,32 @@ async function applyLegacyOnboardingRecovery(params) {
     }
   }
 
+  const recoverySession = await fetchConversationSessionOrNull();
+  if (!recoverySession?.id) {
+    fail("Unable to load conversation session after legacy recovery bootstrap.");
+  }
+
+  const { error: insertOpeningEventError } = await supabase
+    .from("conversation_events")
+    .insert({
+      conversation_session_id: recoverySession.id,
+      user_id: TEST_USER_ID,
+      profile_id: null,
+      event_type: "onboarding_opening_sent",
+      step_token: params.expectedStateToken,
+      twilio_message_sid: null,
+      payload: {
+        source: "staging_harness_legacy_recovery",
+      },
+      idempotency_key: onboardingOpeningEventIdempotencyKey(TEST_USER_ID),
+    });
+
+  if (insertOpeningEventError && insertOpeningEventError.code !== "23505") {
+    fail(
+      `Unable to insert legacy recovery opening event: ${formatSupabaseError(insertOpeningEventError)}`,
+    );
+  }
+
   const fromE164 = readOptionalEnv("TWILIO_FROM_NUMBER") ?? TEST_PHONE_E164;
   const { error: insertMessageError } = await supabase
     .from("sms_messages")
@@ -954,6 +980,10 @@ function parseJson(raw) {
 function buildTwilioMessageSid() {
   const randomHex = crypto.randomBytes(16).toString("hex");
   return `SM${randomHex}`;
+}
+
+function onboardingOpeningEventIdempotencyKey(userId) {
+  return `onboarding:event:opening:${userId}`;
 }
 
 function computeTwilioSignature(url, params, authToken) {

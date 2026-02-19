@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import { runOnboardingEngine } from "../../supabase/functions/_shared/engines/onboarding-engine";
+import {
+  resolveOnboardingStateForInbound,
+  runOnboardingEngine,
+} from "../../supabase/functions/_shared/engines/onboarding-engine";
 
 describe("onboarding engine runtime idempotency", () => {
   it("does not re-advance or resend when inbound MessageSid is replayed", async () => {
@@ -70,5 +73,29 @@ describe("onboarding engine runtime idempotency", () => {
 
     expect(result.engine).toBe("onboarding_engine");
     expect(result.reply_message).toBeNull();
+  });
+});
+
+describe("onboarding runtime state-token resolution", () => {
+  it("prefers routed onboarding token when persisted state drifts", () => {
+    const resolved = resolveOnboardingStateForInbound({
+      routedStateToken: "onboarding:awaiting_opening_response",
+      persistedStateToken: "interview:motive_01",
+      userId: "usr_123",
+      inboundMessageSid: "SM_123",
+    });
+
+    expect(resolved).toBe("onboarding:awaiting_opening_response");
+  });
+
+  it("throws when routed token is not an onboarding token", () => {
+    expect(() =>
+      resolveOnboardingStateForInbound({
+        routedStateToken: "interview:motive_01",
+        persistedStateToken: "onboarding:awaiting_opening_response",
+        userId: "usr_123",
+        inboundMessageSid: "SM_123",
+      }))
+      .toThrowError("Invalid onboarding state token 'interview:motive_01'.");
   });
 });
