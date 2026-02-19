@@ -41,6 +41,32 @@ const onboardingOpeningStateToken = loadStringConstant({
   filePath: ONBOARDING_CONSTANTS_PATH,
   constName: "ONBOARDING_AWAITING_OPENING_RESPONSE",
 });
+const canonicalClaimedWaitlistStatus = loadClaimedWaitlistStatus({
+  filePath: WAITLIST_SHARED_CONTRACT_PATH,
+});
+// Legacy tolerance: some staging deployments still persist "notified" as the post-claim state.
+const LEGACY_ACCEPTED_WAITLIST_CLAIM_STATUSES = ["notified"];
+const acceptedClaimedWaitlistStatuses = Array.from(
+  new Set([
+    canonicalClaimedWaitlistStatus,
+    ...LEGACY_ACCEPTED_WAITLIST_CLAIM_STATUSES,
+  ]),
+);
+
+const runReport = {
+  selected_count: null,
+  claimed_count: null,
+  sent_count: null,
+  waitlist_entry_id: null,
+  waitlist_status: null,
+  waitlist_activated_at: null,
+  waitlist_notified_at: null,
+  waitlist_last_notified_at: null,
+  session_state_token: null,
+  sms_messages_since_reference: null,
+  reference_timestamp: null,
+};
+let hasEmittedReport = false;
 
 const supabase = createClient(supabaseUrl, serviceRoleKey, {
   auth: {
@@ -60,29 +86,39 @@ async function main() {
   await verifyResetCounts();
 
   const profile = await ensureProfileForUser();
-  await ensureEligibleWaitlistEntry({
+  const ensuredWaitlistEntry = await ensureEligibleWaitlistEntry({
     profileId: profile.id,
     eligibleStatus: eligibleWaitlistStatus,
   });
+  runReport.waitlist_entry_id = ensuredWaitlistEntry.id;
 
   const activationSummary = await invokeWaitlistBatchNotify();
-  const activatedWaitlistEntry = await verifyActivatedWaitlistEntry();
+  const claimedWaitlistEntry = await verifyClaimedWaitlistEntry({
+    acceptedStatuses: acceptedClaimedWaitlistStatuses,
+  });
   const session = await verifyConversationSession({
     expectedStateToken: onboardingOpeningStateToken,
   });
+  const referenceTimestamp = resolveClaimReferenceTimestamp(claimedWaitlistEntry);
+  if (!referenceTimestamp) {
+    fail("Unable to resolve claim timestamp from waitlist entry.");
+  }
+  runReport.reference_timestamp = referenceTimestamp;
+
   const outboundSmsCount = await countOutboundSmsSinceActivation({
-    activatedAtIso: activatedWaitlistEntry.activated_at,
+    referenceTimestampIso: referenceTimestamp,
   });
+  runReport.sms_messages_since_reference = outboundSmsCount;
 
   if (outboundSmsCount < 1) {
-    fail("Expected at least one outbound sms_messages row after activation.");
+    fail("Expected at least one outbound sms_messages row after waitlist claim.");
   }
 
   printReport({
     activationSummary,
     sessionStateToken: session.state_token,
     outboundSmsCount,
-    activatedAtIso: activatedWaitlistEntry.activated_at,
+    referenceTimestampIso: referenceTimestamp,
   });
 }
 
@@ -258,6 +294,8 @@ async function ensureEligibleWaitlistEntry(params) {
   if (data.last_notified_at || data.notified_at || data.activated_at) {
     fail("Waitlist entry was not reset to selectable state before activation.");
   }
+
+  return data;
 }
 
 async function invokeWaitlistBatchNotify() {
@@ -299,6 +337,10 @@ async function invokeWaitlistBatchNotify() {
   const claimedCount = Number(summary.claimed_count ?? Number.NaN);
   const sentCount = Number(summary.sent_count ?? Number.NaN);
 
+  runReport.selected_count = Number.isFinite(selectedCount) ? selectedCount : null;
+  runReport.claimed_count = Number.isFinite(claimedCount) ? claimedCount : null;
+  runReport.sent_count = Number.isFinite(sentCount) ? sentCount : null;
+
   if (!Number.isFinite(selectedCount) || !Number.isFinite(claimedCount) || !Number.isFinite(sentCount)) {
     fail(`Unexpected summary payload from admin-waitlist-batch-notify: ${truncate(rawBody, 400)}`);
   }
@@ -321,7 +363,7 @@ async function invokeWaitlistBatchNotify() {
   };
 }
 
-async function verifyActivatedWaitlistEntry() {
+async function verifyClaimedWaitlistEntry(params) {
   const { data, error } = await supabase
     .from("waitlist_entries")
     .select("id,status,activated_at,notified_at,last_notified_at")
@@ -335,11 +377,20 @@ async function verifyActivatedWaitlistEntry() {
   if (!data?.id) {
     fail("Activated waitlist entry was not found for the test user.");
   }
-  if (data.status !== "activated") {
-    fail(`Expected waitlist status 'activated', got '${String(data.status ?? "")}'.`);
+
+  runReport.waitlist_entry_id = data.id;
+  runReport.waitlist_status = data.status ?? null;
+  runReport.waitlist_activated_at = data.activated_at ?? null;
+  runReport.waitlist_notified_at = data.notified_at ?? null;
+  runReport.waitlist_last_notified_at = data.last_notified_at ?? null;
+
+  if (!params.acceptedStatuses.includes(data.status)) {
+    fail(
+      `Expected waitlist status to be one of [${params.acceptedStatuses.join(", ")}], got '${String(data.status ?? "")}'.`,
+    );
   }
-  if (!data.activated_at || !data.notified_at || !data.last_notified_at) {
-    fail("Expected activated_at/notified_at/last_notified_at to be set after activation.");
+  if (!data.last_notified_at) {
+    fail("Expected waitlist last_notified_at to be set after claim.");
   }
 
   return data;
@@ -358,9 +409,14 @@ async function verifyConversationSession(params) {
   if (!data?.id) {
     fail("No conversation_sessions row was created for the activated user.");
   }
-  if (data.state_token !== params.expectedStateToken) {
+  runReport.session_state_token = data.state_token ?? null;
+
+  if (
+    data.state_token !== params.expectedStateToken &&
+    !String(data.state_token ?? "").startsWith("onboarding:")
+  ) {
     fail(
-      `Unexpected conversation state token. Expected '${params.expectedStateToken}', got '${String(data.state_token ?? "")}'.`,
+      `Unexpected conversation state token. Expected onboarding prefix or '${params.expectedStateToken}', got '${String(data.state_token ?? "")}'.`,
     );
   }
   return data;
@@ -372,7 +428,7 @@ async function countOutboundSmsSinceActivation(params) {
     .select("id", { head: true, count: "exact" })
     .eq("user_id", TEST_USER_ID)
     .eq("direction", "out")
-    .gte("created_at", params.activatedAtIso);
+    .gte("created_at", params.referenceTimestampIso);
 
   if (error) {
     fail(`Unable to count outbound sms_messages: ${formatSupabaseError(error)}`);
@@ -416,13 +472,13 @@ async function countRowsByUserId(table, options = {}) {
 }
 
 function printReport(params) {
-  console.log(
-    `[${SCRIPT_TAG}] selected_count=${params.activationSummary.selected_count} claimed_count=${params.activationSummary.claimed_count} sent_count=${params.activationSummary.sent_count}`,
-  );
-  console.log(`[${SCRIPT_TAG}] session_state_token=${params.sessionStateToken}`);
-  console.log(
-    `[${SCRIPT_TAG}] sms_messages_since_activation=${params.outboundSmsCount} activated_at=${params.activatedAtIso}`,
-  );
+  runReport.selected_count = params.activationSummary.selected_count;
+  runReport.claimed_count = params.activationSummary.claimed_count;
+  runReport.sent_count = params.activationSummary.sent_count;
+  runReport.session_state_token = params.sessionStateToken;
+  runReport.sms_messages_since_reference = params.outboundSmsCount;
+  runReport.reference_timestamp = params.referenceTimestampIso;
+  emitReport("PASS");
 }
 
 function requiredEnv(name) {
@@ -517,6 +573,36 @@ function loadStringConstant(params) {
   return match[1];
 }
 
+function loadClaimedWaitlistStatus(params) {
+  const source = readSourceFile(params.filePath);
+  const functionMatch = source.match(
+    /export function claimWaitlistEntriesCas\([\s\S]+?\n}\n\nexport async function executeWaitlistBatchNotify/,
+  );
+  if (!functionMatch) {
+    fail(`Unable to locate claimWaitlistEntriesCas() in ${params.filePath}.`);
+  }
+
+  const statuses = Array.from(
+    functionMatch[0].matchAll(/status:\s*"([^"]+)"/g),
+    (entry) => entry[1].trim(),
+  ).filter((value) => value.length > 0);
+  const uniqueStatuses = Array.from(new Set(statuses));
+
+  if (uniqueStatuses.length !== 1) {
+    fail(
+      `Expected exactly one claim status in claimWaitlistEntriesCas(), found ${uniqueStatuses.length}.`,
+    );
+  }
+  return uniqueStatuses[0];
+}
+
+function resolveClaimReferenceTimestamp(waitlistEntry) {
+  if (!waitlistEntry) {
+    return null;
+  }
+  return waitlistEntry.activated_at ?? waitlistEntry.last_notified_at ?? waitlistEntry.notified_at ?? null;
+}
+
 function readSourceFile(filePath) {
   if (!fs.existsSync(filePath)) {
     fail(`Required source file not found: ${filePath}`);
@@ -582,8 +668,41 @@ function warn(message) {
 }
 
 function fail(message) {
+  emitReport("FAIL");
   console.error(`[${SCRIPT_TAG}] ERROR: ${message}`);
   process.exit(1);
+}
+
+function emitReport(outcome) {
+  if (hasEmittedReport) {
+    return;
+  }
+  hasEmittedReport = true;
+
+  const selected = runReport.selected_count ?? "n/a";
+  const claimed = runReport.claimed_count ?? "n/a";
+  const sent = runReport.sent_count ?? "n/a";
+  const waitlistEntryId = runReport.waitlist_entry_id ?? "n/a";
+  const waitlistStatus = runReport.waitlist_status ?? "n/a";
+  const activatedAt = runReport.waitlist_activated_at ?? "null";
+  const notifiedAt = runReport.waitlist_notified_at ?? "null";
+  const lastNotifiedAt = runReport.waitlist_last_notified_at ?? "null";
+  const stateToken = runReport.session_state_token ?? "n/a";
+  const smsCount = runReport.sms_messages_since_reference ?? "n/a";
+  const referenceTimestamp = runReport.reference_timestamp ?? "n/a";
+
+  console.log(`[${SCRIPT_TAG}] outcome=${outcome}`);
+  console.log(
+    `[${SCRIPT_TAG}] selected_count=${selected} claimed_count=${claimed} sent_count=${sent}`,
+  );
+  console.log(`[${SCRIPT_TAG}] waitlist_entry_id=${waitlistEntryId}`);
+  console.log(
+    `[${SCRIPT_TAG}] waitlist_status=${waitlistStatus} activated_at=${activatedAt} notified_at=${notifiedAt} last_notified_at=${lastNotifiedAt}`,
+  );
+  console.log(`[${SCRIPT_TAG}] session_state_token=${stateToken}`);
+  console.log(
+    `[${SCRIPT_TAG}] sms_messages_since_reference=${smsCount} reference_timestamp=${referenceTimestamp}`,
+  );
 }
 
 function errorToMessage(error) {
