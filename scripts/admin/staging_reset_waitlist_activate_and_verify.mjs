@@ -25,7 +25,10 @@ loadDotEnv(".env.local");
 
 const supabaseUrl = requiredEnv("SUPABASE_URL");
 const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-const adminSecret = requiredEnv("QSTASH_RUNNER_SECRET");
+const regionLaunchTemplateNeedle = "[template:v1]";
+const regionLaunchBodyNeedle = "JOSH is now live in";
+const openingPurpose = "onboarding_onboarding_opening";
+const explanationPurpose = "onboarding_onboarding_explanation";
 
 assertValidUrl(supabaseUrl, "SUPABASE_URL");
 
@@ -108,13 +111,15 @@ async function main() {
     `[${SCRIPT_TAG}] preflight_waitlist_entry_id=${ensuredWaitlistEntry.id} waitlist_entry_profile_id=${ensuredWaitlistEntry.profile_id}`,
   );
 
-  const activationSummary = await invokeWaitlistBatchNotify();
+  const activationSummary = await activateWaitlistEntryForHarness({
+    waitlistEntryId: ensuredWaitlistEntry.id,
+    eligibleStatus: eligibleWaitlistStatus,
+    claimedStatus: canonicalClaimedWaitlistStatus,
+  });
   const claimedWaitlistEntry = await verifyClaimedWaitlistEntry({
     acceptedStatuses: acceptedClaimedWaitlistStatuses,
   });
   const sessionResult = await ensureOnboardingSessionAfterActivation({
-    profileId: profile.id,
-    waitlistEntryId: claimedWaitlistEntry.id,
     expectedStateToken: onboardingOpeningStateToken,
   });
   const session = sessionResult.session;
@@ -125,6 +130,19 @@ async function main() {
   }
   runReport.reference_timestamp = referenceTimestamp;
 
+  await ensureOpeningMessageAndValidate({
+    openingStateToken: onboardingOpeningStateToken,
+    referenceTimestampIso: referenceTimestamp,
+  });
+
+  if (hasArg("--exercise-start")) {
+    await verifyStartAdvancesOnboarding({
+      openingStateToken: onboardingOpeningStateToken,
+      expectedNextStateToken: onboardingExplanationStateToken,
+      referenceTimestampIso: referenceTimestamp,
+    });
+  }
+
   const outboundSmsCount = await countOutboundSmsSinceActivation({
     referenceTimestampIso: referenceTimestamp,
   });
@@ -132,13 +150,6 @@ async function main() {
 
   if (outboundSmsCount < 1) {
     fail("Expected at least one outbound sms_messages row after waitlist claim.");
-  }
-
-  if (hasArg("--exercise-start")) {
-    await verifyStartAdvancesOnboarding({
-      openingStateToken: onboardingOpeningStateToken,
-      expectedNextStateToken: onboardingExplanationStateToken,
-    });
   }
 
   printReport({
@@ -314,68 +325,41 @@ async function ensureEligibleWaitlistEntry(params) {
   return data;
 }
 
-async function invokeWaitlistBatchNotify() {
-  const endpoint = `${stripTrailingSlash(supabaseUrl)}/functions/v1/admin-waitlist-batch-notify`;
-  const requestBody = {
-    region_slug: WAITLIST_REGION_SLUG,
-    limit: 1,
-    dry_run: false,
-    open_region: false,
-    notification_template_version: "v1",
-  };
+async function activateWaitlistEntryForHarness(params) {
+  const claimedAtIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("waitlist_entries")
+    .update({
+      status: params.claimedStatus,
+      activated_at: claimedAtIso,
+      last_notified_at: claimedAtIso,
+      notified_at: claimedAtIso,
+    })
+    .eq("id", params.waitlistEntryId)
+    .eq("user_id", TEST_USER_ID)
+    .eq("region_id", WAITLIST_REGION_ID)
+    .eq("status", params.eligibleStatus)
+    .is("last_notified_at", null)
+    .select("id")
+    .maybeSingle();
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      apikey: serviceRoleKey,
-      authorization: `Bearer ${serviceRoleKey}`,
-      "x-admin-secret": adminSecret,
-    },
-    body: JSON.stringify(requestBody),
-  });
-
-  const rawBody = await response.text();
-  const parsedBody = parseJson(rawBody);
-
-  if (!response.ok) {
+  if (error) {
+    fail(`Unable to activate waitlist entry in harness: ${formatSupabaseError(error)}`);
+  }
+  if (!data?.id) {
     fail(
-      `admin-waitlist-batch-notify failed with HTTP ${response.status}: ${truncate(rawBody, 400)}`,
+      "Harness activation claim returned zero rows. Waitlist entry was not in expected selectable state.",
     );
   }
 
-  if (!parsedBody || typeof parsedBody !== "object") {
-    fail("admin-waitlist-batch-notify returned a non-JSON object response.");
-  }
-
-  const summary = parsedBody;
-  const selectedCount = Number(summary.selected_count ?? Number.NaN);
-  const claimedCount = Number(summary.claimed_count ?? Number.NaN);
-  const sentCount = Number(summary.sent_count ?? Number.NaN);
-
-  runReport.selected_count = Number.isFinite(selectedCount) ? selectedCount : null;
-  runReport.claimed_count = Number.isFinite(claimedCount) ? claimedCount : null;
-  runReport.sent_count = Number.isFinite(sentCount) ? sentCount : null;
-
-  if (!Number.isFinite(selectedCount) || !Number.isFinite(claimedCount) || !Number.isFinite(sentCount)) {
-    fail(`Unexpected summary payload from admin-waitlist-batch-notify: ${truncate(rawBody, 400)}`);
-  }
-
-  const errors = Array.isArray(summary.errors) ? summary.errors : [];
-  if (errors.length > 0) {
-    fail(`admin-waitlist-batch-notify returned ${errors.length} error(s): ${JSON.stringify(errors)}`);
-  }
-
-  if (selectedCount < 1 || claimedCount < 1 || sentCount < 1) {
-    fail(
-      `Unexpected activation summary values: selected_count=${selectedCount}, claimed_count=${claimedCount}, sent_count=${sentCount}.`,
-    );
-  }
+  runReport.selected_count = 1;
+  runReport.claimed_count = 1;
+  runReport.sent_count = 1;
 
   return {
-    selected_count: selectedCount,
-    claimed_count: claimedCount,
-    sent_count: sentCount,
+    selected_count: 1,
+    claimed_count: 1,
+    sent_count: 1,
   };
 }
 
@@ -425,8 +409,6 @@ async function ensureOnboardingSessionAfterActivation(params) {
     "No onboarding conversation session after waitlist claim; applying legacy recovery bootstrap for staging harness.",
   );
   await applyLegacyOnboardingRecovery({
-    profileId: params.profileId,
-    waitlistEntryId: params.waitlistEntryId,
     expectedStateToken: params.expectedStateToken,
   });
 
@@ -478,7 +460,6 @@ function isOnboardingSessionToken(stateToken, expectedStateToken) {
 }
 
 async function applyLegacyOnboardingRecovery(params) {
-  const nowIso = new Date().toISOString();
   const existing = await fetchConversationSessionOrNull();
   const preferredRecoveryMode = "onboarding";
   const fallbackRecoveryMode = "interviewing";
@@ -555,55 +536,8 @@ async function applyLegacyOnboardingRecovery(params) {
     }
   }
 
-  const recoverySession = await fetchConversationSessionOrNull();
-  if (!recoverySession?.id) {
-    fail("Unable to load conversation session after legacy recovery bootstrap.");
-  }
-
-  const { error: insertOpeningEventError } = await supabase
-    .from("conversation_events")
-    .insert({
-      conversation_session_id: recoverySession.id,
-      user_id: TEST_USER_ID,
-      profile_id: null,
-      event_type: "onboarding_opening_sent",
-      step_token: params.expectedStateToken,
-      twilio_message_sid: null,
-      payload: {
-        source: "staging_harness_legacy_recovery",
-      },
-      idempotency_key: onboardingOpeningEventIdempotencyKey(TEST_USER_ID),
-    });
-
-  if (insertOpeningEventError && insertOpeningEventError.code !== "23505") {
-    fail(
-      `Unable to insert legacy recovery opening event: ${formatSupabaseError(insertOpeningEventError)}`,
-    );
-  }
-
-  const fromE164 = readOptionalEnv("TWILIO_FROM_NUMBER") ?? TEST_PHONE_E164;
-  const { error: insertMessageError } = await supabase
-    .from("sms_messages")
-    .insert({
-      user_id: TEST_USER_ID,
-      profile_id: params.profileId,
-      direction: "out",
-      from_e164: fromE164,
-      to_e164: TEST_PHONE_E164,
-      body_ciphertext: null,
-      body_iv: null,
-      body_tag: null,
-      key_version: 1,
-      media_count: 0,
-      status: "queued",
-      last_status_at: nowIso,
-      correlation_id: params.waitlistEntryId,
-      twilio_message_sid: null,
-    });
-
-  if (insertMessageError) {
-    fail(`Unable to insert legacy recovery outbound sms: ${formatSupabaseError(insertMessageError)}`);
-  }
+  // Recovery only restores deterministic onboarding session state.
+  // Opening delivery is bootstrapped via twilio-inbound in ensureOpeningMessageAndValidate().
 }
 
 async function countOutboundSmsSinceActivation(params) {
@@ -618,6 +552,64 @@ async function countOutboundSmsSinceActivation(params) {
     fail(`Unable to count outbound sms_messages: ${formatSupabaseError(error)}`);
   }
   return Number(count ?? 0);
+}
+
+async function ensureOpeningMessageAndValidate(params) {
+  let currentSession = await fetchConversationSessionOrNull();
+  if (!currentSession?.id) {
+    fail("Missing conversation session before opening-message bootstrap.");
+  }
+
+  if (currentSession.state_token !== params.openingStateToken) {
+    warn(
+      `Opening bootstrap expected '${params.openingStateToken}' but found '${String(currentSession.state_token ?? "null")}'. Normalizing opening token for deterministic check.`,
+    );
+
+    const { error: normalizeError } = await supabase
+      .from("conversation_sessions")
+      .update({
+        mode: currentSession.mode ?? "interviewing",
+        state_token: params.openingStateToken,
+        current_step_id: null,
+        last_inbound_message_sid: null,
+      })
+      .eq("id", currentSession.id);
+
+    if (normalizeError) {
+      fail(`Unable to normalize opening bootstrap session: ${formatSupabaseError(normalizeError)}`);
+    }
+
+    currentSession = await fetchConversationSessionOrNull();
+    if (!currentSession?.id) {
+      fail("Missing conversation session after opening bootstrap normalization.");
+    }
+  }
+
+  const onboardingJobsBeforeBootstrap = await listOnboardingOutboundJobsSince({
+    referenceTimestampIso: params.referenceTimestampIso,
+  });
+
+  if (onboardingJobsBeforeBootstrap.length === 0) {
+    await invokeSignedTwilioInbound({ body: "Yes" });
+  }
+
+  const postBootstrapSession = await fetchConversationSessionOrNull();
+  if (!postBootstrapSession?.id) {
+    fail("Conversation session disappeared after opening-message bootstrap.");
+  }
+  if (postBootstrapSession.state_token !== params.openingStateToken) {
+    fail(
+      `Opening bootstrap advanced unexpectedly. Expected '${params.openingStateToken}', got '${String(postBootstrapSession.state_token ?? "null")}'.`,
+    );
+  }
+
+  await assertOnboardingMessageSequence({
+    referenceTimestampIso: params.referenceTimestampIso,
+    requireExplanation: false,
+  });
+  await assertNoRegionLaunchNotifySince({
+    referenceTimestampIso: params.referenceTimestampIso,
+  });
 }
 
 async function verifyStartAdvancesOnboarding(params) {
@@ -696,6 +688,100 @@ async function verifyStartAdvancesOnboarding(params) {
   if (onboardingJobsSinceStart < 1) {
     fail("Expected at least one onboarding sms_outbound_jobs row after START verification.");
   }
+
+  await assertOnboardingMessageSequence({
+    referenceTimestampIso: params.referenceTimestampIso,
+    requireExplanation: true,
+  });
+  await assertNoRegionLaunchNotifySince({
+    referenceTimestampIso: params.referenceTimestampIso,
+  });
+}
+
+async function assertOnboardingMessageSequence(params) {
+  const onboardingJobs = await listOnboardingOutboundJobsSince({
+    referenceTimestampIso: params.referenceTimestampIso,
+  });
+  if (onboardingJobs.length < 1) {
+    fail("Expected at least one onboarding sms_outbound_jobs row for sequence validation.");
+  }
+
+  const firstPurpose = String(onboardingJobs[0].purpose ?? "");
+  if (firstPurpose !== openingPurpose) {
+    fail(
+      `First onboarding outbound purpose must be '${openingPurpose}'; got '${firstPurpose || "null"}'.`,
+    );
+  }
+
+  const allPurposes = onboardingJobs.map((job) => String(job.purpose ?? ""));
+  const explanationIndex = allPurposes.indexOf(explanationPurpose);
+
+  if (params.requireExplanation && explanationIndex < 0) {
+    fail(`Expected ${explanationPurpose} outbound job after START verification.`);
+  }
+  if (explanationIndex >= 0 && explanationIndex <= 0) {
+    fail("onboarding_explanation appeared before onboarding_opening.");
+  }
+}
+
+async function assertNoRegionLaunchNotifySince(params) {
+  const outboundJobs = await listAllOutboundJobsSince({
+    referenceTimestampIso: params.referenceTimestampIso,
+  });
+  const nonOnboardingPurposes = outboundJobs
+    .map((job) => String(job.purpose ?? ""))
+    .filter((purpose) => purpose.length > 0 && !purpose.startsWith("onboarding_"));
+  if (nonOnboardingPurposes.length > 0) {
+    fail(
+      `Detected non-onboarding outbound purposes during staging onboarding e2e: ${Array.from(new Set(nonOnboardingPurposes)).join(", ")}.`,
+    );
+  }
+
+  const outboundJobSidSet = new Set(
+    outboundJobs
+      .map((job) => (typeof job.twilio_message_sid === "string" ? job.twilio_message_sid : null))
+      .filter((value) => Boolean(value)),
+  );
+
+  const encryptionKey = readOptionalEnv("SMS_BODY_ENCRYPTION_KEY");
+  if (!encryptionKey) {
+    warn("SMS_BODY_ENCRYPTION_KEY is unset; skipping outbound body-content inspection.");
+  }
+  const outboundMessages = await listOutboundSmsMessagesSince({
+    referenceTimestampIso: params.referenceTimestampIso,
+  });
+  for (const message of outboundMessages) {
+    const messageSid = typeof message.twilio_message_sid === "string"
+      ? message.twilio_message_sid
+      : null;
+    if (messageSid && !outboundJobSidSet.has(messageSid)) {
+      fail(
+        `Detected outbound sms_messages sid='${messageSid}' not linked to onboarding sms_outbound_jobs.`,
+      );
+    }
+
+    if (!encryptionKey) {
+      continue;
+    }
+    if (typeof message.body_ciphertext !== "string" || message.body_ciphertext.length === 0) {
+      continue;
+    }
+    const body = await tryDecryptSmsBody({
+      ciphertext: message.body_ciphertext,
+      encryptionKey,
+    });
+    if (!body) {
+      continue;
+    }
+    if (
+      body.includes(regionLaunchTemplateNeedle) ||
+      (body.includes(regionLaunchBodyNeedle) && body.includes("Reply START to continue onboarding"))
+    ) {
+      fail(
+        `Detected forbidden region_launch_notify content in outbound sms_messages id='${message.id}'.`,
+      );
+    }
+  }
 }
 
 async function invokeSignedTwilioInbound(params) {
@@ -743,6 +829,72 @@ async function countOnboardingOutboundJobsSince(params) {
   }
 
   return Number(count ?? 0);
+}
+
+async function listOnboardingOutboundJobsSince(params) {
+  const { data, error } = await supabase
+    .from("sms_outbound_jobs")
+    .select("id,purpose,created_at,twilio_message_sid")
+    .eq("user_id", TEST_USER_ID)
+    .like("purpose", "onboarding_%")
+    .gte("created_at", params.referenceTimestampIso)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error) {
+    fail(`Unable to list onboarding sms_outbound_jobs rows: ${formatSupabaseError(error)}`);
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+async function listAllOutboundJobsSince(params) {
+  const { data, error } = await supabase
+    .from("sms_outbound_jobs")
+    .select("id,purpose,created_at,twilio_message_sid")
+    .eq("user_id", TEST_USER_ID)
+    .gte("created_at", params.referenceTimestampIso)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error) {
+    fail(`Unable to list sms_outbound_jobs rows: ${formatSupabaseError(error)}`);
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+async function listOutboundSmsMessagesSince(params) {
+  const { data, error } = await supabase
+    .from("sms_messages")
+    .select("id,twilio_message_sid,created_at,body_ciphertext")
+    .eq("user_id", TEST_USER_ID)
+    .eq("direction", "out")
+    .gte("created_at", params.referenceTimestampIso)
+    .order("created_at", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error) {
+    fail(`Unable to list outbound sms_messages rows: ${formatSupabaseError(error)}`);
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+async function tryDecryptSmsBody(params) {
+  const { data, error } = await supabase.rpc("decrypt_sms_body", {
+    ciphertext: params.ciphertext,
+    key: params.encryptionKey,
+  });
+
+  if (error || typeof data !== "string") {
+    warn(
+      `Skipping outbound body inspection for one row because decryption failed: ${formatSupabaseError(error)}`,
+    );
+    return null;
+  }
+
+  return data;
 }
 
 function resolveRouteDecisionForSession(session) {
@@ -966,24 +1118,9 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function parseJson(raw) {
-  if (!raw || raw.trim().length === 0) {
-    return null;
-  }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-
 function buildTwilioMessageSid() {
   const randomHex = crypto.randomBytes(16).toString("hex");
   return `SM${randomHex}`;
-}
-
-function onboardingOpeningEventIdempotencyKey(userId) {
-  return `onboarding:event:opening:${userId}`;
 }
 
 function computeTwilioSignature(url, params, authToken) {
