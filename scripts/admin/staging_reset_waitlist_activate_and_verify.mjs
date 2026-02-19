@@ -70,6 +70,8 @@ const runReport = {
   session_state_token: null,
   sms_messages_since_reference: null,
   start_transition_checked: false,
+  pre_start_state_token: null,
+  start_route_decision: null,
   post_start_state_token: null,
   onboarding_jobs_since_start: null,
   reference_timestamp: null,
@@ -464,40 +466,92 @@ function isOnboardingSessionToken(stateToken, expectedStateToken) {
   if (!stateToken) {
     return false;
   }
-  return stateToken === expectedStateToken || String(stateToken).startsWith("onboarding:");
+  if (stateToken === expectedStateToken) {
+    return true;
+  }
+  if (String(stateToken).startsWith("onboarding:")) {
+    warn(
+      `Found onboarding token '${stateToken}' but expected '${expectedStateToken}'. Recovery will normalize to expected opening token.`,
+    );
+  }
+  return false;
 }
 
 async function applyLegacyOnboardingRecovery(params) {
   const nowIso = new Date().toISOString();
   const existing = await fetchConversationSessionOrNull();
+  const preferredRecoveryMode = "onboarding";
+  const fallbackRecoveryMode = "interviewing";
+
+  warn(
+    `Legacy recovery bootstrap writing mode='${preferredRecoveryMode}' state_token='${params.expectedStateToken}'.`,
+  );
 
   if (existing?.id) {
-    const { error: updateError } = await supabase
+    const preferredUpdate = await supabase
       .from("conversation_sessions")
       .update({
-        mode: "interviewing",
+        mode: preferredRecoveryMode,
         state_token: params.expectedStateToken,
         current_step_id: null,
         last_inbound_message_sid: null,
       })
       .eq("id", existing.id);
 
-    if (updateError) {
-      fail(`Unable to update legacy session for recovery: ${formatSupabaseError(updateError)}`);
+    if (preferredUpdate.error && shouldFallbackToInterviewingMode(preferredUpdate.error)) {
+      warn(
+        `Recovery mode '${preferredRecoveryMode}' rejected by database; falling back to '${fallbackRecoveryMode}'.`,
+      );
+      const fallbackUpdate = await supabase
+        .from("conversation_sessions")
+        .update({
+          mode: fallbackRecoveryMode,
+          state_token: params.expectedStateToken,
+          current_step_id: null,
+          last_inbound_message_sid: null,
+        })
+        .eq("id", existing.id);
+
+      if (fallbackUpdate.error) {
+        fail(
+          `Unable to update legacy session for recovery fallback: ${formatSupabaseError(fallbackUpdate.error)}`,
+        );
+      }
+    } else if (preferredUpdate.error) {
+      fail(`Unable to update legacy session for recovery: ${formatSupabaseError(preferredUpdate.error)}`);
     }
   } else {
-    const { error: insertSessionError } = await supabase
+    const preferredInsert = await supabase
       .from("conversation_sessions")
       .insert({
         user_id: TEST_USER_ID,
-        mode: "interviewing",
+        mode: preferredRecoveryMode,
         state_token: params.expectedStateToken,
         current_step_id: null,
         last_inbound_message_sid: null,
       });
 
-    if (insertSessionError) {
-      fail(`Unable to insert legacy recovery session: ${formatSupabaseError(insertSessionError)}`);
+    if (preferredInsert.error && shouldFallbackToInterviewingMode(preferredInsert.error)) {
+      warn(
+        `Recovery mode '${preferredRecoveryMode}' rejected by database; falling back to '${fallbackRecoveryMode}'.`,
+      );
+      const fallbackInsert = await supabase
+        .from("conversation_sessions")
+        .insert({
+          user_id: TEST_USER_ID,
+          mode: fallbackRecoveryMode,
+          state_token: params.expectedStateToken,
+          current_step_id: null,
+          last_inbound_message_sid: null,
+        });
+
+      if (fallbackInsert.error) {
+        fail(
+          `Unable to insert legacy recovery session fallback: ${formatSupabaseError(fallbackInsert.error)}`,
+        );
+      }
+    } else if (preferredInsert.error) {
+      fail(`Unable to insert legacy recovery session: ${formatSupabaseError(preferredInsert.error)}`);
     }
   }
 
@@ -541,7 +595,7 @@ async function countOutboundSmsSinceActivation(params) {
 }
 
 async function verifyStartAdvancesOnboarding(params) {
-  const currentSession = await fetchConversationSessionOrNull();
+  let currentSession = await fetchConversationSessionOrNull();
   if (!currentSession?.id) {
     fail("Missing conversation session before START verification.");
   }
@@ -554,7 +608,7 @@ async function verifyStartAdvancesOnboarding(params) {
     const { error: normalizeError } = await supabase
       .from("conversation_sessions")
       .update({
-        mode: "interviewing",
+        mode: currentSession.mode ?? "interviewing",
         state_token: params.openingStateToken,
         current_step_id: null,
         last_inbound_message_sid: null,
@@ -564,6 +618,24 @@ async function verifyStartAdvancesOnboarding(params) {
     if (normalizeError) {
       fail(`Unable to normalize session before START verification: ${formatSupabaseError(normalizeError)}`);
     }
+
+    currentSession = await fetchConversationSessionOrNull();
+    if (!currentSession?.id) {
+      fail("Missing conversation session after START precondition normalization.");
+    }
+  }
+
+  const startRouteDecision = resolveRouteDecisionForSession(currentSession);
+  runReport.pre_start_state_token = currentSession.state_token ?? null;
+  runReport.start_route_decision = startRouteDecision;
+  console.log(
+    `[${SCRIPT_TAG}] pre_start_state_token=${String(currentSession.state_token ?? "null")} start_route_decision=${startRouteDecision}`,
+  );
+
+  if (startRouteDecision !== "onboarding_engine") {
+    fail(
+      `START route decision mismatch. Expected onboarding_engine from '${String(currentSession.state_token ?? "null")}', got '${startRouteDecision}'.`,
+    );
   }
 
   const sentAtIso = new Date().toISOString();
@@ -572,6 +644,9 @@ async function verifyStartAdvancesOnboarding(params) {
   const postStartSession = await fetchConversationSessionOrNull();
   runReport.start_transition_checked = true;
   runReport.post_start_state_token = postStartSession?.state_token ?? null;
+  console.log(
+    `[${SCRIPT_TAG}] post_start_state_token=${String(postStartSession?.state_token ?? "null")}`,
+  );
 
   if (!postStartSession?.id) {
     fail("Conversation session disappeared after START verification.");
@@ -642,6 +717,33 @@ async function countOnboardingOutboundJobsSince(params) {
   }
 
   return Number(count ?? 0);
+}
+
+function resolveRouteDecisionForSession(session) {
+  const mode = String(session?.mode ?? "").trim().toLowerCase();
+  const stateToken = String(session?.state_token ?? "").trim();
+  if (mode === "onboarding") {
+    return "onboarding_engine";
+  }
+  if (stateToken.startsWith("onboarding:")) {
+    return "onboarding_engine";
+  }
+  if (stateToken.startsWith("interview:")) {
+    return "profile_interview_engine";
+  }
+  return "default_engine";
+}
+
+function shouldFallbackToInterviewingMode(error) {
+  const code = String(error?.code ?? "");
+  const message = String(error?.message ?? "").toLowerCase();
+  const details = String(error?.details ?? "").toLowerCase();
+  const combined = `${message} ${details}`;
+  return (
+    code === "22P02" &&
+    combined.includes("conversation_mode") &&
+    combined.includes("onboarding")
+  );
 }
 
 async function deleteRowsByUserId(table, options = {}) {
@@ -927,6 +1029,8 @@ function emitReport(outcome) {
   const stateToken = runReport.session_state_token ?? "n/a";
   const smsCount = runReport.sms_messages_since_reference ?? "n/a";
   const startChecked = runReport.start_transition_checked ? "true" : "false";
+  const preStartStateToken = runReport.pre_start_state_token ?? "n/a";
+  const startRouteDecision = runReport.start_route_decision ?? "n/a";
   const postStartStateToken = runReport.post_start_state_token ?? "n/a";
   const onboardingJobsSinceStart = runReport.onboarding_jobs_since_start ?? "n/a";
   const referenceTimestamp = runReport.reference_timestamp ?? "n/a";
@@ -945,7 +1049,7 @@ function emitReport(outcome) {
     `[${SCRIPT_TAG}] sms_messages_since_reference=${smsCount} reference_timestamp=${referenceTimestamp}`,
   );
   console.log(
-    `[${SCRIPT_TAG}] start_transition_checked=${startChecked} post_start_state_token=${postStartStateToken} onboarding_jobs_since_start=${onboardingJobsSinceStart}`,
+    `[${SCRIPT_TAG}] start_transition_checked=${startChecked} pre_start_state_token=${preStartStateToken} start_route_decision=${startRouteDecision} post_start_state_token=${postStartStateToken} onboarding_jobs_since_start=${onboardingJobsSinceStart}`,
   );
   console.log(`[${SCRIPT_TAG}] legacy_recovery_applied=${legacyRecoveryApplied}`);
 }
