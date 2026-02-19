@@ -31,7 +31,6 @@
     "db:verify-types": "node scripts/verify-types.mjs",
     "doctor": "node scripts/doctor.mjs",
     "env:fingerprint": "node scripts/print-env-fingerprint.mjs",
-    "staging:onboarding:e2e": "node scripts/admin/staging_reset_waitlist_activate_and_verify.mjs",
     "matching:run": "node scripts/run-matching-job.mjs",
     "verify:matching:seed": "node scripts/verify/seed-matching-e2e.mjs",
     "verify:matching:seed:rest": "node scripts/verify/seed-matching-e2e-rest.mjs",
