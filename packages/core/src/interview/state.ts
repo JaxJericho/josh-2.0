@@ -209,7 +209,9 @@ export function resolveCurrentInterviewStep(params: {
 
   if (tokenFromSession) {
     if (isOnboardingStateToken(tokenFromSession)) {
-      return INTERVIEW_ACTIVE_START_STEP_ID;
+      throw new Error(
+        `Onboarding state token '${tokenFromSession}' must be routed to onboarding engine.`,
+      );
     }
     return tokenFromSession;
   }

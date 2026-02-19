@@ -549,6 +549,37 @@ async function sendAndRecordOutboundMessage(params: {
     throw new Error("Twilio response did not include a sender number for onboarding delivery.");
   }
 
+  const outboundTimestampIso = new Date().toISOString();
+
+  const { error: outboundJobError } = await params.supabase
+    .from("sms_outbound_jobs")
+    .insert(
+      {
+        user_id: params.userId,
+        to_e164: params.toE164,
+        from_e164: resolvedFromE164,
+        body_ciphertext: encryptedBody,
+        body_iv: null,
+        body_tag: null,
+        key_version: 1,
+        purpose: onboardingOutboundPurpose(params.messageKey),
+        status: "sent",
+        twilio_message_sid: sendResult.sid,
+        attempts: 1,
+        next_attempt_at: null,
+        last_error: null,
+        last_status_at: outboundTimestampIso,
+        run_at: outboundTimestampIso,
+        correlation_id: params.correlationId,
+        idempotency_key: params.idempotencyKey,
+      },
+      { onConflict: "idempotency_key", ignoreDuplicates: true },
+    );
+
+  if (outboundJobError && !isDuplicateKeyError(outboundJobError)) {
+    throw new Error("Unable to persist onboarding outbound job.");
+  }
+
   const { error } = await params.supabase
     .from("sms_messages")
     .insert(
@@ -564,7 +595,7 @@ async function sendAndRecordOutboundMessage(params: {
         key_version: 1,
         media_count: 0,
         status: sendResult.status ?? "queued",
-        last_status_at: new Date().toISOString(),
+        last_status_at: outboundTimestampIso,
         correlation_id: params.correlationId,
       },
       { onConflict: "twilio_message_sid", ignoreDuplicates: true },
@@ -573,6 +604,10 @@ async function sendAndRecordOutboundMessage(params: {
   if (error && !isDuplicateKeyError(error)) {
     throw new Error("Unable to persist onboarding outbound sms message.");
   }
+}
+
+function onboardingOutboundPurpose(messageKey: OnboardingOutboundMessageKey): string {
+  return `onboarding_${messageKey}`;
 }
 
 async function encryptBody(
