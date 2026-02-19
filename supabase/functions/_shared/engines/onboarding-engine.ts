@@ -77,8 +77,14 @@ export async function runOnboardingEngine(
 
   const user = await fetchUserContact(input.supabase, input.decision.user_id);
   const twilio = readOutboundTwilioConfig();
+  const onboardingStateToken = resolveOnboardingStateForInbound({
+    routedStateToken: input.decision.state.state_token,
+    persistedStateToken: session.state_token,
+    userId: input.decision.user_id,
+    inboundMessageSid: input.payload.inbound_message_sid,
+  });
 
-  if (session.state_token === ONBOARDING_AWAITING_OPENING_RESPONSE) {
+  if (onboardingStateToken === ONBOARDING_AWAITING_OPENING_RESPONSE) {
     const hasOpeningEvent = await hasConversationEventByIdempotencyKey(
       input.supabase,
       onboardingOpeningEventIdempotencyKey(input.decision.user_id),
@@ -87,7 +93,7 @@ export async function runOnboardingEngine(
     if (!hasOpeningEvent) {
       await startOnboardingForUser({
         firstName: user.first_name,
-        currentStateToken: session.state_token,
+        currentStateToken: onboardingStateToken,
         hasOpeningBeenSent: false,
         openingIdempotencyKey: onboardingOpeningSendIdempotencyKey(input.decision.user_id),
         sendMessage: async (sendInput) => {
@@ -135,7 +141,6 @@ export async function runOnboardingEngine(
     }
   }
 
-  const onboardingStateToken = assertOnboardingToken(session.state_token);
   const inboundResult = handleOnboardingInbound({
     stateToken: onboardingStateToken,
     inputText: input.payload.body_raw,
@@ -143,7 +148,7 @@ export async function runOnboardingEngine(
 
   if (onboardingStateToken === ONBOARDING_AWAITING_EXPLANATION_RESPONSE) {
     await sendOnboardingBurst({
-      currentStateToken: session.state_token,
+      currentStateToken: onboardingStateToken,
       burstIdempotencyKeyPrefix: `onboarding:burst:${input.decision.user_id}:${input.payload.inbound_message_sid}`,
       sendMessage: async (sendInput) => {
         await sendAndRecordOutboundMessage({
@@ -199,6 +204,15 @@ export async function runOnboardingEngine(
         : null,
       lastInboundMessageSid: input.payload.inbound_message_sid,
     });
+  }
+
+  if (
+    inboundResult.handoffToInterview &&
+    onboardingStateToken !== ONBOARDING_AWAITING_INTERVIEW_START
+  ) {
+    throw new Error(
+      `Onboarding handoff attempted from invalid state '${onboardingStateToken}'.`,
+    );
   }
 
   await insertConversationEvent({
@@ -329,6 +343,30 @@ export async function startOnboardingForActivatedUser(params: {
   });
 
   return "inserted";
+}
+
+export function resolveOnboardingStateForInbound(params: {
+  routedStateToken: string;
+  persistedStateToken: string;
+  userId: string;
+  inboundMessageSid: string;
+}): OnboardingStateToken {
+  const routedStateToken = assertOnboardingToken(params.routedStateToken);
+  const persistedStateToken = params.persistedStateToken?.trim() ?? "";
+
+  if (
+    persistedStateToken.length > 0 &&
+    persistedStateToken !== routedStateToken
+  ) {
+    console.warn("onboarding_engine.state_token_drift", {
+      user_id: params.userId,
+      inbound_message_sid: params.inboundMessageSid,
+      routed_state_token: routedStateToken,
+      persisted_state_token: persistedStateToken,
+    });
+  }
+
+  return routedStateToken;
 }
 
 function assertOnboardingToken(stateToken: string): OnboardingStateToken {

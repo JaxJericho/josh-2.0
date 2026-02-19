@@ -39,6 +39,7 @@
     "verify:linkup:e2e": "node scripts/verify/run-linkup-e2e.mjs",
     "verify:coordination:seed": "node scripts/verify/seed-coordination-e2e.mjs",
     "verify:coordination:e2e": "node scripts/verify/run-coordination-e2e.mjs",
+    "staging:onboarding:e2e": "node scripts/admin/staging_reset_waitlist_activate_and_verify.mjs --exercise-start",
     "build": "next build",
     "start": "next start"
   },
