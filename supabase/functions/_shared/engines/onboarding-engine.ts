@@ -43,6 +43,13 @@ type OutboundTwilioConfig = {
   encryptionKey: string;
 };
 
+type ScheduledOnboardingJobInput = {
+  messageKey: OnboardingOutboundMessageKey;
+  body: string;
+  idempotencyKey: string;
+  runAtIso: string;
+};
+
 export async function runOnboardingEngine(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
@@ -530,6 +537,33 @@ async function insertConversationEvent(params: {
   }
 }
 
+export function buildScheduledOnboardingJobInputs(params: {
+  userId: string;
+  inboundMessageSid: string;
+  outboundPlan: OnboardingOutboundPlanStep[];
+  baseTimestampMs?: number;
+}): ScheduledOnboardingJobInput[] {
+  const baseTimestampMs = params.baseTimestampMs ?? Date.now();
+  let delayMs = 0;
+  const jobs: ScheduledOnboardingJobInput[] = [];
+
+  for (const step of params.outboundPlan) {
+    if (step.kind === "delay") {
+      delayMs += step.ms;
+      continue;
+    }
+
+    jobs.push({
+      messageKey: step.message_key,
+      body: step.body,
+      idempotencyKey: `onboarding:${step.message_key}:${params.userId}:${params.inboundMessageSid}`,
+      runAtIso: new Date(baseTimestampMs + delayMs).toISOString(),
+    });
+  }
+
+  return jobs;
+}
+
 async function enqueueOnboardingOutboundPlan(params: {
   supabase: EngineDispatchInput["supabase"];
   userId: string;
@@ -540,26 +574,23 @@ async function enqueueOnboardingOutboundPlan(params: {
   outboundPlan: OnboardingOutboundPlanStep[];
   twilio: OutboundTwilioConfig;
 }): Promise<void> {
-  const baseTimestampMs = Date.now();
-  let delayMs = 0;
+  const jobInputs = buildScheduledOnboardingJobInputs({
+    userId: params.userId,
+    inboundMessageSid: params.inboundMessageSid,
+    outboundPlan: params.outboundPlan,
+  });
 
-  for (const step of params.outboundPlan) {
-    if (step.kind === "delay") {
-      delayMs += step.ms;
-      continue;
-    }
-
-    const runAtIso = new Date(baseTimestampMs + delayMs).toISOString();
+  for (const jobInput of jobInputs) {
     await enqueueAndRecordOutboundMessageJob({
       supabase: params.supabase,
       userId: params.userId,
       toE164: params.toE164,
       fallbackFromE164: params.fallbackFromE164,
       correlationId: params.correlationId,
-      idempotencyKey: `onboarding:${step.message_key}:${params.userId}:${params.inboundMessageSid}`,
-      messageKey: step.message_key,
-      body: step.body,
-      runAtIso,
+      idempotencyKey: jobInput.idempotencyKey,
+      messageKey: jobInput.messageKey,
+      body: jobInput.body,
+      runAtIso: jobInput.runAtIso,
       twilio: params.twilio,
     });
   }
@@ -578,8 +609,8 @@ async function enqueueAndRecordOutboundMessageJob(params: {
   twilio: OutboundTwilioConfig;
 }): Promise<void> {
   const encryptedBody = await encryptBody(params.supabase, params.body, params.twilio.encryptionKey);
-  const resolvedFromE164 = params.twilio.fromE164 ?? params.fallbackFromE164 ?? "";
 
+  const resolvedFromE164 = params.twilio.fromE164 ?? params.fallbackFromE164 ?? "";
   if (!resolvedFromE164) {
     throw new Error("Unable to resolve outbound from_e164 for onboarding delivery.");
   }

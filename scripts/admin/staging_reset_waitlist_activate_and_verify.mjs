@@ -91,6 +91,7 @@ const runReport = {
   onboarding_jobs_since_start: null,
   post_explanation_state_token: null,
   explanation_jobs_since_reply: null,
+  runner_early_send_violation: false,
   reference_timestamp: null,
   legacy_recovery_applied: false,
 };
@@ -708,6 +709,7 @@ async function verifyStartAdvancesOnboarding(params) {
     referenceTimestampIso: params.referenceTimestampIso,
     requireExplanation: true,
   });
+
   const explanationReplySentAtIso = new Date().toISOString();
   await invokeSignedTwilioInbound({ body: "YES" });
 
@@ -728,6 +730,10 @@ async function verifyStartAdvancesOnboarding(params) {
   runReport.explanation_jobs_since_reply = explanationJobsSinceReply.length;
   assertDelayedExplanationBurstSchedule({
     onboardingJobs: explanationJobsSinceReply,
+  });
+
+  await invokeRunnerAndAssertNoFutureSend({
+    referenceTimestampIso: explanationReplySentAtIso,
   });
 
   await assertNoRegionLaunchNotifySince({
@@ -777,20 +783,37 @@ function assertDelayedExplanationBurstSchedule(params) {
 
   const jobsByPurpose = new Map();
   for (const job of burstJobs) {
-    if (!jobsByPurpose.has(job.purpose)) {
-      jobsByPurpose.set(job.purpose, job);
+    const purpose = String(job.purpose ?? "");
+    if (!jobsByPurpose.has(purpose)) {
+      jobsByPurpose.set(purpose, []);
+    }
+    jobsByPurpose.get(purpose).push(job);
+  }
+
+  for (const purpose of explanationBurstPurposes) {
+    const rows = jobsByPurpose.get(purpose) ?? [];
+    if (rows.length !== 1) {
+      fail(
+        `Expected exactly one outbound job for '${purpose}' in this onboarding run; found ${rows.length}.`,
+      );
     }
   }
 
+  const idempotencyKeys = burstJobs.map((job) => String(job.idempotency_key ?? ""));
+  const uniqueIdempotencyKeys = new Set(idempotencyKeys);
+  if (idempotencyKeys.some((key) => key.length === 0)) {
+    fail("Detected onboarding burst job with missing idempotency_key.");
+  }
+  if (uniqueIdempotencyKeys.size !== idempotencyKeys.length) {
+    fail("Detected duplicate onboarding burst idempotency_key values in same onboarding run.");
+  }
+
   const orderedJobs = explanationBurstPurposes.map((purpose) => {
-    const job = jobsByPurpose.get(purpose);
-    if (!job) {
-      fail(`Missing expected onboarding burst purpose '${purpose}' after explanation confirmation.`);
-    }
-    if (!job.run_at) {
+    const row = jobsByPurpose.get(purpose)?.[0] ?? null;
+    if (!row?.run_at) {
       fail(`Missing run_at for onboarding burst purpose '${purpose}'.`);
     }
-    return job;
+    return row;
   });
 
   for (let i = 1; i < orderedJobs.length; i += 1) {
@@ -811,6 +834,37 @@ function assertDelayedExplanationBurstSchedule(params) {
       fail(
         `Onboarding burst cadence is too short between '${orderedJobs[i - 1].purpose}' and '${orderedJobs[i].purpose}'. Expected >= ${minExpected}ms, got ${diffMs}ms.`,
       );
+    }
+  }
+}
+
+async function invokeRunnerAndAssertNoFutureSend(params) {
+  const runnerStartIso = new Date().toISOString();
+  await invokeSignedOutboundRunner();
+
+  const jobsAfterRunner = await listOnboardingOutboundJobsSince({
+    referenceTimestampIso: params.referenceTimestampIso,
+  });
+  const runnerStartMs = Date.parse(runnerStartIso);
+  for (const job of jobsAfterRunner) {
+    const purpose = String(job.purpose ?? "");
+    if (!explanationBurstPurposes.includes(purpose)) {
+      continue;
+    }
+
+    const runAtMs = Date.parse(String(job.run_at ?? ""));
+    if (!Number.isFinite(runAtMs)) {
+      fail(`Unable to parse run_at timestamp for onboarding job id='${job.id}'.`);
+    }
+
+    if (runAtMs > runnerStartMs) {
+      const wasSentEarly = Boolean(job.twilio_message_sid) || String(job.status ?? "") === "sent";
+      if (wasSentEarly) {
+        runReport.runner_early_send_violation = true;
+        fail(
+          `Runner sent onboarding job '${purpose}' before run_at. run_at='${String(job.run_at)}' runner_invoked_at='${runnerStartIso}'.`,
+        );
+      }
     }
   }
 }
@@ -907,6 +961,26 @@ async function invokeSignedTwilioInbound(params) {
   }
 }
 
+async function invokeSignedOutboundRunner() {
+  const runnerUrl = requiredEnv("STAGING_RUNNER_URL");
+  const runnerSecret = requiredEnv("STAGING_RUNNER_SECRET");
+  const response = await fetch(runnerUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-runner-secret": runnerSecret,
+    },
+    body: "{}",
+  });
+
+  const responseBody = await response.text();
+  if (!response.ok) {
+    fail(
+      `Outbound runner invocation failed with HTTP ${response.status}: ${truncate(responseBody, 400)}`,
+    );
+  }
+}
+
 async function countOnboardingOutboundJobsSince(params) {
   const { count, error } = await supabase
     .from("sms_outbound_jobs")
@@ -925,7 +999,7 @@ async function countOnboardingOutboundJobsSince(params) {
 async function listOnboardingOutboundJobsSince(params) {
   const { data, error } = await supabase
     .from("sms_outbound_jobs")
-    .select("id,purpose,created_at,run_at,status,twilio_message_sid")
+    .select("id,purpose,created_at,run_at,status,idempotency_key,twilio_message_sid")
     .eq("user_id", TEST_USER_ID)
     .like("purpose", "onboarding_%")
     .gte("created_at", params.referenceTimestampIso)
@@ -1293,6 +1367,7 @@ function emitReport(outcome) {
   const onboardingJobsSinceStart = runReport.onboarding_jobs_since_start ?? "n/a";
   const postExplanationStateToken = runReport.post_explanation_state_token ?? "n/a";
   const explanationJobsSinceReply = runReport.explanation_jobs_since_reply ?? "n/a";
+  const runnerEarlySendViolation = runReport.runner_early_send_violation ? "true" : "false";
   const referenceTimestamp = runReport.reference_timestamp ?? "n/a";
   const legacyRecoveryApplied = runReport.legacy_recovery_applied ? "true" : "false";
 
@@ -1312,7 +1387,7 @@ function emitReport(outcome) {
     `[${SCRIPT_TAG}] start_transition_checked=${startChecked} pre_start_state_token=${preStartStateToken} start_route_decision=${startRouteDecision} post_start_state_token=${postStartStateToken} onboarding_jobs_since_start=${onboardingJobsSinceStart}`,
   );
   console.log(
-    `[${SCRIPT_TAG}] post_explanation_state_token=${postExplanationStateToken} explanation_jobs_since_reply=${explanationJobsSinceReply}`,
+    `[${SCRIPT_TAG}] post_explanation_state_token=${postExplanationStateToken} explanation_jobs_since_reply=${explanationJobsSinceReply} runner_early_send_violation=${runnerEarlySendViolation}`,
   );
   console.log(`[${SCRIPT_TAG}] legacy_recovery_applied=${legacyRecoveryApplied}`);
 }
