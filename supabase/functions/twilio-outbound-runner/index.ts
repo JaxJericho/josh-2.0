@@ -22,6 +22,7 @@ type SmsOutboundJob = {
   twilio_message_sid: string | null;
   attempts: number;
   next_attempt_at: string | null;
+  run_at: string | null;
   last_error: string | null;
   correlation_id: string | null;
   created_at: string;
@@ -135,6 +136,12 @@ Deno.serve(async (req) => {
     for (const job of claimedJobs) {
       phase = "job";
       if (isTerminalStatus(job.status)) {
+        continue;
+      }
+
+      // Guard against accidental early delivery if claim semantics drift.
+      if (isFutureRunAt(job.run_at)) {
+        await releaseFutureJob(supabase, job);
         continue;
       }
 
@@ -284,10 +291,6 @@ async function markJobSent(
     .eq("id", job.id)
     .neq("status", "canceled");
 
-  if (incrementAttempts) {
-    updateQuery = updateQuery.eq("status", "sending");
-  }
-
   const { error } = await updateQuery;
 
   if (error) {
@@ -295,6 +298,39 @@ async function markJobSent(
       job_id: job.id,
       error: error.message,
       status,
+    });
+  }
+}
+
+function isFutureRunAt(runAt: string | null): boolean {
+  if (!runAt) {
+    return false;
+  }
+  const parsed = Date.parse(runAt);
+  if (!Number.isFinite(parsed)) {
+    return false;
+  }
+  return parsed > Date.now();
+}
+
+async function releaseFutureJob(
+  supabase: ReturnType<typeof createClient>,
+  job: SmsOutboundJob
+): Promise<void> {
+  const { error } = await supabase
+    .from("sms_outbound_jobs")
+    .update({
+      status: "pending",
+      next_attempt_at: null,
+      last_error: null,
+    })
+    .eq("id", job.id)
+    .eq("status", "sending");
+
+  if (error) {
+    console.error("sms_outbound.future_job_release_failed", {
+      job_id: job.id,
+      error: error.message,
     });
   }
 }
