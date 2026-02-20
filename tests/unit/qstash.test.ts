@@ -4,6 +4,7 @@ import { Client } from "@upstash/qstash";
 import {
   createQStashClient,
   scheduleOnboardingStep,
+  type OnboardingStepPayload,
   verifyQStashSignature,
 } from "../../app/lib/qstash";
 
@@ -43,7 +44,7 @@ describe("qstash integration layer", () => {
       messageId: "msg_123",
     } as never);
 
-    const payload = {
+    const payload: OnboardingStepPayload = {
       profile_id: "profile_123",
       session_id: "session_123",
       step_id: "onboarding_message_1",
