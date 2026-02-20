@@ -96,8 +96,10 @@ export function detectOnboardingIntent(inputText: string): OnboardingIntentDecis
     };
   }
 
+  // Spec: "Any positive, affirmative, neutral, or ambiguous reply advances
+  // the flow. Only an explicit negative pauses it."
   return {
-    advance: false,
+    advance: true,
     pause: false,
   };
 }
@@ -130,6 +132,13 @@ export function handleOnboardingInbound(params: {
   }
 
   if (params.stateToken === ONBOARDING_AWAITING_EXPLANATION_RESPONSE) {
+    if (intent.pause) {
+      return {
+        nextStateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
+        outboundPlan: [buildSendStep("onboarding_later", ONBOARDING_LATER)],
+      };
+    }
+
     return {
       nextStateToken: ONBOARDING_AWAITING_INTERVIEW_START,
       outboundPlan: [

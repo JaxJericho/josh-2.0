@@ -200,6 +200,20 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Pre-send recheck: verify the job is still in "sending" status and
+      // has no twilio_message_sid. This prevents double-delivery when a
+      // concurrent runner invocation or the onboarding engine has already
+      // sent this job between claim and now.
+      phase = "pre_send_verify";
+      const freshStatus = await recheckJobBeforeSend(supabase, job.id);
+      if (
+        freshStatus === null ||
+        freshStatus.status !== "sending" ||
+        freshStatus.twilio_message_sid !== null
+      ) {
+        continue;
+      }
+
       phase = "send";
       const sendResult = await sendTwilioRestMessage({
         accountSid: twilioAccountSid,
@@ -271,6 +285,26 @@ function isTerminalStatus(status: string): boolean {
   return status === "sent" || status === "failed" || status === "canceled";
 }
 
+async function recheckJobBeforeSend(
+  supabase: ReturnType<typeof createClient>,
+  jobId: string,
+): Promise<{ status: string; twilio_message_sid: string | null } | null> {
+  const { data, error } = await supabase
+    .from("sms_outbound_jobs")
+    .select("status,twilio_message_sid")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (error || !data) {
+    return null;
+  }
+
+  return {
+    status: data.status,
+    twilio_message_sid: data.twilio_message_sid ?? null,
+  };
+}
+
 async function markJobSent(
   supabase: ReturnType<typeof createClient>,
   job: SmsOutboundJob,
@@ -317,6 +351,12 @@ async function releaseFutureJob(
   supabase: ReturnType<typeof createClient>,
   job: SmsOutboundJob
 ): Promise<void> {
+  console.info("sms_outbound.future_job_released", {
+    job_id: job.id,
+    run_at: job.run_at,
+    purpose: job.purpose,
+  });
+
   const { error } = await supabase
     .from("sms_outbound_jobs")
     .update({
