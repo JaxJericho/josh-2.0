@@ -1,47 +1,146 @@
 # AI Prompt Template — JOSH 2.0
 
-Role:
-- 
+Role: [Specify Correct Role For This Ticket]
 
-Ticket:
-- 
+Examples:
 
-Source-of-Truth Files (must read before planning):
-- docs/specs/josh-2.0/josh-2.0-comprehensive-build-plan.md
-- AGENTS.md
-- CLAUDE.md
-- docs/ai/README.md
-- docs/architecture/environments.md
-- docs/architecture/environment-variables.md
-- docs/architecture/runtime-boundaries.md
-- docs/architecture/database-boundaries.md
-- docs/architecture/migrations.md
+- Principal Database Engineer
+- Principal Backend Engineer
+- Production Readiness Engineer
+- Messaging Systems Engineer
+- Security & RLS Architect
 
-Constraints:
-- Minimal scoped changes only
-- No broad refactors
-- Do not print secrets
-- Use safe env fingerprints only (set/unset, length, sha256 prefix)
-- Docs/templates only (if applicable)
-- No external dependencies
+Repo: josh-2.0
 
-Build Loop (required):
-1. Plan: list files to touch and why; risks; verification steps
-2. Implement: smallest change set
-3. Verify: run required commands and report results
-4. Commit: one ticket per branch
-5. Push + PR: include required PR fields
+Branch (MANDATORY — Must Be Used)
 
-Verification (unless ticket says otherwise):
-- pnpm lint
-- pnpm typecheck (if present)
-- pnpm test (if present)
-- pnpm build
+Before doing any work:
 
-PR Requirements:
-- Summary of changes
-- Files changed
-- Env vars added/changed (names only)
-- Migrations added/applied (filenames + where)
-- Manual steps
-- Rollback plan
+1. git checkout main
+2. git pull --rebase
+3. git checkout -b ticket/[TICKET-ID]-[short-slug]
+
+If branch already exists:
+
+- git checkout ticket/[TICKET-ID]-[short-slug]
+
+Confirm active branch before proceeding.
+If active branch is main: STOP. Do not proceed.
+
+Context
+
+Briefly describe the context of this task.
+
+Infrastructure Status:
+
+- Staging Supabase project ref: rcqlnfywwfsixznrmzmv
+- Production Supabase: [Not Created]
+- Staging Vercel: https://josh-2-0-staging.vercel.app
+- Production Vercel: https://josh-2-0-production.vercel.app
+- Production domain: https://www.callmejosh.ai
+
+Environment Contract:
+Canonical env contract lives at:
+docs/runbooks/environment-contract.md
+
+Doctor / Preflight:
+Run:
+pnpm run doctor
+
+Goal
+
+[Clear, explicit description of what this ticket must accomplish.]
+
+Be specific.
+No vague goals.
+Define exact success criteria.
+
+Hard Rules (Non-Negotiable)
+
+- Do NOT assume any dependency is configured correctly.
+- Do NOT assume any integration is wired.
+- Do NOT use dashboard click-ops unless explicitly allowed.
+- Migrations only (if DB ticket).
+- No silent fallbacks.
+- Fail fast on misconfiguration.
+- Exit non-zero on validation failure.
+- Do not print secrets.
+- Keep changes tightly scoped to this ticket.
+- Commit and push when complete.
+- List EVERY created/changed file with FULL repo-relative paths.
+- Provide PR title and PR body.
+
+Inputs / Source Files
+
+Explicitly list canonical spec files this ticket must align with.
+
+Examples:
+
+- docs/specs/josh-2.0/Database Schema And Relationships (JOSH 2.0).md
+- docs/specs/josh-2.0/Domain Model And State Machines (JOSH 2.0).md
+- docs/runbooks/environment-contract.md
+- docs/runbooks/webhooks-twilio.md
+
+If file path differs, locate correct one and state it.
+
+Tasks
+
+1. [Task 1 — explicit]
+   - Files to create:
+   - Files to update:
+   - Constraints to enforce:
+   - Indexes required:
+   - Idempotency rules (if relevant):
+   - Security requirements:
+
+2. [Task 2 — explicit]
+
+3. [Task 3 — explicit]
+
+Be concrete. No ambiguity.
+
+Verification (Must Be Demonstrated)
+
+The following must pass:
+
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm run doctor (if environment-related)
+
+If DB ticket:
+
+- Migration apply command
+- SQL verification queries
+- Evidence of indexes + constraints
+
+If messaging ticket:
+
+- Simulated webhook test
+- Idempotency test
+- CLI proof of execution
+- DB verification queries
+
+If billing ticket:
+
+- Simulated Stripe event replay
+- Webhook verification
+
+Must show:
+
+- Command outputs
+- Evidence of constraints/indexes
+- Evidence of idempotency
+
+Deliverables
+
+- Implementation complete
+- Commit pushed to correct branch
+- PR title
+- PR body
+- FULL list of created/changed files (repo-relative paths)
+- Summary of verification results
+- Exact staging test commands
+
+Proceed now.

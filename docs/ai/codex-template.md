@@ -4,10 +4,10 @@ Copy into Codex at ticket start:
 
 ```
 Role:
-- 
+-
 
 Ticket:
-- 
+-
 
 Source-of-Truth Files (must read before planning):
 - docs/specs/josh-2.0/josh-2.0-comprehensive-build-plan.md
@@ -36,9 +36,12 @@ Verify:
 - pnpm build
 
 PR Output:
-- Summary, files changed
+- What changed
+- Why it changed
+- What specs or architecture docs it relates to (by file path)
+- How it was verified (exact commands)
+- Manual tasks required (if any)
 - Env vars added/changed (names only)
 - Migrations added/applied (filenames + where)
-- Manual steps
 - Rollback plan
 ```
