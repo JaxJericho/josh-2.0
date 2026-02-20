@@ -6,6 +6,7 @@ import {
   resolveNextTransition,
   resolveRouteForState,
   routeConversationMessage,
+  shouldHoldInboundForOnboardingBurst,
   validateConversationState,
   type NormalizedInboundMessagePayload,
   type RoutingDecision,
@@ -31,6 +32,18 @@ describe("conversation router foundation", () => {
 
     expect(route).toBe("onboarding_engine");
     expect(nextTransition).toBe("onboarding:awaiting_opening_response");
+  });
+
+  it("accepts onboarding:awaiting_burst as a valid interviewing onboarding token", () => {
+    const state = validateConversationState(
+      "interviewing",
+      "onboarding:awaiting_burst",
+    );
+    const route = resolveRouteForState(state);
+    const nextTransition = resolveNextTransition(state, route);
+
+    expect(route).toBe("onboarding_engine");
+    expect(nextTransition).toBe("onboarding:awaiting_burst");
   });
 
   it("throws explicit error when state token is missing", () => {
@@ -111,6 +124,51 @@ describe("conversation router foundation", () => {
     });
 
     expect(result.engine).toBe("default_engine");
+  });
+
+  it("holds inbound during onboarding:awaiting_burst so it is not dispatched to interview engine", async () => {
+    const result = await dispatchConversationRoute({
+      supabase: {
+        from() {
+          throw new Error("hold path should not query Supabase");
+        },
+      },
+      decision: {
+        user_id: "usr_123",
+        state: {
+          mode: "interviewing",
+          state_token: "onboarding:awaiting_burst",
+        },
+        profile_is_complete_mvp: false,
+        route: "onboarding_engine",
+        safety_override_applied: false,
+        next_transition: "onboarding:awaiting_burst",
+      },
+      payload: {
+        ...samplePayload(),
+        body_raw: "hello?",
+        body_normalized: "HELLO",
+      },
+    });
+
+    expect(result.engine).toBe("onboarding_engine");
+    expect(result.reply_message).toBeNull();
+  });
+
+  it("does not hold STOP while in onboarding:awaiting_burst so upstream STOP handler can take precedence", () => {
+    const hold = shouldHoldInboundForOnboardingBurst({
+      state: {
+        mode: "interviewing",
+        state_token: "onboarding:awaiting_burst",
+      },
+      payload: {
+        ...samplePayload(),
+        body_raw: "STOP",
+        body_normalized: "STOP",
+      },
+    });
+
+    expect(hold).toBe(false);
   });
 });
 

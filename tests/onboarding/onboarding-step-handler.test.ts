@@ -184,7 +184,7 @@ describe("onboarding step handler eligibility and idempotency", () => {
     expect(response.status).toBe(500);
     expect(state.sendCount).toBe(1);
     expect(state.stateUpdates).toHaveLength(2);
-    expect(state.stateUpdates[0]).toBe("onboarding:awaiting_burst:onboarding_message_2");
+    expect(state.stateUpdates[0]).toBe("onboarding:awaiting_burst");
     expect(state.stateUpdates[1]).toBe(BASE_PAYLOAD.expected_state_token);
   });
 });
@@ -197,7 +197,7 @@ describe("onboarding step handler integration-like flows", () => {
 
     expect(response.status).toBe(200);
     expect(state.sendCount).toBe(1);
-    expect(state.stateUpdates).toEqual(["onboarding:awaiting_burst:onboarding_message_2"]);
+    expect(state.stateUpdates).toEqual(["onboarding:awaiting_burst"]);
     expect(state.scheduleCalls).toHaveLength(1);
     expect(state.scheduleCalls[0].payload.step_id).toBe("onboarding_message_2");
     expect(state.scheduleCalls[0].delayMs).toBe(8000);
@@ -228,6 +228,6 @@ describe("onboarding step handler integration-like flows", () => {
     expect(second.status).toBe(200);
     expect(state.sendCount).toBe(1);
     expect(state.deliveredRows).toEqual([BASE_PAYLOAD.idempotency_key]);
-    expect(state.stateUpdates).toEqual(["onboarding:awaiting_burst:onboarding_message_2"]);
+    expect(state.stateUpdates).toEqual(["onboarding:awaiting_burst"]);
   });
 });

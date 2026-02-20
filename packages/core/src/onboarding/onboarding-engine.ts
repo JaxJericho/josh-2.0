@@ -2,10 +2,6 @@ import { ONBOARDING_STATE_TOKENS } from "../interview/state.ts";
 import {
   ONBOARDING_EXPLANATION,
   ONBOARDING_LATER,
-  ONBOARDING_MESSAGE_1,
-  ONBOARDING_MESSAGE_2,
-  ONBOARDING_MESSAGE_3,
-  ONBOARDING_MESSAGE_4,
   renderOnboardingOpening,
 } from "./messages.ts";
 
@@ -13,6 +9,7 @@ export const ONBOARDING_AWAITING_OPENING_RESPONSE =
   "onboarding:awaiting_opening_response" as const;
 export const ONBOARDING_AWAITING_EXPLANATION_RESPONSE =
   "onboarding:awaiting_explanation_response" as const;
+export const ONBOARDING_AWAITING_BURST = "onboarding:awaiting_burst" as const;
 export const ONBOARDING_AWAITING_INTERVIEW_START =
   "onboarding:awaiting_interview_start" as const;
 export const INTERVIEW_ACTIVITY_01_STATE_TOKEN = "interview:activity_01" as const;
@@ -37,10 +34,6 @@ export type OnboardingOutboundPlanStep =
       kind: "send";
       message_key: OnboardingOutboundMessageKey;
       body: string;
-    }
-  | {
-      kind: "delay";
-      ms: number;
     };
 
 export type OnboardingInboundResult = {
@@ -134,22 +127,21 @@ export function handleOnboardingInbound(params: {
   if (params.stateToken === ONBOARDING_AWAITING_EXPLANATION_RESPONSE) {
     if (intent.pause) {
       return {
-        nextStateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
+        nextStateToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
         outboundPlan: [buildSendStep("onboarding_later", ONBOARDING_LATER)],
       };
     }
 
     return {
-      nextStateToken: ONBOARDING_AWAITING_INTERVIEW_START,
-      outboundPlan: [
-        buildSendStep("onboarding_message_1", ONBOARDING_MESSAGE_1),
-        { kind: "delay", ms: 8000 },
-        buildSendStep("onboarding_message_2", ONBOARDING_MESSAGE_2),
-        { kind: "delay", ms: 8000 },
-        buildSendStep("onboarding_message_3", ONBOARDING_MESSAGE_3),
-        { kind: "delay", ms: 8000 },
-        buildSendStep("onboarding_message_4", ONBOARDING_MESSAGE_4),
-      ],
+      nextStateToken: ONBOARDING_AWAITING_BURST,
+      outboundPlan: [],
+    };
+  }
+
+  if (params.stateToken === ONBOARDING_AWAITING_BURST) {
+    return {
+      nextStateToken: ONBOARDING_AWAITING_BURST,
+      outboundPlan: [],
     };
   }
 
@@ -204,59 +196,6 @@ export async function startOnboardingForUser(params: {
   };
 }
 
-export async function sendOnboardingBurst(params: {
-  currentStateToken: string | null;
-  burstIdempotencyKeyPrefix: string;
-  sendMessage: (input: SendOnboardingMessageInput) => Promise<void>;
-  persistState: (input: PersistOnboardingStateInput) => Promise<void>;
-  delay?: (ms: number) => Promise<void>;
-}): Promise<{ didSendBurst: boolean; nextStateToken: OnboardingStateToken }> {
-  if (isTokenAtOrBeyond(params.currentStateToken, ONBOARDING_AWAITING_INTERVIEW_START)) {
-    return {
-      didSendBurst: false,
-      nextStateToken: ONBOARDING_AWAITING_INTERVIEW_START,
-    };
-  }
-
-  const delay = params.delay ?? defaultBurstDelay;
-
-  await params.sendMessage({
-    messageKey: "onboarding_message_1",
-    body: ONBOARDING_MESSAGE_1,
-    idempotencyKey: `${params.burstIdempotencyKeyPrefix}:message_1`,
-  });
-  await delay(8000);
-
-  await params.sendMessage({
-    messageKey: "onboarding_message_2",
-    body: ONBOARDING_MESSAGE_2,
-    idempotencyKey: `${params.burstIdempotencyKeyPrefix}:message_2`,
-  });
-  await delay(8000);
-
-  await params.sendMessage({
-    messageKey: "onboarding_message_3",
-    body: ONBOARDING_MESSAGE_3,
-    idempotencyKey: `${params.burstIdempotencyKeyPrefix}:message_3`,
-  });
-  await delay(8000);
-
-  await params.sendMessage({
-    messageKey: "onboarding_message_4",
-    body: ONBOARDING_MESSAGE_4,
-    idempotencyKey: `${params.burstIdempotencyKeyPrefix}:message_4`,
-  });
-
-  await params.persistState({
-    nextStateToken: ONBOARDING_AWAITING_INTERVIEW_START,
-  });
-
-  return {
-    didSendBurst: true,
-    nextStateToken: ONBOARDING_AWAITING_INTERVIEW_START,
-  };
-}
-
 function buildSendStep(
   messageKey: OnboardingOutboundMessageKey,
   body: string,
@@ -286,25 +225,21 @@ function tokenOrder(token: string | null): number {
   if (token === ONBOARDING_AWAITING_EXPLANATION_RESPONSE) {
     return 2;
   }
-  if (token === ONBOARDING_AWAITING_INTERVIEW_START) {
+  if (token === ONBOARDING_AWAITING_BURST) {
     return 3;
   }
-  if (token === INTERVIEW_ACTIVITY_01_STATE_TOKEN) {
+  if (token === ONBOARDING_AWAITING_INTERVIEW_START) {
     return 4;
   }
-  if (token.startsWith("interview:")) {
+  if (token === INTERVIEW_ACTIVITY_01_STATE_TOKEN) {
     return 5;
+  }
+  if (token.startsWith("interview:")) {
+    return 6;
   }
   return 0;
 }
 
 function isTokenAtOrBeyond(token: string | null, targetToken: string): boolean {
   return tokenOrder(token) >= tokenOrder(targetToken);
-}
-
-async function defaultBurstDelay(ms: number): Promise<void> {
-  if (ms !== 8000) {
-    throw new Error(`Unsupported onboarding delay '${ms}'. Expected 8000.`);
-  }
-  await new Promise((r) => setTimeout(r, 8000));
 }

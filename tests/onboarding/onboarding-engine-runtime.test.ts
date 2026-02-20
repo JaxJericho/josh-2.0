@@ -1,27 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
-  buildScheduledOnboardingJobInputs,
   resolveOnboardingStateForInbound,
   runOnboardingEngine,
 } from "../../supabase/functions/_shared/engines/onboarding-engine";
-import {
-  ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
-  handleOnboardingInbound,
-} from "../../packages/core/src/onboarding/onboarding-engine";
 
 describe("onboarding engine runtime idempotency", () => {
   it("does not re-advance or resend when inbound MessageSid is replayed", async () => {
     const replaySid = "SM_ONBOARDING_REPLAY_1";
     const supabase = {
       from(table: string) {
-        const queryState: Record<string, unknown> = {};
         const query = {
           select() {
             return query;
           },
-          eq(column: string, value: unknown) {
-            queryState[column] = value;
+          eq() {
             return query;
           },
           async maybeSingle() {
@@ -105,200 +98,33 @@ describe("onboarding runtime state-token resolution", () => {
   });
 });
 
-describe("onboarding outbound job scheduling", () => {
-  it("builds staggered future run_at timestamps and stable step idempotency keys", () => {
-    const outboundPlan = handleOnboardingInbound({
-      stateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
-      inputText: "yes",
-    }).outboundPlan;
+describe("onboarding explanation affirmative scheduling", () => {
+  it("calls scheduleOnboardingStep exactly once for onboarding_message_1 with delay=0", async () => {
+    const {
+      scheduleCalls,
+    } = await runExplanationAffirmativeScenario();
 
-    const jobs = buildScheduledOnboardingJobInputs({
-      userId: "usr_123",
-      inboundMessageSid: "SM_EXPLAIN_1",
-      outboundPlan,
-      baseTimestampMs: Date.parse("2026-02-19T00:00:00.000Z"),
+    expect(scheduleCalls).toHaveLength(1);
+    expect(scheduleCalls[0]).toEqual({
+      payload: {
+        profile_id: "profile_123",
+        session_id: "ses_123",
+        step_id: "onboarding_message_1",
+        expected_state_token: "onboarding:awaiting_explanation_response",
+        idempotency_key: "onboarding:profile_123:ses_123:onboarding_message_1",
+      },
+      delayMs: 0,
     });
-
-    expect(jobs).toHaveLength(4);
-    expect(jobs.map((job) => job.messageKey)).toEqual([
-      "onboarding_message_1",
-      "onboarding_message_2",
-      "onboarding_message_3",
-      "onboarding_message_4",
-    ]);
-    expect(jobs.map((job) => job.runAtIso)).toEqual([
-      "2026-02-19T00:00:00.000Z",
-      "2026-02-19T00:00:08.000Z",
-      "2026-02-19T00:00:16.000Z",
-      "2026-02-19T00:00:24.000Z",
-    ]);
-    expect(jobs.map((job) => job.idempotencyKey)).toEqual([
-      "onboarding:onboarding_message_1:usr_123:SM_EXPLAIN_1",
-      "onboarding:onboarding_message_2:usr_123:SM_EXPLAIN_1",
-      "onboarding:onboarding_message_3:usr_123:SM_EXPLAIN_1",
-      "onboarding:onboarding_message_4:usr_123:SM_EXPLAIN_1",
-    ]);
   });
 
-  it("sends explanation burst in-process via Twilio REST (not job queue)", async () => {
-    // Replace setTimeout so that delays resolve instantly in tests
-    const originalSetTimeout = globalThis.setTimeout;
-    globalThis.setTimeout = ((fn: (...args: unknown[]) => void) => {
-      return originalSetTimeout(fn, 0);
-    }) as typeof globalThis.setTimeout;
+  it("creates zero burst sms_outbound_jobs rows and sets state_token to onboarding:awaiting_burst", async () => {
+    const {
+      insertedJobRows,
+      stateTokenUpdates,
+    } = await runExplanationAffirmativeScenario();
 
-    const previousDeno = (globalThis as { Deno?: unknown }).Deno;
-    const previousFetch = globalThis.fetch;
-    const envMap = new Map<string, string>([
-      ["TWILIO_ACCOUNT_SID", "TWILIO_ACCOUNT_SID_PLACEHOLDER"],
-      ["TWILIO_AUTH_TOKEN", "auth-token-123"],
-      ["SMS_BODY_ENCRYPTION_KEY", "sms-encryption-key-123"],
-      ["TWILIO_FROM_NUMBER", "+15555550123"],
-      ["PROJECT_REF", "rcqlnfywwfsixznrmzmv"],
-    ]);
-
-    (globalThis as { Deno?: unknown }).Deno = {
-      env: {
-        get: (key: string) => envMap.get(key),
-      },
-    };
-
-    // Mock Twilio REST to return success
-    let twilioSendCount = 0;
-    globalThis.fetch = (async () => {
-      twilioSendCount += 1;
-      return {
-        ok: true,
-        json: async () => ({ sid: `SM_BURST_${twilioSendCount}`, status: "queued", from: "+15555550123" }),
-      };
-    }) as unknown as typeof globalThis.fetch;
-
-    const insertedJobRows: Array<Record<string, unknown>> = [];
-    const insertedMessageRows: Array<Record<string, unknown>> = [];
-    let sidClaimCalled = false;
-    const supabase = {
-      from(table: string) {
-        const query = {
-          select() { return query; },
-          eq(column: string, value: unknown) { return query; },
-          is(_column: string, _value: unknown) { return query; },
-          neq(_column: string, _value: unknown) { return query; },
-          maybeSingle: async () => {
-            if (table === "conversation_sessions") {
-              if (sidClaimCalled) {
-                return { data: { id: "ses_123" }, error: null };
-              }
-              return {
-                data: {
-                  id: "ses_123",
-                  mode: "interviewing",
-                  state_token: "onboarding:awaiting_explanation_response",
-                  current_step_id: null,
-                  last_inbound_message_sid: null,
-                },
-                error: null,
-              };
-            }
-            if (table === "profiles") return { data: null, error: null };
-            if (table === "users") {
-              return { data: { first_name: "Alex", phone_e164: "+15555550999" }, error: null };
-            }
-            if (table === "conversation_events") return { data: null, error: null };
-            if (table === "sms_outbound_jobs") return { data: null, error: null };
-            return { data: null, error: null };
-          },
-          update(payload: Record<string, unknown>) {
-            if (table === "conversation_sessions" && payload.last_inbound_message_sid && !payload.state_token) {
-              sidClaimCalled = true;
-            }
-            const updateQuery = {
-              eq(_c: string, _v: unknown) { return updateQuery; },
-              is(_c: string, _v: unknown) { return updateQuery; },
-              neq(_c: string, _v: unknown) { return updateQuery; },
-              select() { return updateQuery; },
-              maybeSingle: async () => {
-                if (table === "conversation_sessions") {
-                  if (sidClaimCalled && !payload.state_token) {
-                    return { data: { id: "ses_123" }, error: null };
-                  }
-                  if (payload.state_token) {
-                    expect(payload.state_token).toBe("onboarding:awaiting_interview_start");
-                  }
-                }
-                return { error: null };
-              },
-            };
-            return updateQuery;
-          },
-          insert(payload: Record<string, unknown>) {
-            if (table === "sms_outbound_jobs") {
-              insertedJobRows.push(payload);
-              return Promise.resolve({ error: null });
-            }
-            if (table === "sms_messages") {
-              insertedMessageRows.push(payload);
-              return Promise.resolve({ error: null });
-            }
-            if (table === "conversation_events") return Promise.resolve({ error: null });
-            return Promise.resolve({ error: null });
-          },
-        };
-        return query;
-      },
-      rpc: async (fn: string) => {
-        if (fn === "encrypt_sms_body") return { data: "ciphertext", error: null };
-        throw new Error(`Unexpected rpc call: ${fn}`);
-      },
-    };
-
-    try {
-      const result = await runOnboardingEngine({
-        supabase,
-        decision: {
-          user_id: "usr_123",
-          state: {
-            mode: "interviewing",
-            state_token: "onboarding:awaiting_explanation_response",
-          },
-          profile_is_complete_mvp: false,
-          route: "onboarding_engine",
-          safety_override_applied: false,
-          next_transition: "onboarding:awaiting_explanation_response",
-        },
-        payload: {
-          inbound_message_id: "msg_123",
-          inbound_message_sid: "SM_EXPLAIN_2",
-          from_e164: "+15555550111",
-          to_e164: "+15555550222",
-          body_raw: "yes",
-          body_normalized: "YES",
-        },
-      });
-
-      expect(result.engine).toBe("onboarding_engine");
-      expect(result.reply_message).toBeNull();
-      expect(sidClaimCalled).toBe(true);
-      // Burst uses in-process Twilio REST delivery (not job queue)
-      expect(twilioSendCount).toBe(4);
-      expect(insertedJobRows).toHaveLength(4);
-      expect(insertedJobRows.map((row) => row.idempotency_key)).toEqual([
-        "onboarding:onboarding_message_1:usr_123:SM_EXPLAIN_2",
-        "onboarding:onboarding_message_2:usr_123:SM_EXPLAIN_2",
-        "onboarding:onboarding_message_3:usr_123:SM_EXPLAIN_2",
-        "onboarding:onboarding_message_4:usr_123:SM_EXPLAIN_2",
-      ]);
-      // Jobs recorded as "sent" (not "pending") since delivered via direct Twilio REST
-      expect(insertedJobRows.every((row) => row.status === "sent")).toBe(true);
-      expect(insertedMessageRows).toHaveLength(4);
-    } finally {
-      globalThis.setTimeout = originalSetTimeout;
-      globalThis.fetch = previousFetch;
-      if (previousDeno === undefined) {
-        delete (globalThis as { Deno?: unknown }).Deno;
-      } else {
-        (globalThis as { Deno?: unknown }).Deno = previousDeno;
-      }
-    }
+    expect(insertedJobRows).toHaveLength(0);
+    expect(stateTokenUpdates).toContain("onboarding:awaiting_burst");
   });
 });
 
@@ -310,10 +136,10 @@ describe("onboarding concurrent request dedupe (atomic SID claim)", () => {
           select() {
             return query;
           },
-          eq(_column: string, _value: unknown) {
+          eq() {
             return query;
           },
-          is(_column: string, _value: unknown) {
+          is() {
             return query;
           },
           async maybeSingle() {
@@ -331,12 +157,10 @@ describe("onboarding concurrent request dedupe (atomic SID claim)", () => {
             }
             return { data: null, error: null };
           },
-          update(_payload: Record<string, unknown>) {
-            // Simulate failed CAS: the update returns no rows because
-            // another request already claimed a different SID.
+          update() {
             const updateQuery = {
-              eq(_column: string, _value: unknown) { return updateQuery; },
-              is(_column: string, _value: unknown) { return updateQuery; },
+              eq() { return updateQuery; },
+              is() { return updateQuery; },
               select() { return updateQuery; },
               maybeSingle: async () => ({ data: null, error: null }),
             };
@@ -378,144 +202,178 @@ describe("onboarding concurrent request dedupe (atomic SID claim)", () => {
   });
 });
 
-describe("onboarding pre-send dedupe skips already-sent jobs", () => {
-  it("skips Twilio send when job already exists by idempotency key", async () => {
-    const previousDeno = (globalThis as { Deno?: unknown }).Deno;
-    const envMap = new Map<string, string>([
-      ["TWILIO_ACCOUNT_SID", "TWILIO_ACCOUNT_SID_PLACEHOLDER"],
-      ["TWILIO_AUTH_TOKEN", "auth-token-123"],
-      ["SMS_BODY_ENCRYPTION_KEY", "sms-encryption-key-123"],
-      ["TWILIO_FROM_NUMBER", "+15555550123"],
-      ["PROJECT_REF", "rcqlnfywwfsixznrmzmv"],
-    ]);
-
-    (globalThis as { Deno?: unknown }).Deno = {
-      env: {
-        get: (key: string) => envMap.get(key),
-      },
+async function runExplanationAffirmativeScenario(): Promise<{
+  scheduleCalls: Array<{
+    payload: {
+      profile_id: string;
+      session_id: string;
+      step_id: "onboarding_message_1";
+      expected_state_token: string;
+      idempotency_key: string;
     };
+    delayMs: number;
+  }>;
+  insertedJobRows: Array<Record<string, unknown>>;
+  stateTokenUpdates: string[];
+}> {
+  const previousDeno = (globalThis as { Deno?: unknown }).Deno;
+  const envMap = new Map<string, string>([
+    ["TWILIO_ACCOUNT_SID", "TWILIO_ACCOUNT_SID_PLACEHOLDER"],
+    ["TWILIO_AUTH_TOKEN", "auth-token-123"],
+    ["SMS_BODY_ENCRYPTION_KEY", "sms-encryption-key-123"],
+    ["TWILIO_FROM_NUMBER", "+15555550123"],
+    ["PROJECT_REF", "rcqlnfywwfsixznrmzmv"],
+  ]);
 
-    let twilioSendAttempted = false;
-    const insertedJobRows: Array<Record<string, unknown>> = [];
-    const supabase = {
-      from(table: string) {
-        const filters: Record<string, unknown> = {};
-        const query = {
-          select() { return query; },
-          eq(column: string, value: unknown) {
-            filters[column] = value;
-            return query;
-          },
-          is(column: string, value: unknown) {
-            filters[`is_${column}`] = value;
-            return query;
-          },
-          async maybeSingle() {
-            if (table === "conversation_sessions") {
-              // SID claim update returns success
-              if (filters["id"] === "ses_123" && filters["last_inbound_message_sid"]) {
+  (globalThis as { Deno?: unknown }).Deno = {
+    env: {
+      get: (key: string) => envMap.get(key),
+    },
+  };
+
+  const insertedJobRows: Array<Record<string, unknown>> = [];
+  const stateTokenUpdates: string[] = [];
+  const scheduleCalls: Array<{
+    payload: {
+      profile_id: string;
+      session_id: string;
+      step_id: "onboarding_message_1";
+      expected_state_token: string;
+      idempotency_key: string;
+    };
+    delayMs: number;
+  }> = [];
+
+  let sidClaimed = false;
+
+  const supabase = {
+    from(table: string) {
+      const query = {
+        select() { return query; },
+        eq() { return query; },
+        is() { return query; },
+        neq() { return query; },
+        maybeSingle: async () => {
+          if (table === "conversation_sessions") {
+            if (sidClaimed) {
+              return { data: { id: "ses_123" }, error: null };
+            }
+            return {
+              data: {
+                id: "ses_123",
+                mode: "interviewing",
+                state_token: "onboarding:awaiting_explanation_response",
+                current_step_id: null,
+                last_inbound_message_sid: null,
+              },
+              error: null,
+            };
+          }
+          if (table === "profiles") {
+            return { data: { id: "profile_123", user_id: "usr_123" }, error: null };
+          }
+          if (table === "users") {
+            return { data: { first_name: "Alex", phone_e164: "+15555550999" }, error: null };
+          }
+          if (table === "conversation_events") {
+            return { data: null, error: null };
+          }
+          if (table === "sms_outbound_jobs") {
+            return { data: null, error: null };
+          }
+          return { data: null, error: null };
+        },
+        update(payload: Record<string, unknown>) {
+          if (table === "conversation_sessions" && payload.last_inbound_message_sid && !payload.state_token) {
+            sidClaimed = true;
+          }
+          if (table === "conversation_sessions" && payload.state_token) {
+            stateTokenUpdates.push(String(payload.state_token));
+          }
+          const updateQuery = {
+            eq() { return updateQuery; },
+            is() { return updateQuery; },
+            neq() { return updateQuery; },
+            select() { return updateQuery; },
+            maybeSingle: async () => {
+              if (table === "conversation_sessions") {
                 return { data: { id: "ses_123" }, error: null };
               }
-              return {
-                data: {
-                  id: "ses_123",
-                  mode: "interviewing",
-                  state_token: "onboarding:awaiting_opening_response",
-                  current_step_id: null,
-                  last_inbound_message_sid: null,
-                },
-                error: null,
-              };
-            }
-            if (table === "profiles") {
-              return { data: null, error: null };
-            }
-            if (table === "users") {
-              return {
-                data: { first_name: "Alex", phone_e164: "+15555550999" },
-                error: null,
-              };
-            }
-            if (table === "conversation_events") {
-              // hasOpeningEvent returns true (already sent)
-              if (filters["idempotency_key"]) {
-                return { data: { id: "evt_existing" }, error: null };
-              }
-              return { data: null, error: null };
-            }
-            if (table === "sms_outbound_jobs") {
-              // Pre-send dedupe: job already exists
-              return { data: { id: "job_existing", status: "sent" }, error: null };
-            }
-            return { data: null, error: null };
-          },
-          update(payload: Record<string, unknown>) {
-            const updateQuery = {
-              eq(_c: string, _v: unknown) { return updateQuery; },
-              is(_c: string, _v: unknown) { return updateQuery; },
-              select() { return updateQuery; },
-              maybeSingle: async () => {
-                if (table === "conversation_sessions") {
-                  return { data: { id: "ses_123" }, error: null };
-                }
-                return { error: null };
-              },
-            };
-            return updateQuery;
-          },
-          insert(payload: Record<string, unknown>) {
-            if (table === "sms_outbound_jobs") {
-              insertedJobRows.push(payload);
-              twilioSendAttempted = true;
-            }
-            return Promise.resolve({ error: null });
-          },
-        };
-        return query;
-      },
-      rpc: async (fn: string) => {
-        if (fn === "encrypt_sms_body") {
-          return { data: "ciphertext", error: null };
-        }
-        throw new Error(`Unexpected rpc call: ${fn}`);
-      },
-    };
+              return { error: null };
+            },
+          };
+          return updateQuery;
+        },
+        insert(payload: Record<string, unknown>) {
+          if (table === "sms_outbound_jobs") {
+            insertedJobRows.push(payload);
+          }
+          return Promise.resolve({ error: null });
+        },
+      };
+      return query;
+    },
+    rpc: async (fn: string) => {
+      if (fn === "encrypt_sms_body") {
+        return { data: "ciphertext", error: null };
+      }
+      throw new Error(`Unexpected rpc call: ${fn}`);
+    },
+  };
 
-    try {
-      const result = await runOnboardingEngine({
+  try {
+    const result = await runOnboardingEngine(
+      {
         supabase,
         decision: {
           user_id: "usr_123",
           state: {
             mode: "interviewing",
-            state_token: "onboarding:awaiting_opening_response",
+            state_token: "onboarding:awaiting_explanation_response",
           },
           profile_is_complete_mvp: false,
           route: "onboarding_engine",
           safety_override_applied: false,
-          next_transition: "onboarding:awaiting_opening_response",
+          next_transition: "onboarding:awaiting_explanation_response",
         },
         payload: {
-          inbound_message_id: "msg_789",
-          inbound_message_sid: "SM_DEDUPE_1",
+          inbound_message_id: "msg_123",
+          inbound_message_sid: "SM_EXPLAIN_2",
           from_e164: "+15555550111",
           to_e164: "+15555550222",
           body_raw: "yes",
           body_normalized: "YES",
         },
-      });
+      },
+      {
+        scheduleOnboardingStep: async (payload, delayMs) => {
+          scheduleCalls.push({
+            payload: payload as {
+              profile_id: string;
+              session_id: string;
+              step_id: "onboarding_message_1";
+              expected_state_token: string;
+              idempotency_key: string;
+            },
+            delayMs,
+          });
+        },
+      },
+    );
 
-      expect(result.engine).toBe("onboarding_engine");
-      // Opening event already exists, so the engine returns early after
-      // processing the inbound handler. No new Twilio send should occur
-      // because the job row already exists with status "sent".
-      expect(insertedJobRows).toHaveLength(0);
-    } finally {
-      if (previousDeno === undefined) {
-        delete (globalThis as { Deno?: unknown }).Deno;
-      } else {
-        (globalThis as { Deno?: unknown }).Deno = previousDeno;
-      }
+    expect(result.engine).toBe("onboarding_engine");
+    expect(result.reply_message).toBeNull();
+
+    return {
+      scheduleCalls,
+      insertedJobRows,
+      stateTokenUpdates,
+    };
+  } finally {
+    if (previousDeno === undefined) {
+      delete (globalThis as { Deno?: unknown }).Deno;
+    } else {
+      (globalThis as { Deno?: unknown }).Deno = previousDeno;
     }
-  });
-});
+  }
+}

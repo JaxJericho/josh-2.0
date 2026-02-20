@@ -5,6 +5,7 @@ import {
   evaluateEntitlements,
 } from "../../packages/core/src/entitlements/evaluate-entitlements";
 import {
+  ONBOARDING_AWAITING_BURST,
   ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
   ONBOARDING_AWAITING_INTERVIEW_START,
   ONBOARDING_AWAITING_OPENING_RESPONSE,
@@ -24,8 +25,6 @@ import {
 import type { Database } from "../../supabase/types/database";
 import { logEvent } from "./observability";
 import { scheduleOnboardingStep, verifyQStashSignature } from "./qstash";
-
-const ONBOARDING_BURST_STATE_PREFIX = "onboarding:awaiting_burst:";
 
 const ONBOARDING_STEP_BODIES: Record<OnboardingStepId, string> = {
   onboarding_message_1: ONBOARDING_MESSAGE_1,
@@ -92,7 +91,7 @@ function resolveNextExpectedStateToken(stepId: OnboardingStepId): string {
   if (!nextStepId) {
     return ONBOARDING_AWAITING_INTERVIEW_START;
   }
-  return `${ONBOARDING_BURST_STATE_PREFIX}${nextStepId}`;
+  return ONBOARDING_AWAITING_BURST;
 }
 
 function buildExpectedIdempotencyKey(payload: {

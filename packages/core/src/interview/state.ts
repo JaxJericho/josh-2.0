@@ -92,6 +92,7 @@ const INTERVIEW_ACTIVE_START_STEP_ID: InterviewQuestionStepId = "activity_01";
 export const ONBOARDING_STATE_TOKENS = [
   "onboarding:awaiting_opening_response",
   "onboarding:awaiting_explanation_response",
+  "onboarding:awaiting_burst",
   "onboarding:awaiting_interview_start",
 ] as const;
 
