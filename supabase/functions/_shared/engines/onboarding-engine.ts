@@ -60,6 +60,9 @@ type OnboardingEngineDependencies = {
   ) => Promise<void>;
 };
 
+const HARNESS_QSTASH_MODE_VALUES = new Set(["stub", "real"]);
+const HARNESS_QSTASH_STUB_HEADER = "x-harness-qstash-stub";
+
 const DEFAULT_ONBOARDING_ENGINE_DEPENDENCIES: OnboardingEngineDependencies = {
   scheduleOnboardingStep: scheduleOnboardingStep,
 };
@@ -785,6 +788,26 @@ async function scheduleOnboardingStep(
     throw new Error("delayMs must be a non-negative finite number.");
   }
 
+  if (resolveHarnessQStashMode() === "stub") {
+    const response = await fetch(resolveOnboardingStepUrl(), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        [HARNESS_QSTASH_STUB_HEADER]: "1",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const details = await response.text().catch(() => "");
+      throw new Error(
+        `Stub onboarding step invocation failed (status=${response.status})${details ? `: ${details}` : ""}`,
+      );
+    }
+
+    return;
+  }
+
   const endpoint = resolveQStashPublishEndpoint(resolveOnboardingStepUrl());
   const delaySeconds = Math.ceil(delayMs / 1000);
 
@@ -804,6 +827,19 @@ async function scheduleOnboardingStep(
       `QStash publish failed (status=${response.status})${details ? `: ${details}` : ""}`,
     );
   }
+}
+
+function resolveHarnessQStashMode(): "stub" | "real" {
+  const raw = readEnv("HARNESS_QSTASH_MODE")?.trim().toLowerCase();
+  if (!raw) {
+    return "real";
+  }
+
+  if (!HARNESS_QSTASH_MODE_VALUES.has(raw)) {
+    throw new Error("HARNESS_QSTASH_MODE must be either 'stub' or 'real'.");
+  }
+
+  return raw as "stub" | "real";
 }
 
 function resolveQStashPublishEndpoint(targetUrl: string): string {

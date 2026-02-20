@@ -26,6 +26,9 @@ import type { Database } from "../../supabase/types/database";
 import { logEvent } from "./observability";
 import { scheduleOnboardingStep, verifyQStashSignature } from "./qstash";
 
+const HARNESS_QSTASH_STUB_HEADER = "x-harness-qstash-stub";
+const HARNESS_ADMIN_SECRET_HEADER = "x-admin-secret";
+
 const ONBOARDING_STEP_BODIES: Record<OnboardingStepId, string> = {
   onboarding_message_1: ONBOARDING_MESSAGE_1,
   onboarding_message_2: ONBOARDING_MESSAGE_2,
@@ -172,7 +175,9 @@ export async function handleOnboardingStepRequest(
   const correlationId = request.headers.get("x-request-id") ?? crypto.randomUUID();
 
   // a) Validate QStash signature first.
-  const signatureValid = await deps.verifyQStashSignature(request);
+  const signatureValid = isStubHarnessStepRequest(request)
+    ? true
+    : await deps.verifyQStashSignature(request);
   if (!signatureValid) {
     return jsonResponse({ error: "Unauthorized" }, 401);
   }
@@ -504,6 +509,39 @@ function requireEnv(name: string): string {
     throw new Error(`Missing required env var: ${name}`);
   }
   return value;
+}
+
+function isStubHarnessStepRequest(request: Request): boolean {
+  if (request.headers.get(HARNESS_QSTASH_STUB_HEADER) !== "1") {
+    return false;
+  }
+
+  const appEnv = readEnv("APP_ENV");
+  if (appEnv === "production") {
+    return false;
+  }
+
+  const mode = readEnv("HARNESS_QSTASH_MODE");
+  if (mode === "stub") {
+    return true;
+  }
+
+  const configuredSecret = readEnv("STAGING_RUNNER_SECRET") ?? readEnv("QSTASH_RUNNER_SECRET");
+  const providedSecret = request.headers.get(HARNESS_ADMIN_SECRET_HEADER)?.trim();
+  if (!configuredSecret || !providedSecret) {
+    return false;
+  }
+
+  return timingSafeEqual(configuredSecret, providedSecret);
+}
+
+function timingSafeEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function resolveTwilioStatusCallbackUrl(params: {

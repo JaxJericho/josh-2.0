@@ -2,6 +2,8 @@ import { Client, Receiver } from "@upstash/qstash";
 import type { OnboardingStepId } from "../../packages/core/src/onboarding/step-ids";
 
 const ONBOARDING_STEP_PATH = "/api/onboarding/step";
+const HARNESS_QSTASH_STUB_HEADER = "x-harness-qstash-stub";
+const HARNESS_QSTASH_MODE_VALUES = new Set(["stub", "real"]);
 
 export type OnboardingStepPayload = {
   profile_id: string;
@@ -52,6 +54,19 @@ function resolveOnboardingStepUrl(): string {
   return new URL(ONBOARDING_STEP_PATH, resolveOnboardingBaseUrl()).toString();
 }
 
+function resolveHarnessQStashMode(): "stub" | "real" {
+  const raw = process.env.HARNESS_QSTASH_MODE?.trim().toLowerCase();
+  if (!raw) {
+    return "real";
+  }
+
+  if (!HARNESS_QSTASH_MODE_VALUES.has(raw)) {
+    throw new Error("HARNESS_QSTASH_MODE must be either 'stub' or 'real'.");
+  }
+
+  return raw as "stub" | "real";
+}
+
 function createQStashReceiver(): Receiver {
   return new Receiver({
     currentSigningKey: requireEnv("QSTASH_CURRENT_SIGNING_KEY"),
@@ -86,6 +101,25 @@ export async function verifyQStashSignature(request: Request): Promise<boolean> 
 export async function scheduleOnboardingStep(payload: OnboardingStepPayload, delayMs: number) {
   if (!Number.isFinite(delayMs) || delayMs < 0) {
     throw new Error("delayMs must be a non-negative finite number.");
+  }
+
+  if (resolveHarnessQStashMode() === "stub") {
+    const response = await fetch(resolveOnboardingStepUrl(), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        [HARNESS_QSTASH_STUB_HEADER]: "1",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const details = await response.text().catch(() => "");
+      throw new Error(
+        `Stub onboarding step invocation failed (status=${response.status})${details ? `: ${details}` : ""}`,
+      );
+    }
+    return response;
   }
 
   return createQStashClient().publishJSON({

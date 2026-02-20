@@ -7,6 +7,7 @@ const CWD = process.cwd();
 const CONTRACT_PATH = path.join(CWD, "docs", "runbooks", "environment-contract.md");
 const ENV_FILES = [".env.local", ".env"];
 const VALID_ENVS = new Set(["local", "staging", "production"]);
+const VALID_HARNESS_QSTASH_MODES = new Set(["stub", "real"]);
 const REQUIRED_ONE_OF = [["TWILIO_MESSAGING_SERVICE_SID", "TWILIO_FROM_NUMBER"]];
 const REQUIRED_QSTASH_VARS = ["QSTASH_TOKEN", "QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY"];
 const STRIPE_WEBHOOK_SECRET_PATTERN = /^whsec_[A-Za-z0-9]+$/;
@@ -342,6 +343,25 @@ function checkQStashVars() {
   }
 }
 
+function checkHarnessQStashMode() {
+  const raw = process.env.HARNESS_QSTASH_MODE;
+  if (!isSet(raw)) {
+    return;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (!VALID_HARNESS_QSTASH_MODES.has(normalized)) {
+    addResult(
+      "FAIL",
+      "Harness",
+      `HARNESS_QSTASH_MODE='${raw}' is invalid. Expected one of: stub, real.`
+    );
+    return;
+  }
+
+  addResult("PASS", "Harness", `HARNESS_QSTASH_MODE is set to '${normalized}'.`);
+}
+
 async function checkSupabaseConnectivity() {
   const supabaseUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
@@ -482,6 +502,7 @@ async function main() {
   }
 
   checkQStashVars();
+  checkHarnessQStashMode();
   checkUrlVars();
   await checkSupabaseConnectivity();
 

@@ -118,6 +118,7 @@ Canonical scheduler path is Vercel Cron -> protected Next.js route -> Supabase r
 | Name | Required | Used by | Format / constraints | Where set (local / staging / production) | Security / rotation notes |
 |---|---|---|---|---|---|
 | `DOCTOR_REMOTE` | No | `scripts/doctor.mjs` remote-check toggle | `1` to enable remote mode | Local shell only. | Non-secret. |
+| `HARNESS_QSTASH_MODE` | No (tooling) | `scripts/staging-onboarding-e2e.mjs`, harness-only scheduling mode switch for onboarding burst verification | Enum: `stub` or `real` | Local: shell/`.env.local` when running `pnpm staging:onboarding:e2e`. Staging/Production: optional; if set, keep `real` unless intentionally running stub harness validation. | Non-secret. Misconfiguration can invalidate harness results; enforce allowed values. |
 | `TWILIO_REPLAY_MODE` | No | `scripts/verify/twilio_inbound_replay.mjs` request shape selector | `inbound` or `status` | Local shell only. | Non-secret. |
 | `TWILIO_INBOUND_URL` | No | Replay script inbound target URL | Absolute URL | Local shell only. | Non-secret. |
 | `TWILIO_STATUS_CALLBACK_URL` | No | Replay script status-callback target URL | Absolute URL | Local shell only. | Non-secret. |
