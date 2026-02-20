@@ -1,15 +1,17 @@
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   INTERVIEW_ACTIVITY_01_STATE_TOKEN,
+  ONBOARDING_AWAITING_BURST,
   ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
   ONBOARDING_AWAITING_INTERVIEW_START,
   ONBOARDING_AWAITING_OPENING_RESPONSE,
   handleOnboardingInbound,
   startOnboardingForUser,
   type OnboardingOutboundMessageKey,
-  type OnboardingOutboundPlanStep,
   type OnboardingStateToken,
 } from "../../../../packages/core/src/onboarding/onboarding-engine.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import type { OnboardingStepId } from "../../../../packages/core/src/onboarding/step-ids.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { createSupabaseEntitlementsRepository, evaluateEntitlements } from "../../../../packages/core/src/entitlements/evaluate-entitlements.ts";
 import type {
@@ -43,15 +45,28 @@ type OutboundTwilioConfig = {
   encryptionKey: string;
 };
 
-type ScheduledOnboardingJobInput = {
-  messageKey: OnboardingOutboundMessageKey;
-  body: string;
-  idempotencyKey: string;
-  runAtIso: string;
+type OnboardingStepPayload = {
+  profile_id: string;
+  session_id: string;
+  step_id: OnboardingStepId;
+  expected_state_token: string;
+  idempotency_key: string;
+};
+
+type OnboardingEngineDependencies = {
+  scheduleOnboardingStep: (
+    payload: OnboardingStepPayload,
+    delayMs: number,
+  ) => Promise<void>;
+};
+
+const DEFAULT_ONBOARDING_ENGINE_DEPENDENCIES: OnboardingEngineDependencies = {
+  scheduleOnboardingStep: scheduleOnboardingStep,
 };
 
 export async function runOnboardingEngine(
   input: EngineDispatchInput,
+  dependencies: OnboardingEngineDependencies = DEFAULT_ONBOARDING_ENGINE_DEPENDENCIES,
 ): Promise<EngineDispatchResult> {
   const session = await fetchOrCreateConversationSession(
     input.supabase,
@@ -168,15 +183,7 @@ export async function runOnboardingEngine(
     stateToken: onboardingStateToken,
     inputText: input.payload.body_raw,
   });
-
-  // Spec: all onboarding steps use in-process sequential delivery via
-  // Twilio REST API with real delays — NOT the outbound job queue.
   for (const step of inboundResult.outboundPlan) {
-    if (step.kind === "delay") {
-      await new Promise((r) => setTimeout(r, step.ms));
-      continue;
-    }
-
     await sendAndRecordOutboundMessage({
       supabase: input.supabase,
       userId: input.decision.user_id,
@@ -188,6 +195,32 @@ export async function runOnboardingEngine(
       body: step.body,
       twilio,
     });
+  }
+
+  const shouldScheduleBurstStart =
+    onboardingStateToken === ONBOARDING_AWAITING_EXPLANATION_RESPONSE &&
+    inboundResult.nextStateToken === ONBOARDING_AWAITING_BURST;
+
+  if (shouldScheduleBurstStart) {
+    if (!profileId) {
+      throw new Error("Unable to schedule onboarding burst without a profile id.");
+    }
+
+    const stepId: OnboardingStepId = "onboarding_message_1";
+    await dependencies.scheduleOnboardingStep(
+      {
+        profile_id: profileId,
+        session_id: session.id,
+        step_id: stepId,
+        expected_state_token: onboardingStateToken,
+        idempotency_key: buildOnboardingStepIdempotencyKey({
+          profileId,
+          sessionId: session.id,
+          stepId,
+        }),
+      },
+      0,
+    );
   }
 
   await persistConversationSessionState({
@@ -287,6 +320,7 @@ export async function startOnboardingForActivatedUser(params: {
   if (
     hasOpeningEvent ||
     session.state_token.startsWith("interview:") ||
+    session.state_token === ONBOARDING_AWAITING_BURST ||
     session.state_token === ONBOARDING_AWAITING_EXPLANATION_RESPONSE ||
     session.state_token === ONBOARDING_AWAITING_INTERVIEW_START
   ) {
@@ -368,6 +402,7 @@ function assertOnboardingToken(stateToken: string): OnboardingStateToken {
   if (
     stateToken !== ONBOARDING_AWAITING_OPENING_RESPONSE &&
     stateToken !== ONBOARDING_AWAITING_EXPLANATION_RESPONSE &&
+    stateToken !== ONBOARDING_AWAITING_BURST &&
     stateToken !== ONBOARDING_AWAITING_INTERVIEW_START
   ) {
     throw new Error(`Invalid onboarding state token '${stateToken}'.`);
@@ -382,6 +417,14 @@ function onboardingOpeningSendIdempotencyKey(userId: string): string {
 
 function onboardingOpeningEventIdempotencyKey(userId: string): string {
   return `onboarding:event:opening:${userId}`;
+}
+
+function buildOnboardingStepIdempotencyKey(params: {
+  profileId: string;
+  sessionId: string;
+  stepId: OnboardingStepId;
+}): string {
+  return `onboarding:${params.profileId}:${params.sessionId}:${params.stepId}`;
 }
 
 async function fetchProfileId(
@@ -570,123 +613,6 @@ async function insertConversationEvent(params: {
   }
 }
 
-export function buildScheduledOnboardingJobInputs(params: {
-  userId: string;
-  inboundMessageSid: string;
-  outboundPlan: OnboardingOutboundPlanStep[];
-  baseTimestampMs?: number;
-}): ScheduledOnboardingJobInput[] {
-  const baseTimestampMs = params.baseTimestampMs ?? Date.now();
-  let delayMs = 0;
-  const jobs: ScheduledOnboardingJobInput[] = [];
-
-  for (const step of params.outboundPlan) {
-    if (step.kind === "delay") {
-      delayMs += step.ms;
-      continue;
-    }
-
-    jobs.push({
-      messageKey: step.message_key,
-      body: step.body,
-      idempotencyKey: `onboarding:${step.message_key}:${params.userId}:${params.inboundMessageSid}`,
-      runAtIso: new Date(baseTimestampMs + delayMs).toISOString(),
-    });
-  }
-
-  return jobs;
-}
-
-async function enqueueOnboardingOutboundPlan(params: {
-  supabase: EngineDispatchInput["supabase"];
-  userId: string;
-  toE164: string;
-  fallbackFromE164: string | null;
-  correlationId: string | null;
-  inboundMessageSid: string;
-  outboundPlan: OnboardingOutboundPlanStep[];
-  twilio: OutboundTwilioConfig;
-}): Promise<void> {
-  const jobInputs = buildScheduledOnboardingJobInputs({
-    userId: params.userId,
-    inboundMessageSid: params.inboundMessageSid,
-    outboundPlan: params.outboundPlan,
-  });
-
-  for (const jobInput of jobInputs) {
-    await enqueueAndRecordOutboundMessageJob({
-      supabase: params.supabase,
-      userId: params.userId,
-      toE164: params.toE164,
-      fallbackFromE164: params.fallbackFromE164,
-      correlationId: params.correlationId,
-      idempotencyKey: jobInput.idempotencyKey,
-      messageKey: jobInput.messageKey,
-      body: jobInput.body,
-      runAtIso: jobInput.runAtIso,
-      twilio: params.twilio,
-    });
-  }
-}
-
-async function enqueueAndRecordOutboundMessageJob(params: {
-  supabase: EngineDispatchInput["supabase"];
-  userId: string;
-  toE164: string;
-  fallbackFromE164: string | null;
-  correlationId: string | null;
-  idempotencyKey: string;
-  messageKey: OnboardingOutboundMessageKey;
-  body: string;
-  runAtIso: string;
-  twilio: OutboundTwilioConfig;
-}): Promise<void> {
-  // Skip enqueue if a job with this idempotency key already exists (sent or pending).
-  const existingJob = await fetchOutboundJobByIdempotencyKey(
-    params.supabase,
-    params.idempotencyKey,
-  );
-  if (existingJob) {
-    return;
-  }
-
-  const encryptedBody = await encryptBody(params.supabase, params.body, params.twilio.encryptionKey);
-
-  const resolvedFromE164 = params.twilio.fromE164 ?? params.fallbackFromE164 ?? "";
-  if (!resolvedFromE164) {
-    throw new Error("Unable to resolve outbound from_e164 for onboarding delivery.");
-  }
-
-  const { error: outboundJobError } = await params.supabase
-    .from("sms_outbound_jobs")
-    .insert(
-      {
-        user_id: params.userId,
-        to_e164: params.toE164,
-        from_e164: resolvedFromE164,
-        body_ciphertext: encryptedBody,
-        body_iv: null,
-        body_tag: null,
-        key_version: 1,
-        purpose: onboardingOutboundPurpose(params.messageKey),
-        status: "pending",
-        twilio_message_sid: null,
-        attempts: 0,
-        next_attempt_at: null,
-        last_error: null,
-        last_status_at: null,
-        run_at: params.runAtIso,
-        correlation_id: params.correlationId,
-        idempotency_key: params.idempotencyKey,
-      },
-      { onConflict: "idempotency_key", ignoreDuplicates: true },
-    );
-
-  if (outboundJobError && !isDuplicateKeyError(outboundJobError)) {
-    throw new Error("Unable to persist onboarding outbound job.");
-  }
-}
-
 async function sendAndRecordOutboundMessage(params: {
   supabase: EngineDispatchInput["supabase"];
   userId: string;
@@ -849,6 +775,85 @@ function readOutboundTwilioConfig(): OutboundTwilioConfig {
     }),
     encryptionKey: requireEnv("SMS_BODY_ENCRYPTION_KEY"),
   };
+}
+
+async function scheduleOnboardingStep(
+  payload: OnboardingStepPayload,
+  delayMs: number,
+): Promise<void> {
+  if (!Number.isFinite(delayMs) || delayMs < 0) {
+    throw new Error("delayMs must be a non-negative finite number.");
+  }
+
+  const endpoint = resolveQStashPublishEndpoint(resolveOnboardingStepUrl());
+  const delaySeconds = Math.ceil(delayMs / 1000);
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${requireEnv("QSTASH_TOKEN")}`,
+      "content-type": "application/json; charset=utf-8",
+      "Upstash-Delay": `${delaySeconds}s`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(
+      `QStash publish failed (status=${response.status})${details ? `: ${details}` : ""}`,
+    );
+  }
+}
+
+function resolveQStashPublishEndpoint(targetUrl: string): string {
+  const qstashBaseUrl = (readEnv("QSTASH_URL") ?? "https://qstash.upstash.io").replace(/\/$/, "");
+  return `${qstashBaseUrl}/v2/publish/${encodeURIComponent(targetUrl)}`;
+}
+
+function resolveOnboardingStepUrl(): string {
+  return new URL("/api/onboarding/step", resolveAppBaseUrl()).toString();
+}
+
+function resolveAppBaseUrl(): string {
+  const explicit = readEnv("APP_BASE_URL");
+  if (explicit) {
+    return normalizeAbsoluteHttpUrl(explicit, "APP_BASE_URL");
+  }
+
+  const vercelUrl = readEnv("VERCEL_URL");
+  if (vercelUrl) {
+    return normalizeAbsoluteHttpUrl(`https://${vercelUrl}`, "VERCEL_URL");
+  }
+
+  const appEnv = readEnv("APP_ENV");
+  if (appEnv === "staging") {
+    return "https://josh-2-0-staging.vercel.app";
+  }
+  if (appEnv === "production") {
+    return "https://www.callmejosh.ai";
+  }
+
+  throw new Error("Missing required env var: APP_BASE_URL or VERCEL_URL");
+}
+
+function normalizeAbsoluteHttpUrl(value: string, envName: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`${envName} must be a valid absolute URL.`);
+  }
+
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error(`${envName} must use http or https.`);
+  }
+
+  if (parsed.search.length > 0) {
+    throw new Error(`${envName} must not include query params.`);
+  }
+
+  return parsed.origin;
 }
 
 function isDuplicateKeyError(error: { code?: string; message?: string } | null): boolean {

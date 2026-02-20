@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   INTERVIEW_ACTIVITY_01_STATE_TOKEN,
+  ONBOARDING_AWAITING_BURST,
   ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
   ONBOARDING_AWAITING_INTERVIEW_START,
   ONBOARDING_AWAITING_OPENING_RESPONSE,
   detectOnboardingIntent,
   handleOnboardingInbound,
-  sendOnboardingBurst,
   startOnboardingForUser,
 } from "./onboarding-engine";
 
@@ -78,33 +78,14 @@ describe("onboarding state transitions", () => {
     });
   });
 
-  it("explanation reply advances to burst completion token", () => {
+  it("explanation reply advances to awaiting_burst without direct burst sends", () => {
     const result = handleOnboardingInbound({
       stateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
       inputText: "yes",
     });
 
-    expect(result.nextStateToken).toBe(ONBOARDING_AWAITING_INTERVIEW_START);
-    expect(result.outboundPlan).toHaveLength(7);
-    expect(result.outboundPlan[0]).toMatchObject({
-      kind: "send",
-      message_key: "onboarding_message_1",
-    });
-    expect(result.outboundPlan[1]).toEqual({ kind: "delay", ms: 8000 });
-    expect(result.outboundPlan[2]).toMatchObject({
-      kind: "send",
-      message_key: "onboarding_message_2",
-    });
-    expect(result.outboundPlan[3]).toEqual({ kind: "delay", ms: 8000 });
-    expect(result.outboundPlan[4]).toMatchObject({
-      kind: "send",
-      message_key: "onboarding_message_3",
-    });
-    expect(result.outboundPlan[5]).toEqual({ kind: "delay", ms: 8000 });
-    expect(result.outboundPlan[6]).toMatchObject({
-      kind: "send",
-      message_key: "onboarding_message_4",
-    });
+    expect(result.nextStateToken).toBe(ONBOARDING_AWAITING_BURST);
+    expect(result.outboundPlan).toEqual([]);
   });
 
   it("explanation reply pauses on explicit negative (no/later)", () => {
@@ -112,7 +93,7 @@ describe("onboarding state transitions", () => {
       stateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
       inputText: "no",
     });
-    expect(pause.nextStateToken).toBe(ONBOARDING_AWAITING_EXPLANATION_RESPONSE);
+    expect(pause.nextStateToken).toBe(ONBOARDING_AWAITING_OPENING_RESPONSE);
     expect(pause.outboundPlan).toHaveLength(1);
     expect(pause.outboundPlan[0]).toMatchObject({
       kind: "send",
@@ -123,7 +104,7 @@ describe("onboarding state transitions", () => {
       stateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
       inputText: "later",
     });
-    expect(later.nextStateToken).toBe(ONBOARDING_AWAITING_EXPLANATION_RESPONSE);
+    expect(later.nextStateToken).toBe(ONBOARDING_AWAITING_OPENING_RESPONSE);
     expect(later.outboundPlan[0]).toMatchObject({
       kind: "send",
       message_key: "onboarding_later",
@@ -181,49 +162,6 @@ describe("onboarding send orchestration", () => {
     });
     expect(alreadyBeyond.didSendOpening).toBe(false);
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(persistState).not.toHaveBeenCalled();
-  });
-
-  it("sends onboarding burst with deterministic 8000ms delays between each explanation message", async () => {
-    const sendMessage = vi.fn(async () => undefined);
-    const persistState = vi.fn(async () => undefined);
-    const delay = vi.fn(async () => undefined);
-
-    const result = await sendOnboardingBurst({
-      currentStateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
-      burstIdempotencyKeyPrefix: "burst-1",
-      sendMessage,
-      persistState,
-      delay,
-    });
-
-    expect(result.didSendBurst).toBe(true);
-    expect(sendMessage).toHaveBeenCalledTimes(4);
-    expect(delay).toHaveBeenCalledTimes(3);
-    expect(delay).toHaveBeenNthCalledWith(1, 8000);
-    expect(delay).toHaveBeenNthCalledWith(2, 8000);
-    expect(delay).toHaveBeenNthCalledWith(3, 8000);
-    expect(persistState).toHaveBeenCalledWith({
-      nextStateToken: ONBOARDING_AWAITING_INTERVIEW_START,
-    });
-  });
-
-  it("does not resend burst when already at onboarding:awaiting_interview_start", async () => {
-    const sendMessage = vi.fn(async () => undefined);
-    const persistState = vi.fn(async () => undefined);
-    const delay = vi.fn(async () => undefined);
-
-    const result = await sendOnboardingBurst({
-      currentStateToken: ONBOARDING_AWAITING_INTERVIEW_START,
-      burstIdempotencyKeyPrefix: "burst-2",
-      sendMessage,
-      persistState,
-      delay,
-    });
-
-    expect(result.didSendBurst).toBe(false);
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(delay).not.toHaveBeenCalled();
     expect(persistState).not.toHaveBeenCalled();
   });
 });

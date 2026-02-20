@@ -1,9 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  ONBOARDING_AWAITING_BURST,
   ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
   handleOnboardingInbound,
-  sendOnboardingBurst,
-  type SendOnboardingMessageInput,
 } from "../../packages/core/src/onboarding/onboarding-engine";
 import {
   ONBOARDING_MESSAGE_1,
@@ -153,45 +152,14 @@ function countQuestions(text: string): number {
 }
 
 describe("conversation golden tests", () => {
-  it("onboarding burst keeps canonical sequence and deterministic 8000ms delays", async () => {
+  it("explanation affirmative transitions to awaiting_burst with no direct burst send plan", async () => {
     const transitionPlan = handleOnboardingInbound({
       stateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
       inputText: "yes",
     });
 
-    expect(transitionPlan.outboundPlan).toEqual([
-      { kind: "send", message_key: "onboarding_message_1", body: ONBOARDING_MESSAGE_1 },
-      { kind: "delay", ms: 8000 },
-      { kind: "send", message_key: "onboarding_message_2", body: ONBOARDING_MESSAGE_2 },
-      { kind: "delay", ms: 8000 },
-      { kind: "send", message_key: "onboarding_message_3", body: ONBOARDING_MESSAGE_3 },
-      { kind: "delay", ms: 8000 },
-      { kind: "send", message_key: "onboarding_message_4", body: ONBOARDING_MESSAGE_4 },
-    ]);
-
-    const sendCalls: SendOnboardingMessageInput[] = [];
-    const sendMessage = vi.fn(async (input: SendOnboardingMessageInput) => {
-      sendCalls.push(input);
-    });
-    const delay = vi.fn(async () => undefined);
-
-    await sendOnboardingBurst({
-      currentStateToken: ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
-      burstIdempotencyKeyPrefix: "golden-burst",
-      sendMessage,
-      persistState: async () => undefined,
-      delay,
-    });
-
-    expect(sendCalls.map((entry) => entry.body)).toEqual([
-      ONBOARDING_MESSAGE_1,
-      ONBOARDING_MESSAGE_2,
-      ONBOARDING_MESSAGE_3,
-      ONBOARDING_MESSAGE_4,
-    ]);
-    expect(delay).toHaveBeenNthCalledWith(1, 8000);
-    expect(delay).toHaveBeenNthCalledWith(2, 8000);
-    expect(delay).toHaveBeenNthCalledWith(3, 8000);
+    expect(transitionPlan.nextStateToken).toBe(ONBOARDING_AWAITING_BURST);
+    expect(transitionPlan.outboundPlan).toEqual([]);
   });
 
   it("rich interview path completes in fewer exchanges than sparse path", async () => {

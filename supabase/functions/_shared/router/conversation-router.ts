@@ -66,9 +66,11 @@ type ProfileSummary = {
 
 const ONBOARDING_MODE: ConversationMode = "interviewing";
 const ONBOARDING_STATE_TOKEN = "onboarding:awaiting_opening_response";
+const ONBOARDING_AWAITING_BURST_TOKEN = "onboarding:awaiting_burst";
 const ONBOARDING_STATE_TOKENS = [
   "onboarding:awaiting_opening_response",
   "onboarding:awaiting_explanation_response",
+  "onboarding:awaiting_burst",
   "onboarding:awaiting_interview_start",
 ] as const;
 type OnboardingStateToken = (typeof ONBOARDING_STATE_TOKENS)[number];
@@ -79,6 +81,15 @@ const ONBOARDING_STATE_TOKEN_SET: ReadonlySet<OnboardingStateToken> = new Set(
 );
 const INTERVIEW_TOKEN_PATTERN = /^interview:[a-z0-9_]+$/;
 const ONBOARDING_TOKEN_PATTERN = /^onboarding:[a-z_]+$/;
+const STOP_HELP_COMMANDS = new Set([
+  "STOP",
+  "UNSUBSCRIBE",
+  "CANCEL",
+  "END",
+  "QUIT",
+  "HELP",
+  "INFO",
+]);
 
 const CONVERSATION_MODES: readonly ConversationMode[] = [
   "idle",
@@ -295,6 +306,19 @@ function resolveInterviewRoute(_stateToken: string): RouterRoute {
   return "profile_interview_engine";
 }
 
+export function shouldHoldInboundForOnboardingBurst(input: {
+  state: ConversationState;
+  payload: NormalizedInboundMessagePayload;
+}): boolean {
+  if (input.state.state_token !== ONBOARDING_AWAITING_BURST_TOKEN) {
+    return false;
+  }
+
+  // STOP/HELP should be handled in twilio-inbound before router dispatch.
+  const normalizedBody = input.payload.body_normalized.trim().toUpperCase();
+  return !STOP_HELP_COMMANDS.has(normalizedBody);
+}
+
 function classifyInterviewingStateToken(
   stateToken: string,
 ): InterviewingStateTokenKind {
@@ -352,6 +376,21 @@ export async function dispatchConversationRoute(
       }
     }
     case "onboarding_engine": {
+      if (shouldHoldInboundForOnboardingBurst({
+        state: input.decision.state,
+        payload: input.payload,
+      })) {
+        console.info("conversation_router.onboarding_burst_held", {
+          user_id: input.decision.user_id,
+          session_state_token: input.decision.state.state_token,
+          inbound_message_sid: input.payload.inbound_message_sid,
+        });
+        return {
+          engine: "onboarding_engine",
+          reply_message: null,
+        };
+      }
+
       try {
         const result = await runOnboardingEngine(input);
         assertDispatchedEngineMatchesRoute(resolvedRoute, result.engine);
