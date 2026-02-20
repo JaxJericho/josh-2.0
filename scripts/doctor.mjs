@@ -1,4 +1,5 @@
 import fs from "fs";
+import crypto from "crypto";
 import path from "path";
 import { pathToFileURL } from "url";
 
@@ -7,6 +8,7 @@ const CONTRACT_PATH = path.join(CWD, "docs", "runbooks", "environment-contract.m
 const ENV_FILES = [".env.local", ".env"];
 const VALID_ENVS = new Set(["local", "staging", "production"]);
 const REQUIRED_ONE_OF = [["TWILIO_MESSAGING_SERVICE_SID", "TWILIO_FROM_NUMBER"]];
+const REQUIRED_QSTASH_VARS = ["QSTASH_TOKEN", "QSTASH_CURRENT_SIGNING_KEY", "QSTASH_NEXT_SIGNING_KEY"];
 const STRIPE_WEBHOOK_SECRET_PATTERN = /^whsec_[A-Za-z0-9]+$/;
 
 const results = [];
@@ -30,8 +32,8 @@ function fingerprint(value) {
     return "unset";
   }
   const trimmed = value.trim();
-  const prefix = trimmed.slice(0, 4);
-  return `${prefix}... (len=${trimmed.length})`;
+  const hashPrefix = crypto.createHash("sha256").update(trimmed).digest("hex").slice(0, 8);
+  return `sha256:${hashPrefix} (len=${trimmed.length})`;
 }
 
 function parseDotEnvLine(line) {
@@ -324,6 +326,22 @@ function checkRequiredVars(rows, appEnv) {
   }
 }
 
+function checkQStashVars() {
+  for (const name of REQUIRED_QSTASH_VARS) {
+    const value = process.env[name];
+    if (!isSet(value)) {
+      addResult(
+        "FAIL",
+        "QStash",
+        `${name} is required for the QStash integration layer and must be set.`
+      );
+      continue;
+    }
+
+    addResult("PASS", "QStash", `${name} is set (${fingerprint(value)}).`);
+  }
+}
+
 async function checkSupabaseConnectivity() {
   const supabaseUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
@@ -463,6 +481,7 @@ async function main() {
     checkRequiredVars(rows, appEnv);
   }
 
+  checkQStashVars();
   checkUrlVars();
   await checkSupabaseConnectivity();
 
