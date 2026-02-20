@@ -4,6 +4,8 @@ import type { OnboardingStepId } from "../../packages/core/src/onboarding/step-i
 const ONBOARDING_STEP_PATH = "/api/onboarding/step";
 const HARNESS_QSTASH_STUB_HEADER = "x-harness-qstash-stub";
 const HARNESS_QSTASH_MODE_VALUES = new Set(["stub", "real"]);
+const BOOLEAN_TRUE_VALUES = new Set(["1", "true"]);
+const BOOLEAN_FALSE_VALUES = new Set(["0", "false"]);
 
 export type OnboardingStepPayload = {
   profile_id: string;
@@ -67,6 +69,20 @@ function resolveHarnessQStashMode(): "stub" | "real" {
   return raw as "stub" | "real";
 }
 
+function isOnboardingSchedulingDisabled(): boolean {
+  const raw = process.env.ONBOARDING_SCHEDULING_DISABLED?.trim().toLowerCase();
+  if (!raw) {
+    return false;
+  }
+  if (BOOLEAN_TRUE_VALUES.has(raw)) {
+    return true;
+  }
+  if (BOOLEAN_FALSE_VALUES.has(raw)) {
+    return false;
+  }
+  throw new Error("ONBOARDING_SCHEDULING_DISABLED must be one of: 1, true, 0, false.");
+}
+
 function createQStashReceiver(): Receiver {
   return new Receiver({
     currentSigningKey: requireEnv("QSTASH_CURRENT_SIGNING_KEY"),
@@ -101,6 +117,10 @@ export async function verifyQStashSignature(request: Request): Promise<boolean> 
 export async function scheduleOnboardingStep(payload: OnboardingStepPayload, delayMs: number) {
   if (!Number.isFinite(delayMs) || delayMs < 0) {
     throw new Error("delayMs must be a non-negative finite number.");
+  }
+
+  if (isOnboardingSchedulingDisabled()) {
+    return;
   }
 
   if (resolveHarnessQStashMode() === "stub") {
