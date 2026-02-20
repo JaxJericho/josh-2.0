@@ -1,14 +1,14 @@
 import { Client, Receiver } from "@upstash/qstash";
+import type { OnboardingStepId } from "../../packages/core/src/onboarding/step-ids";
 
 const ONBOARDING_STEP_PATH = "/api/onboarding/step";
 
 export type OnboardingStepPayload = {
   profile_id: string;
   session_id: string;
-  step_id: string;
+  step_id: OnboardingStepId;
   expected_state_token: string;
   idempotency_key: string;
-  [key: string]: unknown;
 };
 
 function requireEnv(name: string): string {
