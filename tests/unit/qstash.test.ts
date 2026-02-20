@@ -62,6 +62,46 @@ describe("qstash integration layer", () => {
     });
   });
 
+  it("returns early without publishing when onboarding scheduling is disabled", async () => {
+    process.env.QSTASH_TOKEN = "qstash-token";
+    process.env.APP_BASE_URL = "https://example.test";
+    process.env.ONBOARDING_SCHEDULING_DISABLED = "true";
+
+    const publishSpy = vi.spyOn(Client.prototype, "publishJSON").mockResolvedValue({
+      messageId: "msg_123",
+    } as never);
+
+    const payload: OnboardingStepPayload = {
+      profile_id: "profile_123",
+      session_id: "session_123",
+      step_id: "onboarding_message_1",
+      expected_state_token: "onboarding:awaiting_burst",
+      idempotency_key: "onboarding:profile_123:session_123:onboarding_message_1",
+    };
+
+    await scheduleOnboardingStep(payload, 8000);
+
+    expect(publishSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails fast when ONBOARDING_SCHEDULING_DISABLED is invalid", async () => {
+    process.env.QSTASH_TOKEN = "qstash-token";
+    process.env.APP_BASE_URL = "https://example.test";
+    process.env.ONBOARDING_SCHEDULING_DISABLED = "maybe";
+
+    const payload: OnboardingStepPayload = {
+      profile_id: "profile_123",
+      session_id: "session_123",
+      step_id: "onboarding_message_1",
+      expected_state_token: "onboarding:awaiting_burst",
+      idempotency_key: "onboarding:profile_123:session_123:onboarding_message_1",
+    };
+
+    await expect(scheduleOnboardingStep(payload, 0)).rejects.toThrow(
+      "ONBOARDING_SCHEDULING_DISABLED must be one of: 1, true, 0, false."
+    );
+  });
+
   it("throws when required QStash env vars are missing", async () => {
     delete process.env.QSTASH_TOKEN;
     expect(() => createQStashClient()).toThrow("Missing required env var: QSTASH_TOKEN");

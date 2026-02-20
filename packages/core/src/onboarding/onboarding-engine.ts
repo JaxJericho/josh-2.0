@@ -5,6 +5,14 @@ import {
   renderOnboardingOpening,
 } from "./messages.ts";
 
+/**
+ * Canonical onboarding state machine for reply-gated transitions.
+ *
+ * The timed onboarding burst is delivered via QStash sequential scheduling:
+ * an affirmative explanation reply moves state to `onboarding:awaiting_burst`,
+ * and runtime scheduling code publishes exactly one follow-up step execution.
+ * This module does not perform in-process timing or burst enqueues.
+ */
 export const ONBOARDING_AWAITING_OPENING_RESPONSE =
   "onboarding:awaiting_opening_response" as const;
 export const ONBOARDING_AWAITING_EXPLANATION_RESPONSE =

@@ -62,6 +62,8 @@ type OnboardingEngineDependencies = {
 
 const HARNESS_QSTASH_MODE_VALUES = new Set(["stub", "real"]);
 const HARNESS_QSTASH_STUB_HEADER = "x-harness-qstash-stub";
+const BOOLEAN_TRUE_VALUES = new Set(["1", "true"]);
+const BOOLEAN_FALSE_VALUES = new Set(["0", "false"]);
 
 const DEFAULT_ONBOARDING_ENGINE_DEPENDENCIES: OnboardingEngineDependencies = {
   scheduleOnboardingStep: scheduleOnboardingStep,
@@ -788,6 +790,10 @@ async function scheduleOnboardingStep(
     throw new Error("delayMs must be a non-negative finite number.");
   }
 
+  if (isOnboardingSchedulingDisabled()) {
+    return;
+  }
+
   if (resolveHarnessQStashMode() === "stub") {
     const response = await fetch(resolveOnboardingStepUrl(), {
       method: "POST",
@@ -827,6 +833,20 @@ async function scheduleOnboardingStep(
       `QStash publish failed (status=${response.status})${details ? `: ${details}` : ""}`,
     );
   }
+}
+
+function isOnboardingSchedulingDisabled(): boolean {
+  const raw = readEnv("ONBOARDING_SCHEDULING_DISABLED")?.trim().toLowerCase();
+  if (!raw) {
+    return false;
+  }
+  if (BOOLEAN_TRUE_VALUES.has(raw)) {
+    return true;
+  }
+  if (BOOLEAN_FALSE_VALUES.has(raw)) {
+    return false;
+  }
+  throw new Error("ONBOARDING_SCHEDULING_DISABLED must be one of: 1, true, 0, false.");
 }
 
 function resolveHarnessQStashMode(): "stub" | "real" {
