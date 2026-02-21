@@ -1,9 +1,22 @@
 import crypto from "crypto";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   createSupabaseEntitlementsRepository,
   evaluateEntitlements,
 } from "../../packages/core/src/entitlements/evaluate-entitlements";
+import { encryptSmsBody } from "../../packages/db/src/queries/crypto";
+import {
+  loadConversationSessionSummary,
+  updateConversationSessionState,
+} from "../../packages/db/src/queries/conversation-sessions";
+import {
+  finalizeSmsMessageDelivery,
+  hasDeliveredSmsMessage,
+  insertOutboundSmsMessage,
+  loadPendingSmsMessage,
+} from "../../packages/db/src/queries/sms-messages";
+import { loadUserPhoneE164ById } from "../../packages/db/src/queries/users";
+import type { DbClient } from "../../packages/db/src/types";
+import { createServiceRoleDbClient } from "../../packages/db/src/client-node.mjs";
 import {
   ONBOARDING_AWAITING_BURST,
   ONBOARDING_AWAITING_EXPLANATION_RESPONSE,
@@ -22,7 +35,6 @@ import {
   ONBOARDING_STEP_DELAY_MS,
   type OnboardingStepId,
 } from "../../packages/core/src/onboarding/step-ids";
-import type { Database } from "../../supabase/types/database";
 import { logEvent } from "./observability";
 import { scheduleOnboardingStep, verifyQStashSignature } from "./qstash";
 
@@ -285,20 +297,15 @@ export async function handleOnboardingStepRequest(
   }
 }
 
-let serviceRoleClient: SupabaseClient<Database> | null = null;
+let serviceRoleClient: DbClient | null = null;
 
-function getServiceRoleClient(): SupabaseClient<Database> {
+function getServiceRoleClient(): DbClient {
   if (!serviceRoleClient) {
-    serviceRoleClient = createClient<Database>(
-      requireEnv("SUPABASE_URL"),
-      requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      },
-    );
+    serviceRoleClient = createServiceRoleDbClient();
+  }
+
+  if (!serviceRoleClient) {
+    throw new Error("Failed to initialize Supabase service role client.");
   }
 
   return serviceRoleClient;
@@ -311,25 +318,7 @@ export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStep
     verifyQStashSignature,
 
     async loadSession(sessionId: string): Promise<ConversationSessionRow | null> {
-      const { data, error } = await supabase
-        .from("conversation_sessions")
-        .select("id,user_id,mode,state_token")
-        .eq("id", sessionId)
-        .maybeSingle();
-
-      if (error) {
-        throw new Error("Unable to load conversation session for onboarding step.");
-      }
-      if (!data?.id || !data?.user_id || !data?.mode || !data?.state_token) {
-        return null;
-      }
-
-      return {
-        id: data.id,
-        user_id: data.user_id,
-        mode: data.mode,
-        state_token: data.state_token,
-      };
+      return loadConversationSessionSummary(supabase, sessionId);
     },
 
     async isSafetyHold(profileId: string): Promise<boolean> {
@@ -349,18 +338,7 @@ export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStep
     },
 
     async hasDeliveredMessage(idempotencyKey: string): Promise<boolean> {
-      const { data, error } = await supabase
-        .from("sms_messages")
-        .select("id")
-        .eq("correlation_id", idempotencyKey)
-        .not("twilio_message_sid", "is", null)
-        .limit(1);
-
-      if (error) {
-        throw new Error("Unable to resolve onboarding idempotency state.");
-      }
-
-      return Array.isArray(data) && data.length > 0;
+      return hasDeliveredSmsMessage(supabase, idempotencyKey);
     },
 
     async sendStepMessage(input: {
@@ -374,67 +352,35 @@ export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStep
       const fromE164 = requireEnv("TWILIO_FROM_NUMBER");
       const messagingServiceSid = readEnv("TWILIO_MESSAGING_SERVICE_SID") ?? null;
 
-      const { data: user, error: userError } = await supabase
-        .from("users")
-        .select("phone_e164")
-        .eq("id", input.session.user_id)
-        .maybeSingle();
-
-      if (userError || !user?.phone_e164) {
+      const userPhoneE164 = await loadUserPhoneE164ById(supabase, input.session.user_id);
+      if (!userPhoneE164) {
         throw new Error("Unable to resolve destination phone number for onboarding step.");
       }
 
-      const { data: encryptedBody, error: encryptError } = await supabase.rpc("encrypt_sms_body", {
+      const encryptedBody = await encryptSmsBody(supabase, {
         plaintext: body,
         key: encryptionKey,
       });
 
-      if (encryptError || !encryptedBody) {
-        throw new Error("Unable to encrypt onboarding outbound body.");
-      }
-
       const nowIso = new Date().toISOString();
-      const { data: pendingRows, error: pendingError } = await supabase
-        .from("sms_messages")
-        .select("id,from_e164")
-        .eq("correlation_id", input.payload.idempotency_key)
-        .is("twilio_message_sid", null)
-        .order("created_at", { ascending: false })
-        .limit(1);
-
-      if (pendingError) {
-        throw new Error("Unable to inspect pending onboarding outbound message state.");
-      }
+      const pendingMessage = await loadPendingSmsMessage(supabase, input.payload.idempotency_key);
 
       let pendingMessageId: string;
-      if (Array.isArray(pendingRows) && pendingRows.length > 0 && pendingRows[0]?.id) {
-        pendingMessageId = pendingRows[0].id;
+      if (pendingMessage?.id) {
+        pendingMessageId = pendingMessage.id;
       } else {
-        const { data: insertedMessage, error: insertError } = await supabase
-          .from("sms_messages")
-          .insert({
-            user_id: input.session.user_id,
-            profile_id: input.payload.profile_id,
-            direction: "out",
-            from_e164: fromE164,
-            to_e164: user.phone_e164,
-            twilio_message_sid: null,
-            body_ciphertext: encryptedBody,
-            body_iv: null,
-            body_tag: null,
-            key_version: 1,
-            media_count: 0,
-            status: "queued",
-            last_status_at: nowIso,
-            correlation_id: input.payload.idempotency_key,
-          })
-          .select("id")
-          .single();
-
-        if (insertError || !insertedMessage?.id) {
-          throw new Error("Unable to persist onboarding outbound sms message.");
-        }
-
+        const insertedMessage = await insertOutboundSmsMessage(supabase, {
+          user_id: input.session.user_id,
+          profile_id: input.payload.profile_id,
+          from_e164: fromE164,
+          to_e164: userPhoneE164,
+          body_ciphertext: encryptedBody,
+          correlation_id: input.payload.idempotency_key,
+          status: "queued",
+          key_version: 1,
+          media_count: 0,
+          last_status_at: nowIso,
+        });
         pendingMessageId = insertedMessage.id;
       }
 
@@ -447,7 +393,7 @@ export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStep
         accountSid: twilioAccountSid,
         authToken: twilioAuthToken,
         idempotencyKey: input.payload.idempotency_key,
-        to: user.phone_e164,
+        to: userPhoneE164,
         from: fromE164,
         body,
         messagingServiceSid,
@@ -455,31 +401,17 @@ export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStep
       });
 
       const resolvedFrom = sendResult.from ?? fromE164;
-      const { error: updateError } = await supabase
-        .from("sms_messages")
-        .update({
-          from_e164: resolvedFrom,
-          twilio_message_sid: sendResult.sid,
-          status: sendResult.status ?? "queued",
-          last_status_at: new Date().toISOString(),
-        })
-        .eq("id", pendingMessageId)
-        .is("twilio_message_sid", null);
-
-      if (updateError) {
-        throw new Error("Unable to finalize onboarding outbound sms message.");
-      }
+      await finalizeSmsMessageDelivery(supabase, {
+        messageId: pendingMessageId,
+        fromE164: resolvedFrom,
+        twilioMessageSid: sendResult.sid,
+        status: sendResult.status ?? "queued",
+        lastStatusAt: new Date().toISOString(),
+      });
     },
 
     async updateSessionState(sessionId: string, stateToken: string): Promise<void> {
-      const { error } = await supabase
-        .from("conversation_sessions")
-        .update({ state_token: stateToken })
-        .eq("id", sessionId);
-
-      if (error) {
-        throw new Error("Unable to persist onboarding session state.");
-      }
+      await updateConversationSessionState(supabase, sessionId, stateToken);
     },
 
     scheduleOnboardingStep,

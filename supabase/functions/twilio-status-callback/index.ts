@@ -1,4 +1,9 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+// @ts-ignore: Deno runtime requires explicit file extensions for local imports.
+import { createServiceRoleDbClient } from "../../../packages/db/src/client-deno.mjs";
+// @ts-ignore: Deno runtime requires explicit file extensions for local imports.
+import { updateSmsMessageStatusByTwilioSid } from "../../../packages/db/src/queries/sms-messages.ts";
+// @ts-ignore: Deno runtime requires explicit file extensions for local imports.
+import { updateSmsOutboundJobStatusByTwilioSid } from "../../../packages/db/src/queries/sms-outbound-jobs.ts";
 
 const encoder = new TextEncoder();
 
@@ -75,27 +80,27 @@ Deno.serve(async (req) => {
     phase = "db_init";
     const supabaseUrl = requireEnv("SUPABASE_URL");
     const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
-
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false },
+    const supabase = createServiceRoleDbClient({
+      env: {
+        SUPABASE_URL: supabaseUrl,
+        SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+      },
     });
 
     const now = new Date().toISOString();
 
     phase = "update_sms_messages";
-    const { error: messageUpdateError } = await supabase
-      .from("sms_messages")
-      .update({
+    try {
+      await updateSmsMessageStatusByTwilioSid(supabase, {
+        twilioMessageSid: messageSid,
         status: messageStatus,
-        last_status_at: now,
-      })
-      .eq("twilio_message_sid", messageSid);
-
-    if (messageUpdateError) {
+        lastStatusAt: now,
+      });
+    } catch (messageUpdateError) {
       console.error("twilio.status_callback_message_update_failed", {
         request_id: requestId,
         message_sid: messageSid,
-        error: messageUpdateError.message,
+        error: (messageUpdateError as { message?: string })?.message ?? "unknown",
       });
     }
 
@@ -116,17 +121,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { error: jobUpdateError } = await supabase
-      .from("sms_outbound_jobs")
-      .update(jobUpdate)
-      .eq("twilio_message_sid", messageSid)
-      .neq("status", "canceled");
-
-    if (jobUpdateError) {
+    try {
+      await updateSmsOutboundJobStatusByTwilioSid(supabase, {
+        twilioMessageSid: messageSid,
+        status: jobStatus,
+        lastStatusAt: now,
+        lastError:
+          typeof jobUpdate.last_error === "string" ? jobUpdate.last_error : null,
+      });
+    } catch (jobUpdateError) {
       console.error("twilio.status_callback_job_update_failed", {
         request_id: requestId,
         message_sid: messageSid,
-        error: jobUpdateError.message,
+        error: (jobUpdateError as { message?: string })?.message ?? "unknown",
       });
     }
 

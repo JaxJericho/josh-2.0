@@ -191,7 +191,7 @@ With `packages/db/` and `packages/messaging/` created in Tickets 9.1 and 9.2, al
 **Requirements:**
 
 * Update `packages/core/src/onboarding/onboarding-engine.ts`:
-  * Replace direct `createClient()` calls with imports from `@josh/db`
+  * Replace direct Supabase client factory calls with imports from `@josh/db`
   * Replace direct Twilio REST API calls with `sendSms()` and `sendBurst()` from `@josh/messaging`
 * Update `supabase/functions/twilio-inbound/index.ts`:
   * Replace inline Supabase client creation with `@josh/db` imports

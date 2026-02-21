@@ -1,29 +1,16 @@
 import "server-only";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "../../supabase/types/database";
+import type { DbClient } from "../../packages/db/src/types";
+import { createServiceRoleDbClient } from "../../packages/db/src/client-node.mjs";
 
-let serviceRoleClient: SupabaseClient<Database> | null = null;
+let serviceRoleClient: DbClient | null = null;
 
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required env var: ${name}`);
-  }
-  return value;
-}
-
-export function getSupabaseServiceRoleClient(): SupabaseClient<Database> {
+export function getSupabaseServiceRoleClient(): DbClient {
   if (!serviceRoleClient) {
-    serviceRoleClient = createClient<Database>(
-      requireEnv("SUPABASE_URL"),
-      requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false,
-        },
-      }
-    );
+    serviceRoleClient = createServiceRoleDbClient();
+  }
+
+  if (!serviceRoleClient) {
+    throw new Error("Failed to initialize Supabase service role client.");
   }
 
   return serviceRoleClient;

@@ -1,4 +1,5 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+// @ts-ignore: Deno runtime requires explicit file extensions for local imports.
+import { createServiceRoleDbClient } from "../../../packages/db/src/client-deno.mjs";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   resolveTwilioStatusCallbackUrl,
@@ -70,8 +71,11 @@ Deno.serve(async (req) => {
     });
 
     phase = "supabase_init";
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false },
+    const supabase = createServiceRoleDbClient({
+      env: {
+        SUPABASE_URL: supabaseUrl,
+        SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+      },
     });
 
     phase = "dropout_nudges";
@@ -286,7 +290,7 @@ function isTerminalStatus(status: string): boolean {
 }
 
 async function recheckJobBeforeSend(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createServiceRoleDbClient>,
   jobId: string,
 ): Promise<{ status: string; twilio_message_sid: string | null } | null> {
   const { data, error } = await supabase
@@ -306,7 +310,7 @@ async function recheckJobBeforeSend(
 }
 
 async function markJobSent(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createServiceRoleDbClient>,
   job: SmsOutboundJob,
   sid: string,
   status: string | null,
@@ -348,7 +352,7 @@ function isFutureRunAt(runAt: string | null): boolean {
 }
 
 async function releaseFutureJob(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createServiceRoleDbClient>,
   job: SmsOutboundJob
 ): Promise<void> {
   console.info("sms_outbound.future_job_released", {
@@ -376,7 +380,7 @@ async function releaseFutureJob(
 }
 
 async function markJobFailure(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createServiceRoleDbClient>,
   job: SmsOutboundJob,
   errorMessage: string,
   retryable: boolean
@@ -408,7 +412,7 @@ async function markJobFailure(
 }
 
 async function ensureSmsMessage(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createServiceRoleDbClient>,
   job: SmsOutboundJob,
   fromE164: string | null,
   sid: string,

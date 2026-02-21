@@ -1,6 +1,9 @@
 {
   "name": "josh-2-0",
   "private": true,
+  "workspaces": [
+    "packages/db"
+  ],
   "dependencies": {
     "@sentry/nextjs": "8.29.0",
     "@supabase/supabase-js": "^2.95.3",

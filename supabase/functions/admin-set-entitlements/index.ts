@@ -1,4 +1,8 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+// @ts-ignore: Deno runtime requires explicit file extensions for local imports.
+import {
+  createAnonDbClient,
+  createServiceRoleDbClient,
+} from "../../../packages/db/src/client-deno.mjs";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   AdminSetEntitlementsError,
@@ -45,8 +49,11 @@ Deno.serve(async (req) => {
     const command = parseAdminSetEntitlementsRequest(body);
 
     phase = "service_client";
-    const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false },
+    const serviceClient = createServiceRoleDbClient({
+      env: {
+        SUPABASE_URL: supabaseUrl,
+        SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+      },
     });
 
     phase = "actor";
@@ -111,7 +118,7 @@ Deno.serve(async (req) => {
 });
 
 function createRepository(
-  serviceClient: ReturnType<typeof createClient>,
+  serviceClient: ReturnType<typeof createServiceRoleDbClient>,
 ): AdminSetEntitlementsRepository {
   return {
     upsertProfileEntitlements: async (input): Promise<ProfileEntitlementsRecord> => {
@@ -213,13 +220,12 @@ async function verifyAdminAccess(params: {
     return { mode: "secret" };
   }
 
-  const authClient = createClient(params.supabaseUrl, params.anonKey, {
-    auth: { persistSession: false },
-    global: {
-      headers: {
-        authorization: authContext.authorization,
-      },
+  const authClient = createAnonDbClient({
+    env: {
+      SUPABASE_URL: params.supabaseUrl,
+      SUPABASE_ANON_KEY: params.anonKey,
     },
+    authorization: authContext.authorization,
   });
 
   const { data: isAdmin, error: adminCheckError } = await authClient.rpc("is_admin_user");
@@ -242,7 +248,7 @@ async function verifyAdminAccess(params: {
 }
 
 async function resolveAdminActor(params: {
-  serviceClient: ReturnType<typeof createClient>;
+  serviceClient: ReturnType<typeof createServiceRoleDbClient>;
   userId: string;
 }): Promise<{ admin_user_id: string; admin_profile_id: string }> {
   const { data: adminUser, error: adminUserError } = await params.serviceClient

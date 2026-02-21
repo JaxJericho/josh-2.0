@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { createDbClient } from "../../packages/db/src/client-node.mjs";
 
 const E2E_REGION_ID = "77777777-7777-4777-8777-777777777701";
 const E2E_SOURCE_USER_ID = "77777777-7777-4777-8777-777777777801";
@@ -19,14 +19,9 @@ const E2E_PROFILE_IDS = [
 loadDotEnv(".env.local");
 
 const supabaseUrl = requiredEnv("SUPABASE_URL");
-const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-const supabase = createClient(supabaseUrl, serviceRoleKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-  },
-});
+const supabase = createDbClient({ role: "service" });
 
 const nowIso = new Date().toISOString();
 
