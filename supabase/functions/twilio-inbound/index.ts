@@ -1,5 +1,7 @@
 // @ts-ignore: Deno runtime requires explicit file extensions for local imports.
 import { createServiceRoleDbClient } from "../../../packages/db/src/client-deno.mjs";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { systemHelpResponse } from "../../../packages/messaging/src/templates/system.ts";
 import {
   dispatchConversationRoute,
   routeConversationMessage,
@@ -12,7 +14,7 @@ const STOP_KEYWORDS = new Set(["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
 const HELP_KEYWORDS = new Set(["HELP", "INFO"]);
 
 const STOP_REPLY = "You are opted out of JOSH SMS. Reply START to resubscribe.";
-const HELP_REPLY = "JOSH help: Reply STOP to opt out. Reply START to resubscribe.";
+const HELP_REPLY = systemHelpResponse();
 const BUILD_VERSION = "4.1B-DETERMINISTIC-ROUTING-01";
 
 const encoder = new TextEncoder();

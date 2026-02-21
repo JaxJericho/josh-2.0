@@ -2,6 +2,8 @@
 import { resolveWaitlistReplay } from "../../../../packages/core/src/regions/waitlist-routing.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { createSupabaseEntitlementsRepository, evaluateEntitlements } from "../../../../packages/core/src/entitlements/evaluate-entitlements.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { safetyHoldNotification } from "../../../../packages/messaging/src/templates/safety.ts";
 import type { EngineDispatchInput } from "../router/conversation-router.ts";
 
 export const WAITLIST_CONFIRMATION_MESSAGE =
@@ -11,7 +13,7 @@ export const WAITLIST_FOLLOWUP_MESSAGE =
   "You're on the waitlist for your area. We'll text you when we open.";
 
 export const SAFETY_HOLD_MESSAGE =
-  "Your account is currently paused for safety review. Reply HELP for support.";
+  safetyHoldNotification();
 
 type WaitlistGateResult = {
   is_waitlist_region: boolean;

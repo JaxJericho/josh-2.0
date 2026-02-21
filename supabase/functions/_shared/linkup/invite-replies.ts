@@ -1,15 +1,17 @@
 import type { EngineDispatchInput, EngineDispatchResult } from "../router/conversation-router.ts";
-
-const CLARIFY_REPLY = "I didn't catch that. Reply YES to accept or NO to decline.";
-const ACCEPTED_REPLY = "You're in. I'll text you when this LinkUp is locked.";
-const LOCKED_REPLY = "You're in. This LinkUp is now locked.";
-const DECLINED_REPLY = "Got it. You're out for this LinkUp.";
-const CLOSED_REPLY = "This LinkUp is already locked, so this invite is closed.";
-const EXPIRED_REPLY = "This invite already expired, so I couldn't apply that reply.";
-const CAPACITY_REPLY = "This LinkUp just filled up, so I couldn't add you.";
-const NO_INVITE_REPLY = "I couldn't find an open invite for you right now.";
-const DUPLICATE_REPLY = "Thanks - we already processed that reply.";
-const FALLBACK_REPLY = "I couldn't apply that reply right now. Reply HELP for support.";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  linkupInviteAccepted,
+  linkupInviteCapacityReached,
+  linkupInviteClarifier,
+  linkupInviteClosed,
+  linkupInviteDeclined,
+  linkupInviteDuplicateReply,
+  linkupInviteExpired,
+  linkupInviteFallbackReply,
+  linkupInviteNotFound,
+  linkupLockConfirmation,
+} from "../../../../packages/messaging/src/templates/linkup.ts";
 
 export async function handleInviteReply(
   input: EngineDispatchInput,
@@ -20,7 +22,7 @@ export async function handleInviteReply(
   if (!linkupId) {
     return {
       engine: "default_engine",
-      reply_message: NO_INVITE_REPLY,
+      reply_message: linkupInviteNotFound(),
     };
   }
 
@@ -95,32 +97,32 @@ function readStatus(payload: unknown): string {
 function mapReplyMessage(status: string): string {
   switch (status) {
     case "accepted_and_locked":
-      return LOCKED_REPLY;
+      return linkupLockConfirmation();
     case "accepted":
     case "already_accepted":
-      return ACCEPTED_REPLY;
+      return linkupInviteAccepted();
     case "declined":
     case "already_declined":
-      return DECLINED_REPLY;
+      return linkupInviteDeclined();
     case "capacity_reached":
-      return CAPACITY_REPLY;
+      return linkupInviteCapacityReached();
     case "late_after_lock":
     case "invite_closed":
-      return CLOSED_REPLY;
+      return linkupInviteClosed();
     case "invite_expired":
     case "expired":
     case "acceptance_window_elapsed":
-      return EXPIRED_REPLY;
+      return linkupInviteExpired();
     case "unclear_reply":
-      return CLARIFY_REPLY;
+      return linkupInviteClarifier();
     case "duplicate_replay":
     case "idempotent_replay":
-      return DUPLICATE_REPLY;
+      return linkupInviteDuplicateReply();
     case "no_active_invite":
     case "linkup_missing":
-      return NO_INVITE_REPLY;
+      return linkupInviteNotFound();
     default:
-      return FALLBACK_REPLY;
+      return linkupInviteFallbackReply();
   }
 }
 

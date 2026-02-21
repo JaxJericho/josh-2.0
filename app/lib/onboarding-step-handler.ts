@@ -9,10 +9,7 @@ import {
   updateConversationSessionState,
 } from "../../packages/db/src/queries/conversation-sessions";
 import {
-  finalizeSmsMessageDelivery,
   hasDeliveredSmsMessage,
-  insertOutboundSmsMessage,
-  loadPendingSmsMessage,
 } from "../../packages/db/src/queries/sms-messages";
 import { loadUserPhoneE164ById } from "../../packages/db/src/queries/users";
 import type { DbClient } from "../../packages/db/src/types";
@@ -24,17 +21,19 @@ import {
   ONBOARDING_AWAITING_OPENING_RESPONSE,
 } from "../../packages/core/src/onboarding/onboarding-engine";
 import {
-  ONBOARDING_MESSAGE_1,
-  ONBOARDING_MESSAGE_2,
-  ONBOARDING_MESSAGE_3,
-  ONBOARDING_MESSAGE_4,
-} from "../../packages/core/src/onboarding/messages";
-import {
   getNextOnboardingStepId,
   isOnboardingStepId,
   ONBOARDING_STEP_DELAY_MS,
   type OnboardingStepId,
 } from "../../packages/core/src/onboarding/step-ids";
+import { createNodeEnvReader, resolveTwilioRuntimeFromEnv } from "../../packages/messaging/src/client";
+import { sendSms } from "../../packages/messaging/src/sender";
+import {
+  onboardingBurstMessage1,
+  onboardingBurstMessage2,
+  onboardingBurstMessage3,
+  onboardingBurstMessage4,
+} from "../../packages/messaging/src/templates/onboarding";
 import { logEvent } from "./observability";
 import { scheduleOnboardingStep, verifyQStashSignature } from "./qstash";
 
@@ -42,10 +41,10 @@ const HARNESS_QSTASH_STUB_HEADER = "x-harness-qstash-stub";
 const HARNESS_ADMIN_SECRET_HEADER = "x-admin-secret";
 
 const ONBOARDING_STEP_BODIES: Record<OnboardingStepId, string> = {
-  onboarding_message_1: ONBOARDING_MESSAGE_1,
-  onboarding_message_2: ONBOARDING_MESSAGE_2,
-  onboarding_message_3: ONBOARDING_MESSAGE_3,
-  onboarding_message_4: ONBOARDING_MESSAGE_4,
+  onboarding_message_1: onboardingBurstMessage1(),
+  onboarding_message_2: onboardingBurstMessage2(),
+  onboarding_message_3: onboardingBurstMessage3(),
+  onboarding_message_4: onboardingBurstMessage4(),
 };
 
 export type OnboardingStepPayload = {
@@ -61,12 +60,6 @@ type ConversationSessionRow = {
   user_id: string;
   mode: string;
   state_token: string;
-};
-
-type TwilioSendResult = {
-  sid: string;
-  status: string | null;
-  from: string | null;
 };
 
 export type OnboardingStepHandlerDependencies = {
@@ -313,6 +306,9 @@ function getServiceRoleClient(): DbClient {
 
 export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStepHandlerDependencies {
   const supabase = getServiceRoleClient();
+  const twilio = resolveTwilioRuntimeFromEnv({
+    getEnv: createNodeEnvReader(),
+  });
 
   return {
     verifyQStashSignature,
@@ -346,11 +342,8 @@ export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStep
       payload: OnboardingStepPayload;
     }): Promise<void> {
       const body = ONBOARDING_STEP_BODIES[input.payload.step_id];
-      const twilioAccountSid = requireEnv("TWILIO_ACCOUNT_SID");
-      const twilioAuthToken = requireEnv("TWILIO_AUTH_TOKEN");
       const encryptionKey = requireEnv("SMS_BODY_ENCRYPTION_KEY");
       const fromE164 = requireEnv("TWILIO_FROM_NUMBER");
-      const messagingServiceSid = readEnv("TWILIO_MESSAGING_SERVICE_SID") ?? null;
 
       const userPhoneE164 = await loadUserPhoneE164ById(supabase, input.session.user_id);
       if (!userPhoneE164) {
@@ -362,51 +355,29 @@ export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStep
         key: encryptionKey,
       });
 
-      const nowIso = new Date().toISOString();
-      const pendingMessage = await loadPendingSmsMessage(supabase, input.payload.idempotency_key);
-
-      let pendingMessageId: string;
-      if (pendingMessage?.id) {
-        pendingMessageId = pendingMessage.id;
-      } else {
-        const insertedMessage = await insertOutboundSmsMessage(supabase, {
-          user_id: input.session.user_id,
-          profile_id: input.payload.profile_id,
-          from_e164: fromE164,
-          to_e164: userPhoneE164,
-          body_ciphertext: encryptedBody,
-          correlation_id: input.payload.idempotency_key,
-          status: "queued",
-          key_version: 1,
-          media_count: 0,
-          last_status_at: nowIso,
-        });
-        pendingMessageId = insertedMessage.id;
-      }
-
-      const statusCallbackUrl = resolveTwilioStatusCallbackUrl({
-        explicitUrl: readEnv("TWILIO_STATUS_CALLBACK_URL") ?? null,
-        projectRef: readEnv("PROJECT_REF") ?? null,
-      });
-
-      const sendResult = await sendTwilioRestMessage({
-        accountSid: twilioAccountSid,
-        authToken: twilioAuthToken,
-        idempotencyKey: input.payload.idempotency_key,
+      await sendSms({
+        client: twilio.client,
+        db: supabase,
         to: userPhoneE164,
         from: fromE164,
         body,
-        messagingServiceSid,
-        statusCallbackUrl,
-      });
-
-      const resolvedFrom = sendResult.from ?? fromE164;
-      await finalizeSmsMessageDelivery(supabase, {
-        messageId: pendingMessageId,
-        fromE164: resolvedFrom,
-        twilioMessageSid: sendResult.sid,
-        status: sendResult.status ?? "queued",
-        lastStatusAt: new Date().toISOString(),
+        correlationId: input.payload.idempotency_key,
+        purpose: `onboarding_${input.payload.step_id}`,
+        idempotencyKey: input.payload.idempotency_key,
+        userId: input.session.user_id,
+        profileId: input.payload.profile_id,
+        messagingServiceSid: twilio.senderIdentity.messagingServiceSid,
+        statusCallbackUrl: twilio.statusCallbackUrl,
+        bodyCiphertext: encryptedBody,
+        keyVersion: 1,
+        mediaCount: 0,
+        logger: (level, event, metadata) => {
+          logEvent({
+            level,
+            event,
+            ...metadata,
+          });
+        },
       });
     },
 
@@ -474,75 +445,4 @@ function timingSafeEqual(left: string, right: string): boolean {
     return false;
   }
   return crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function resolveTwilioStatusCallbackUrl(params: {
-  explicitUrl: string | null;
-  projectRef: string | null;
-}): string | null {
-  if (params.explicitUrl) {
-    return params.explicitUrl;
-  }
-
-  if (!params.projectRef) {
-    return null;
-  }
-
-  return `https://${params.projectRef}.supabase.co/functions/v1/twilio-status-callback`;
-}
-
-async function sendTwilioRestMessage(input: {
-  accountSid: string;
-  authToken: string;
-  idempotencyKey: string;
-  to: string;
-  from: string;
-  body: string;
-  messagingServiceSid: string | null;
-  statusCallbackUrl: string | null;
-}): Promise<TwilioSendResult> {
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${input.accountSid}/Messages.json`;
-  const payload = new URLSearchParams();
-  payload.set("To", input.to);
-  payload.set("Body", input.body);
-
-  if (input.messagingServiceSid) {
-    payload.set("MessagingServiceSid", input.messagingServiceSid);
-  } else {
-    payload.set("From", input.from);
-  }
-
-  if (input.statusCallbackUrl) {
-    payload.set("StatusCallback", input.statusCallbackUrl);
-  }
-
-  const auth = Buffer.from(`${input.accountSid}:${input.authToken}`).toString("base64");
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      "Idempotency-Key": input.idempotencyKey,
-      "content-type": "application/x-www-form-urlencoded",
-    },
-    body: payload.toString(),
-  });
-
-  const json = await response.json().catch(() => null);
-  if (!response.ok) {
-    const code = isNonEmptyString(json?.code) ? `code=${json.code}` : "";
-    const detail = isNonEmptyString(json?.message) ? json.message : response.statusText;
-    throw new Error([code, detail].filter(Boolean).join(" "));
-  }
-
-  const sid = typeof json?.sid === "string" ? json.sid : "";
-  if (!sid) {
-    throw new Error("Twilio response missing sid.");
-  }
-
-  return {
-    sid,
-    status: typeof json?.status === "string" ? json.status : null,
-    from: typeof json?.from === "string" ? json.from : null,
-  };
 }
