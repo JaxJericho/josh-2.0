@@ -3,6 +3,7 @@ import {
   claimWaitlistEntriesCas,
   executeWaitlistBatchNotify,
   parseWaitlistBatchNotifyRequest,
+  renderWaitlistNotificationTemplate,
   resolveRegionBySlug,
   selectEligibleWaitlistEntries,
   WaitlistBatchNotifyError,
@@ -12,6 +13,7 @@ import {
   type WaitlistBatchNotifyRequest,
   type WaitlistBatchRegion,
 } from "../../supabase/functions/_shared/waitlist/admin-waitlist-batch-notify";
+import { ONBOARDING_OPENING } from "../../packages/core/src/onboarding/messages";
 
 describe("admin waitlist batch notify", () => {
   it("selection logic keeps only eligible rows with last_notified_at=null in deterministic order", () => {
@@ -89,6 +91,40 @@ describe("admin waitlist batch notify", () => {
     expect(resolveRegionBySlug(regions, "unknown")).toBeNull();
   });
 
+  it("defaults template version to onboarding_opening and rejects v1", () => {
+    const parsed = parseWaitlistBatchNotifyRequest({
+      region_slug: "waitlist",
+      limit: 10,
+      dry_run: true,
+      open_region: false,
+    });
+    expect(parsed.notification_template_version).toBe("onboarding_opening");
+
+    expect(() =>
+      parseWaitlistBatchNotifyRequest({
+        region_slug: "waitlist",
+        limit: 10,
+        dry_run: true,
+        open_region: false,
+        notification_template_version: "v1",
+      })
+    ).toThrowError(
+      expect.objectContaining({
+        code: "INVALID_TEMPLATE_VERSION",
+      }),
+    );
+  });
+
+  it("does not allow rendering the legacy v1 launch string", () => {
+    const rendered = renderWaitlistNotificationTemplate({
+      version: "onboarding_opening",
+      regionDisplayName: "Waitlist",
+    });
+    expect(rendered).toBe(ONBOARDING_OPENING);
+    expect(rendered).not.toContain("[template:v1]");
+    expect(rendered).not.toContain("JOSH is now live in");
+  });
+
   it("executes dry_run + non-dry-run and remains replay-safe", async () => {
     const repository = new InMemoryWaitlistRepository({
       regions: [
@@ -152,6 +188,15 @@ describe("admin waitlist batch notify", () => {
     expect(firstLiveRun.attempted_send_count).toBe(2);
     expect(firstLiveRun.sent_count).toBe(2);
     expect(firstLiveRun.errors).toHaveLength(0);
+    expect(
+      repository.activationRequests.map((requestInput) => requestInput.idempotency_key),
+    ).toEqual([
+      "waitlist_activation_onboarding:reg_waitlist:pro_1:onboarding_opening",
+      "waitlist_activation_onboarding:reg_waitlist:pro_2:onboarding_opening",
+    ]);
+    for (const requestInput of repository.activationRequests) {
+      expect(requestInput.idempotency_key.startsWith("region_launch_notify:")).toBe(false);
+    }
 
     const replayRun = await executeWaitlistBatchNotify({
       request: request({
@@ -193,6 +238,13 @@ class InMemoryWaitlistRepository implements WaitlistBatchNotifyRepository {
   private regions: WaitlistBatchRegion[];
   private entries: WaitlistBatchEntry[];
   private activationKeys: Set<string>;
+  activationRequests: Array<{
+    user_id: string;
+    profile_id: string;
+    waitlist_entry_id: string;
+    idempotency_key: string;
+    activated_at: string;
+  }>;
 
   constructor(input: {
     regions: WaitlistBatchRegion[];
@@ -201,6 +253,7 @@ class InMemoryWaitlistRepository implements WaitlistBatchNotifyRepository {
     this.regions = input.regions.map((region) => ({ ...region }));
     this.entries = input.entries.map((row) => ({ ...row }));
     this.activationKeys = new Set<string>();
+    this.activationRequests = [];
   }
 
   async findRegionBySlug(slug: string): Promise<WaitlistBatchRegion | null> {
@@ -244,6 +297,7 @@ class InMemoryWaitlistRepository implements WaitlistBatchNotifyRepository {
     idempotency_key: string;
     activated_at: string;
   }): Promise<EnqueueResult> {
+    this.activationRequests.push({ ...input });
     if (!this.activationKeys.has(input.idempotency_key)) {
       this.activationKeys.add(input.idempotency_key);
       return "inserted";
@@ -274,6 +328,6 @@ function request(input: Partial<WaitlistBatchNotifyRequest>): WaitlistBatchNotif
     limit: input.limit,
     dry_run: input.dry_run,
     open_region: input.open_region,
-    notification_template_version: input.notification_template_version ?? "v1",
+    notification_template_version: input.notification_template_version ?? "onboarding_opening",
   });
 }
