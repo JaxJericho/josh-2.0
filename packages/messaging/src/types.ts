@@ -66,7 +66,7 @@ export type SendSmsRequest = {
   db?: SmsDbClient;
   persistence?: SmsMessagePersistence;
   to: string;
-  from: string;
+  from?: string | null;
   body: string;
   correlationId: string;
   purpose: string;

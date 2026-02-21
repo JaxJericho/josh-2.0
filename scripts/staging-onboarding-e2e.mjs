@@ -422,6 +422,7 @@ async function triggerWaitlistActivation() {
     limit: 1,
     dry_run: false,
     open_region: false,
+    notification_template_version: "onboarding_opening",
   };
 
   const response = await fetch(endpoint, {
