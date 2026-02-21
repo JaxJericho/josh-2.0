@@ -27,7 +27,7 @@ import {
   type OnboardingStepId,
 } from "../../packages/core/src/onboarding/step-ids";
 import { createNodeEnvReader, resolveTwilioRuntimeFromEnv } from "../../packages/messaging/src/client";
-import { sendSms } from "../../packages/messaging/src/sender";
+import { normalizeIdempotencyKeyForSmsCorrelation, sendSms } from "../../packages/messaging/src/sender";
 import {
   onboardingBurstMessage1,
   onboardingBurstMessage2,
@@ -108,6 +108,10 @@ function buildExpectedIdempotencyKey(payload: {
   step_id: OnboardingStepId;
 }): string {
   return `onboarding:${payload.profile_id}:${payload.session_id}:${payload.step_id}`;
+}
+
+function toSmsCorrelationId(idempotencyKey: string): string {
+  return normalizeIdempotencyKeyForSmsCorrelation(idempotencyKey);
 }
 
 async function parseOnboardingStepPayload(request: Request): Promise<OnboardingStepPayload> {
@@ -202,6 +206,8 @@ export async function handleOnboardingStepRequest(
   });
 
   try {
+    const smsCorrelationId = toSmsCorrelationId(payload.idempotency_key);
+
     // b) Source-of-truth conversation session load.
     const session = await deps.loadSession(payload.session_id);
 
@@ -227,7 +233,7 @@ export async function handleOnboardingStepRequest(
     }
 
     // d) Idempotency check.
-    if (await deps.hasDeliveredMessage(payload.idempotency_key)) {
+    if (await deps.hasDeliveredMessage(smsCorrelationId)) {
       return createStepSkippedResponse(deps, payload, correlationId, "already_sent");
     }
 
@@ -245,7 +251,7 @@ export async function handleOnboardingStepRequest(
     const nextExpectedStateToken = resolveNextExpectedStateToken(payload.step_id);
     await deps.updateSessionState(session.id, nextExpectedStateToken);
 
-    const deliveredAfterStateAdvance = await deps.hasDeliveredMessage(payload.idempotency_key);
+    const deliveredAfterStateAdvance = await deps.hasDeliveredMessage(smsCorrelationId);
     if (!deliveredAfterStateAdvance) {
       await deps.updateSessionState(session.id, previousStateToken);
       return jsonResponse(
@@ -343,7 +349,14 @@ export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStep
     }): Promise<void> {
       const body = ONBOARDING_STEP_BODIES[input.payload.step_id];
       const encryptionKey = requireEnv("SMS_BODY_ENCRYPTION_KEY");
-      const fromE164 = requireEnv("TWILIO_FROM_NUMBER");
+      const fromE164 = twilio.senderIdentity.from;
+      const messagingServiceSid = twilio.senderIdentity.messagingServiceSid;
+
+      if (!fromE164 && !messagingServiceSid) {
+        throw new Error(
+          "Missing outbound sender identity. Configure TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID.",
+        );
+      }
 
       const userPhoneE164 = await loadUserPhoneE164ById(supabase, input.session.user_id);
       if (!userPhoneE164) {
@@ -359,14 +372,14 @@ export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStep
         client: twilio.client,
         db: supabase,
         to: userPhoneE164,
-        from: fromE164,
         body,
         correlationId: input.payload.idempotency_key,
         purpose: `onboarding_${input.payload.step_id}`,
         idempotencyKey: input.payload.idempotency_key,
         userId: input.session.user_id,
         profileId: input.payload.profile_id,
-        messagingServiceSid: twilio.senderIdentity.messagingServiceSid,
+        ...(fromE164 ? { from: fromE164 } : {}),
+        messagingServiceSid,
         statusCallbackUrl: twilio.statusCallbackUrl,
         bodyCiphertext: encryptedBody,
         keyVersion: 1,

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { TwilioClientError, type TwilioClient } from "./client";
-import { SendSmsError, sendSms } from "./sender";
+import {
+  SendSmsError,
+  normalizeIdempotencyKeyForSmsCorrelation,
+  sendSms,
+} from "./sender";
 import type { SmsMessagePersistence } from "./types";
 
 type StoredMessage = {
@@ -86,6 +90,23 @@ function createInMemoryPersistence(): {
 }
 
 describe("sendSms", () => {
+  it("normalizes non-UUID idempotency keys to deterministic UUID correlation ids", () => {
+    const first = normalizeIdempotencyKeyForSmsCorrelation("onboarding:profile:session:onboarding_message_1");
+    const second = normalizeIdempotencyKeyForSmsCorrelation("onboarding:profile:session:onboarding_message_1");
+    const different = normalizeIdempotencyKeyForSmsCorrelation("onboarding:profile:session:onboarding_message_2");
+
+    expect(first).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(first).toBe(second);
+    expect(first).not.toBe(different);
+  });
+
+  it("keeps UUID idempotency keys unchanged for sms correlation ids", () => {
+    const uuid = "d474d4ec-40ab-5be3-b1ad-efca98196cd1";
+    expect(normalizeIdempotencyKeyForSmsCorrelation(uuid)).toBe(uuid);
+  });
+
   it("enforces idempotency for repeated idempotency keys", async () => {
     const { persistence, state } = createInMemoryPersistence();
     const sendMessage = vi.fn().mockResolvedValue({

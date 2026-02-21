@@ -25,13 +25,8 @@ const ONBOARDING_STEP_IDS = [
   "onboarding_message_3",
   "onboarding_message_4",
 ];
-
-const BURST_JOB_PURPOSES = [
-  "onboarding_onboarding_message_1",
-  "onboarding_onboarding_message_2",
-  "onboarding_onboarding_message_3",
-  "onboarding_onboarding_message_4",
-];
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const STEP_TIMEOUT_MS = 60_000;
 const STEP_POLL_INTERVAL_MS = 1_000;
@@ -77,7 +72,7 @@ async function main() {
     `[${SCRIPT_TAG}] PASS mode=${harnessMode} cycle_1_steps=${cycleOne.stepRows.length} cycle_2_steps=${cycleTwo.stepRows.length}`,
   );
   console.log(
-    `[${SCRIPT_TAG}] PASS mode=${harnessMode} burst_sms_outbound_jobs_cycle_1=${cycleOne.burstJobCount} burst_sms_outbound_jobs_cycle_2=${cycleTwo.burstJobCount}`,
+    `[${SCRIPT_TAG}] PASS mode=${harnessMode} burst_sms_messages_cycle_1=${cycleOne.burstEvidenceCount} burst_sms_messages_cycle_2=${cycleTwo.burstEvidenceCount}`,
   );
   console.log(
     `[${SCRIPT_TAG}] PASS mode=${harnessMode} idempotency_rows_cycle_1=${cycleOne.idempotencyRowCount} idempotency_rows_cycle_2=${cycleTwo.idempotencyRowCount}`,
@@ -187,7 +182,13 @@ async function runHarnessCycle(params) {
     `[${SCRIPT_TAG}] cycle=${params.label} selected=${activationSummary.selected_count} claimed=${activationSummary.claimed_count} sent=${activationSummary.sent_count} burst_steps_observed=${stepRows.length}`,
   );
   console.log(
-    `[${SCRIPT_TAG}] SQL jobs cycle=${params.label} rows=${JSON.stringify(burstEvidenceRows.map(toSqlEvidenceJobRow))}`,
+    `[${SCRIPT_TAG}] SQL burst_evidence_query cycle=${params.label} sql=${buildBurstEvidenceQuerySql()}`,
+  );
+  console.log(
+    `[${SCRIPT_TAG}] SQL burst_rows cycle=${params.label} rows=${JSON.stringify(burstEvidenceRows.map(toSqlEvidenceRow))}`,
+  );
+  console.log(
+    `[${SCRIPT_TAG}] SQL idempotency_query cycle=${params.label} sql=${buildIdempotencyQuerySql()}`,
   );
   console.log(
     `[${SCRIPT_TAG}] SQL gaps cycle=${params.label} rows=${JSON.stringify(buildGapEvidenceRows(stepRows))}`,
@@ -200,7 +201,7 @@ async function runHarnessCycle(params) {
     activationSummary,
     stepRows,
     stepGapMs,
-    burstJobCount: burstEvidenceRows.length,
+    burstEvidenceCount: burstEvidenceRows.length,
     idempotencyRowCount,
     drainCheck,
   };
@@ -729,63 +730,60 @@ function assertStepOrderingAndTiming(params) {
 }
 
 async function pollBurstStepEvidence(params) {
+  const correlationId = normalizeIdempotencyKeyForSmsCorrelation(params.idempotencyKey);
   const startedAt = Date.now();
   while (Date.now() - startedAt <= params.timeoutMs) {
-    const jobRows = await fetchOutboundJobsByIdempotencyKey({
-      idempotencyKey: params.idempotencyKey,
-      purpose: params.purpose,
+    const messageRows = await fetchOutboundSmsMessagesByCorrelationId({
+      correlationId,
       referenceTimestampIso: params.referenceTimestampIso,
     });
 
-    if (jobRows.length > 1) {
+    if (messageRows.length > 1) {
       fail(
-        `Duplicate sms_outbound_jobs rows detected for idempotency_key='${params.idempotencyKey}'. Rows=${jobRows.length}.`,
+        `Duplicate sms_messages rows detected for idempotency_key='${params.idempotencyKey}' (correlation_id='${correlationId}'). Rows=${messageRows.length}.`,
       );
     }
 
-    if (jobRows.length === 1) {
-      const job = jobRows[0];
+    if (messageRows.length === 1) {
+      const message = messageRows[0];
       const twilioMessageSid =
-        typeof job.twilio_message_sid === "string" ? job.twilio_message_sid.trim() : "";
+        typeof message.twilio_message_sid === "string" ? message.twilio_message_sid.trim() : "";
       if (twilioMessageSid) {
-        const messageBySid = await fetchOutboundSmsMessagesByTwilioSid({
-          twilioMessageSids: [twilioMessageSid],
-        });
-        const message = messageBySid.get(twilioMessageSid);
-        if (message) {
-          return {
-            stepId: params.stepId,
-            purpose: job.purpose,
-            idempotencyKey: job.idempotency_key,
-            jobId: job.id,
-            jobCreatedAt: job.created_at,
-            twilioMessageSid,
-            messageId: message.id,
-            messageCreatedAt: message.created_at,
-          };
-        }
+        return {
+          stepId: params.stepId,
+          purpose: params.purpose,
+          idempotencyKey: params.idempotencyKey,
+          correlationId,
+          twilioMessageSid,
+          messageId: message.id,
+          messageCreatedAt: message.created_at,
+          messageStatus: message.status ?? null,
+          messageLastStatusAt: message.last_status_at ?? null,
+        };
       }
     }
 
     await sleep(params.pollIntervalMs);
   }
 
+  const diagnostics = await collectBurstEvidenceDiagnostics({
+    referenceTimestampIso: params.referenceTimestampIso,
+    correlationId,
+  });
   fail(
-    `Timed out waiting for onboarding burst evidence (purpose='${params.purpose}', idempotency_key='${params.idempotencyKey}') via sms_outbound_jobs joined to sms_messages.twilio_message_sid.`,
+    `Timed out waiting for onboarding burst evidence (purpose='${params.purpose}', idempotency_key='${params.idempotencyKey}', correlation_id='${correlationId}') via sms_messages.correlation_id. diagnostics=${truncate(JSON.stringify(diagnostics), 1200)}`,
   );
 }
 
-async function fetchOutboundJobsByIdempotencyKey(params) {
+async function fetchOutboundSmsMessagesByCorrelationId(params) {
   const query = supabase
-    .from("sms_outbound_jobs")
-    .select("id,created_at,purpose,idempotency_key,twilio_message_sid")
+    .from("sms_messages")
+    .select("id,created_at,correlation_id,twilio_message_sid,status,last_status_at")
     .eq("user_id", TEST_USER_ID)
-    .eq("idempotency_key", params.idempotencyKey)
+    .eq("direction", "out")
+    .eq("correlation_id", params.correlationId)
     .order("created_at", { ascending: true });
 
-  if (params.purpose) {
-    query.eq("purpose", params.purpose);
-  }
   if (params.referenceTimestampIso) {
     query.gte("created_at", params.referenceTimestampIso);
   }
@@ -794,104 +792,57 @@ async function fetchOutboundJobsByIdempotencyKey(params) {
 
   if (error) {
     fail(
-      `Unable to read sms_outbound_jobs for idempotency_key='${params.idempotencyKey}': ${formatSupabaseError(error)}`,
+      `Unable to read sms_messages for correlation_id='${params.correlationId}': ${formatSupabaseError(error)}`,
     );
   }
 
   return Array.isArray(data) ? data : [];
 }
 
-async function fetchOutboundSmsMessagesByTwilioSid(params) {
-  if (params.twilioMessageSids.length === 0) {
-    return new Map();
-  }
-
-  const { data, error } = await supabase
-    .from("sms_messages")
-    .select("id,created_at,twilio_message_sid")
-    .eq("user_id", TEST_USER_ID)
-    .eq("direction", "out")
-    .in("twilio_message_sid", params.twilioMessageSids)
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    fail(`Unable to query sms_messages by twilio_message_sid: ${formatSupabaseError(error)}`);
-  }
-
-  const rows = Array.isArray(data) ? data : [];
-  const map = new Map();
-  for (const row of rows) {
-    const sid = typeof row.twilio_message_sid === "string" ? row.twilio_message_sid.trim() : "";
-    if (!sid) {
-      fail("Encountered sms_messages row without twilio_message_sid while resolving burst evidence.");
-    }
-    if (map.has(sid)) {
-      fail(`Duplicate sms_messages rows detected for twilio_message_sid='${sid}'.`);
-    }
-    map.set(sid, row);
-  }
-
-  return map;
-}
-
 async function listBurstEvidenceForSession(params) {
-  const idempotencyPrefix = buildStepIdempotencyPrefix({
-    profileId: params.profileId,
-    sessionId: params.sessionId,
-  });
-  const { data, error } = await supabase
-    .from("sms_outbound_jobs")
-    .select("id,created_at,purpose,idempotency_key,twilio_message_sid")
-    .eq("user_id", TEST_USER_ID)
-    .in("purpose", BURST_JOB_PURPOSES)
-    .gte("created_at", params.referenceTimestampIso)
-    .like("idempotency_key", `${idempotencyPrefix}%`)
-    .order("created_at", { ascending: true });
+  const rows = [];
+  for (const stepId of ONBOARDING_STEP_IDS) {
+    const idempotencyKey = buildStepIdempotencyKey({
+      profileId: params.profileId,
+      sessionId: params.sessionId,
+      stepId,
+    });
+    const correlationId = normalizeIdempotencyKeyForSmsCorrelation(idempotencyKey);
+    const matches = await fetchOutboundSmsMessagesByCorrelationId({
+      correlationId,
+      referenceTimestampIso: params.referenceTimestampIso,
+    });
 
-  if (error) {
-    fail(`Unable to read burst sms_outbound_jobs evidence: ${formatSupabaseError(error)}`);
-  }
-
-  const jobs = Array.isArray(data) ? data : [];
-  const twilioMessageSids = [];
-  for (const job of jobs) {
-    const idempotencyKey = typeof job.idempotency_key === "string" ? job.idempotency_key.trim() : "";
-    if (!idempotencyKey.startsWith(idempotencyPrefix)) {
+    if (matches.length > 1) {
       fail(
-        `Observed unexpected burst idempotency_key='${idempotencyKey}' for session prefix='${idempotencyPrefix}'.`,
+        `Duplicate sms_messages rows detected for idempotency_key='${idempotencyKey}' (correlation_id='${correlationId}'). Rows=${matches.length}.`,
       );
     }
+    if (matches.length === 0) {
+      continue;
+    }
+
+    const message = matches[0];
     const twilioMessageSid =
-      typeof job.twilio_message_sid === "string" ? job.twilio_message_sid.trim() : "";
+      typeof message.twilio_message_sid === "string" ? message.twilio_message_sid.trim() : "";
     if (!twilioMessageSid) {
       fail(
-        `Burst sms_outbound_jobs row missing twilio_message_sid for idempotency_key='${idempotencyKey}'.`,
-      );
-    }
-    twilioMessageSids.push(twilioMessageSid);
-  }
-
-  const messagesBySid = await fetchOutboundSmsMessagesByTwilioSid({ twilioMessageSids });
-  const rows = jobs.map((job) => {
-    const twilioMessageSid = job.twilio_message_sid.trim();
-    const message = messagesBySid.get(twilioMessageSid);
-    if (!message) {
-      fail(
-        `Missing sms_messages row for burst twilio_message_sid='${twilioMessageSid}' (idempotency_key='${job.idempotency_key}').`,
+        `Burst sms_messages row missing twilio_message_sid for idempotency_key='${idempotencyKey}' (correlation_id='${correlationId}').`,
       );
     }
 
-    return {
-      stepId: stepIdFromIdempotencyKey(job.idempotency_key, idempotencyPrefix),
-      purpose: job.purpose,
-      idempotencyKey: job.idempotency_key,
-      jobId: job.id,
-      jobCreatedAt: job.created_at,
+    rows.push({
+      stepId,
+      purpose: `onboarding_${stepId}`,
+      idempotencyKey,
+      correlationId,
       twilioMessageSid,
       messageId: message.id,
       messageCreatedAt: message.created_at,
-    };
-  });
+      messageStatus: message.status ?? null,
+      messageLastStatusAt: message.last_status_at ?? null,
+    });
+  }
 
   rows.sort((a, b) => Date.parse(a.messageCreatedAt) - Date.parse(b.messageCreatedAt));
   return rows;
@@ -900,7 +851,7 @@ async function listBurstEvidenceForSession(params) {
 function assertExactBurstEvidence(params) {
   if (params.rows.length !== ONBOARDING_STEP_IDS.length) {
     fail(
-      `Expected exactly ${ONBOARDING_STEP_IDS.length} onboarding burst jobs/messages, found ${params.rows.length}. rows=${truncate(JSON.stringify(params.rows.map(toSqlEvidenceJobRow)), 800)}`,
+      `Expected exactly ${ONBOARDING_STEP_IDS.length} onboarding burst message evidences, found ${params.rows.length}. rows=${truncate(JSON.stringify(params.rows.map(toSqlEvidenceRow)), 800)}`,
     );
   }
 
@@ -961,28 +912,26 @@ async function runBurstDrainCheck(params) {
 }
 
 async function countDeliveredRowsByOutboundIdempotency(params) {
-  const rows = await fetchOutboundJobsByIdempotencyKey({
-    idempotencyKey: params.idempotencyKey,
+  const rows = await fetchOutboundSmsMessagesByCorrelationId({
+    correlationId: normalizeIdempotencyKeyForSmsCorrelation(params.idempotencyKey),
   });
   if (rows.length > 1) {
     fail(
-      `Duplicate sms_outbound_jobs rows detected for idempotency_key='${params.idempotencyKey}' during idempotency verification.`,
+      `Duplicate sms_messages rows detected for idempotency_key='${params.idempotencyKey}' during idempotency verification.`,
     );
   }
   if (rows.length === 0) {
     return 0;
   }
 
-  const twilioMessageSid =
-    typeof rows[0].twilio_message_sid === "string" ? rows[0].twilio_message_sid.trim() : "";
-  if (!twilioMessageSid) {
+  const twilioMessageSid = typeof rows[0].twilio_message_sid === "string"
+    ? rows[0].twilio_message_sid.trim()
+    : "";
+  if (twilioMessageSid.length === 0) {
     return 0;
   }
 
-  const messageBySid = await fetchOutboundSmsMessagesByTwilioSid({
-    twilioMessageSids: [twilioMessageSid],
-  });
-  return messageBySid.has(twilioMessageSid) ? 1 : 0;
+  return 1;
 }
 
 function buildGapEvidenceRows(stepRows) {
@@ -1001,30 +950,103 @@ function buildGapEvidenceRows(stepRows) {
   return rows;
 }
 
-function toSqlEvidenceJobRow(row) {
+function toSqlEvidenceRow(row) {
   return {
     step_id: row.stepId,
     purpose: row.purpose,
     idempotency_key: row.idempotencyKey,
+    correlation_id: row.correlationId,
     twilio_message_sid: row.twilioMessageSid,
-    job_created_at: row.jobCreatedAt,
     message_created_at: row.messageCreatedAt,
+    status: row.messageStatus,
+    last_status_at: row.messageLastStatusAt,
   };
-}
-
-function stepIdFromIdempotencyKey(idempotencyKey, prefix) {
-  if (!idempotencyKey.startsWith(prefix)) {
-    fail(`Unexpected idempotency_key format '${idempotencyKey}'. Expected prefix '${prefix}'.`);
-  }
-  const stepId = idempotencyKey.slice(prefix.length);
-  if (!ONBOARDING_STEP_IDS.includes(stepId)) {
-    fail(`Unexpected onboarding step id '${stepId}' parsed from idempotency_key='${idempotencyKey}'.`);
-  }
-  return stepId;
 }
 
 function buildStepIdempotencyPrefix(params) {
   return `onboarding:${params.profileId}:${params.sessionId}:`;
+}
+
+function buildBurstEvidenceQuerySql() {
+  return "select id, created_at, correlation_id, twilio_message_sid, status, last_status_at from public.sms_messages where user_id = :user_id and direction = 'out' and correlation_id = :correlation_id and created_at >= :reference_timestamp order by created_at asc;";
+}
+
+function buildIdempotencyQuerySql() {
+  return "select id, created_at, correlation_id, twilio_message_sid, status from public.sms_messages where user_id = :user_id and direction = 'out' and correlation_id = :correlation_id order by created_at asc;";
+}
+
+async function collectBurstEvidenceDiagnostics(params) {
+  const [messagesResult, jobsResult] = await Promise.all([
+    supabase
+      .from("sms_messages")
+      .select("id,created_at,correlation_id,twilio_message_sid,status,last_status_at")
+      .eq("user_id", TEST_USER_ID)
+      .eq("direction", "out")
+      .gte("created_at", params.referenceTimestampIso)
+      .order("created_at", { ascending: false })
+      .limit(8),
+    supabase
+      .from("sms_outbound_jobs")
+      .select("id,created_at,purpose,idempotency_key,twilio_message_sid,status,last_status_at")
+      .eq("user_id", TEST_USER_ID)
+      .gte("created_at", params.referenceTimestampIso)
+      .order("created_at", { ascending: false })
+      .limit(8),
+  ]);
+
+  return {
+    expected_correlation_id: params.correlationId,
+    sms_messages_query: buildBurstEvidenceQuerySql(),
+    sms_outbound_jobs_query:
+      "select id, created_at, purpose, idempotency_key, twilio_message_sid, status, last_status_at from public.sms_outbound_jobs where user_id = :user_id and created_at >= :reference_timestamp order by created_at desc limit 8;",
+    sms_messages: messagesResult.error
+      ? `error:${formatSupabaseError(messagesResult.error)}`
+      : messagesResult.data,
+    sms_outbound_jobs: jobsResult.error
+      ? `error:${formatSupabaseError(jobsResult.error)}`
+      : jobsResult.data,
+  };
+}
+
+function normalizeIdempotencyKeyForSmsCorrelation(idempotencyKey) {
+  const normalized = idempotencyKey.trim();
+  if (UUID_PATTERN.test(normalized)) {
+    return normalized;
+  }
+
+  return deterministicUuidFromString(normalized);
+}
+
+function deterministicUuidFromString(input) {
+  const hex = [
+    fnv1a32(`0:${input}`),
+    fnv1a32(`1:${input}`),
+    fnv1a32(`2:${input}`),
+    fnv1a32(`3:${input}`),
+  ]
+    .map((part) => part.toString(16).padStart(8, "0"))
+    .join("");
+
+  const chars = hex.split("");
+  chars[12] = "5";
+  const variant = parseInt(chars[16] ?? "0", 16);
+  chars[16] = ((variant & 0x3) | 0x8).toString(16);
+  const canonical = chars.join("");
+
+  return `${canonical.slice(0, 8)}-${canonical.slice(8, 12)}-${canonical.slice(12, 16)}-${
+    canonical.slice(16, 20)
+  }-${canonical.slice(20, 32)}`;
+}
+
+function fnv1a32(input) {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return hash >>> 0;
 }
 
 async function submitDuplicateStepPayloadTwice(params) {
@@ -1148,11 +1170,11 @@ function assertNoStateBleed(cycleOne, cycleTwo) {
   }
 
   if (
-    cycleOne.burstJobCount !== ONBOARDING_STEP_IDS.length ||
-    cycleTwo.burstJobCount !== ONBOARDING_STEP_IDS.length
+    cycleOne.burstEvidenceCount !== ONBOARDING_STEP_IDS.length ||
+    cycleTwo.burstEvidenceCount !== ONBOARDING_STEP_IDS.length
   ) {
     fail(
-      `State bleed detected: burst job counts mismatch (cycle_1=${cycleOne.burstJobCount}, cycle_2=${cycleTwo.burstJobCount}).`,
+      `State bleed detected: burst evidence counts mismatch (cycle_1=${cycleOne.burstEvidenceCount}, cycle_2=${cycleTwo.burstEvidenceCount}).`,
     );
   }
 
