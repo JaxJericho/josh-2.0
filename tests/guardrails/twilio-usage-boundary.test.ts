@@ -7,10 +7,19 @@ const REPO_ROOT = path.resolve(__dirname, "../..");
 const ALLOWED_PREFIX = "packages/messaging/";
 
 function runGitGrep(pattern: string): string[] {
+  const pathspecs = [
+    "*.ts",
+    ":(exclude).claude/**",
+    ":(exclude)node_modules/**",
+    ":(exclude).next/**",
+    ":(exclude)dist/**",
+    ":(exclude)build/**",
+  ];
+
   try {
     const output = execFileSync(
       "git",
-      ["grep", "-n", "-P", pattern, "--", "*.ts"],
+      ["grep", "-n", "-P", pattern, "--", ...pathspecs],
       {
         cwd: REPO_ROOT,
         encoding: "utf8",
