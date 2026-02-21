@@ -26,11 +26,28 @@ describe("onboarding architecture guardrails", () => {
     const scheduledBurstStart =
       scheduleCalls.length === 1 &&
       scheduleCalls[0]?.payload.step_id === "onboarding_message_1" &&
+      scheduleCalls[0]?.payload.expected_state_token === "onboarding:awaiting_burst" &&
       scheduleCalls[0]?.delayMs === 0;
     const insertedBurstJobs = burstJobInserts.length > 0;
 
     if (!scheduledBurstStart || insertedBurstJobs) {
       throw new Error("burst enqueue detected — use QStash scheduling");
+    }
+  });
+
+  it("disallows burst direct-send path in onboarding inbound runtime", () => {
+    const sourcePath = path.resolve(
+      process.cwd(),
+      "supabase/functions/_shared/engines/onboarding-engine.ts",
+    );
+    const source = fs.readFileSync(sourcePath, "utf8");
+    const hasBlockedSet = source.includes("INBOUND_DIRECT_SEND_BLOCKED_MESSAGE_KEYS");
+    const hasFailFastGuard = source.includes(
+      "Burst onboarding steps must never be direct-sent from inbound runtime",
+    );
+
+    if (!hasBlockedSet || !hasFailFastGuard) {
+      throw new Error("burst direct-send path detected — block burst direct sends in inbound runtime");
     }
   });
 

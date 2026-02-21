@@ -110,11 +110,21 @@ describe("onboarding explanation affirmative scheduling", () => {
         profile_id: "profile_123",
         session_id: "ses_123",
         step_id: "onboarding_message_1",
-        expected_state_token: "onboarding:awaiting_explanation_response",
+        expected_state_token: "onboarding:awaiting_burst",
         idempotency_key: "onboarding:profile_123:ses_123:onboarding_message_1",
       },
       delayMs: 0,
     });
+  });
+
+  it("persists onboarding:awaiting_burst before scheduling onboarding_message_1", async () => {
+    const { callOrder } = await runExplanationAffirmativeScenario();
+    const persistIndex = callOrder.indexOf("persist:onboarding:awaiting_burst");
+    const scheduleIndex = callOrder.indexOf("schedule:onboarding_message_1");
+
+    expect(persistIndex).toBeGreaterThanOrEqual(0);
+    expect(scheduleIndex).toBeGreaterThanOrEqual(0);
+    expect(persistIndex).toBeLessThan(scheduleIndex);
   });
 
   it("creates zero burst sms_outbound_jobs rows and sets state_token to onboarding:awaiting_burst", async () => {
@@ -215,6 +225,7 @@ async function runExplanationAffirmativeScenario(): Promise<{
   }>;
   insertedJobRows: Array<Record<string, unknown>>;
   stateTokenUpdates: string[];
+  callOrder: string[];
 }> {
   const previousDeno = (globalThis as { Deno?: unknown }).Deno;
   const envMap = new Map<string, string>([
@@ -233,6 +244,7 @@ async function runExplanationAffirmativeScenario(): Promise<{
 
   const insertedJobRows: Array<Record<string, unknown>> = [];
   const stateTokenUpdates: string[] = [];
+  const callOrder: string[] = [];
   const scheduleCalls: Array<{
     payload: {
       profile_id: string;
@@ -289,6 +301,7 @@ async function runExplanationAffirmativeScenario(): Promise<{
           }
           if (table === "conversation_sessions" && payload.state_token) {
             stateTokenUpdates.push(String(payload.state_token));
+            callOrder.push(`persist:${String(payload.state_token)}`);
           }
           const updateQuery = {
             eq() { return updateQuery; },
@@ -347,6 +360,7 @@ async function runExplanationAffirmativeScenario(): Promise<{
       },
       {
         scheduleOnboardingStep: async (payload, delayMs) => {
+          callOrder.push(`schedule:${String(payload.step_id)}`);
           scheduleCalls.push({
             payload: payload as {
               profile_id: string;
@@ -368,6 +382,7 @@ async function runExplanationAffirmativeScenario(): Promise<{
       scheduleCalls,
       insertedJobRows,
       stateTokenUpdates,
+      callOrder,
     };
   } finally {
     if (previousDeno === undefined) {

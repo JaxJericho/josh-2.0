@@ -25,6 +25,13 @@ type HarnessState = {
   deliveredRows: string[];
 };
 
+type OnboardingStepCase = {
+  stepId: OnboardingStepPayload["step_id"];
+  nextStepId: OnboardingStepPayload["step_id"] | null;
+  expectedDelayMs: number | null;
+  expectedStateAfterStep: string;
+};
+
 const BASE_PAYLOAD: OnboardingStepPayload = {
   profile_id: "profile_123",
   session_id: "session_123",
@@ -32,6 +39,43 @@ const BASE_PAYLOAD: OnboardingStepPayload = {
   expected_state_token: "onboarding:awaiting_burst",
   idempotency_key: "onboarding:profile_123:session_123:onboarding_message_1",
 };
+
+const ONBOARDING_STEP_SCHEDULING_CASES: OnboardingStepCase[] = [
+  {
+    stepId: "onboarding_message_1",
+    nextStepId: "onboarding_message_2",
+    expectedDelayMs: 8_000,
+    expectedStateAfterStep: "onboarding:awaiting_burst",
+  },
+  {
+    stepId: "onboarding_message_2",
+    nextStepId: "onboarding_message_3",
+    expectedDelayMs: 8_000,
+    expectedStateAfterStep: "onboarding:awaiting_burst",
+  },
+  {
+    stepId: "onboarding_message_3",
+    nextStepId: "onboarding_message_4",
+    expectedDelayMs: 0,
+    expectedStateAfterStep: "onboarding:awaiting_burst",
+  },
+  {
+    stepId: "onboarding_message_4",
+    nextStepId: null,
+    expectedDelayMs: null,
+    expectedStateAfterStep: "onboarding:awaiting_interview_start",
+  },
+];
+
+function buildPayload(stepId: OnboardingStepPayload["step_id"]): OnboardingStepPayload {
+  return {
+    profile_id: BASE_PAYLOAD.profile_id,
+    session_id: BASE_PAYLOAD.session_id,
+    step_id: stepId,
+    expected_state_token: "onboarding:awaiting_burst",
+    idempotency_key: `onboarding:${BASE_PAYLOAD.profile_id}:${BASE_PAYLOAD.session_id}:${stepId}`,
+  };
+}
 
 function buildRequest(payload: OnboardingStepPayload = BASE_PAYLOAD): Request {
   return new Request("https://example.test/api/onboarding/step", {
@@ -58,6 +102,7 @@ function createHarness(options: HarnessOptions = {}): {
 
   let sessionToken = options.sessionStateToken ?? BASE_PAYLOAD.expected_state_token;
   let sendFailedOnce = false;
+  let lastIdempotencyKey = BASE_PAYLOAD.idempotency_key;
 
   const deps: OnboardingStepHandlerDependencies = {
     verifyQStashSignature: async () => true,
@@ -79,6 +124,7 @@ function createHarness(options: HarnessOptions = {}): {
     isSessionPaused: async () => Boolean(options.paused),
 
     hasDeliveredMessage: async (idempotencyKey: string) => {
+      lastIdempotencyKey = idempotencyKey;
       return state.deliveredRows.includes(idempotencyKey);
     },
 
@@ -90,7 +136,7 @@ function createHarness(options: HarnessOptions = {}): {
 
       state.sendCount += 1;
       if (options.deliveredAfterSend !== false) {
-        state.deliveredRows.push(BASE_PAYLOAD.idempotency_key);
+        state.deliveredRows.push(lastIdempotencyKey);
       }
     },
 
@@ -229,5 +275,34 @@ describe("onboarding step handler integration-like flows", () => {
     expect(state.sendCount).toBe(1);
     expect(state.deliveredRows).toEqual([BASE_PAYLOAD.idempotency_key]);
     expect(state.stateUpdates).toEqual(["onboarding:awaiting_burst"]);
+  });
+
+  it("schedules exactly one next step at the configured delay for each burst step", async () => {
+    for (const stepCase of ONBOARDING_STEP_SCHEDULING_CASES) {
+      const payload = buildPayload(stepCase.stepId);
+      const { deps, state } = createHarness();
+      const response = await handleOnboardingStepRequest(buildRequest(payload), deps);
+
+      expect(response.status).toBe(200);
+      expect(state.sendCount).toBe(1);
+      expect(state.stateUpdates).toEqual([stepCase.expectedStateAfterStep]);
+
+      if (!stepCase.nextStepId) {
+        expect(state.scheduleCalls).toHaveLength(0);
+        continue;
+      }
+
+      expect(state.scheduleCalls).toHaveLength(1);
+      expect(state.scheduleCalls[0]).toEqual({
+        payload: {
+          profile_id: payload.profile_id,
+          session_id: payload.session_id,
+          step_id: stepCase.nextStepId,
+          expected_state_token: "onboarding:awaiting_burst",
+          idempotency_key: `onboarding:${payload.profile_id}:${payload.session_id}:${stepCase.nextStepId}`,
+        },
+        delayMs: stepCase.expectedDelayMs,
+      });
+    }
   });
 });

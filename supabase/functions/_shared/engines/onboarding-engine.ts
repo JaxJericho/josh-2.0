@@ -62,6 +62,12 @@ const HARNESS_QSTASH_MODE_VALUES = new Set(["stub", "real"]);
 const HARNESS_QSTASH_STUB_HEADER = "x-harness-qstash-stub";
 const BOOLEAN_TRUE_VALUES = new Set(["1", "true"]);
 const BOOLEAN_FALSE_VALUES = new Set(["0", "false"]);
+const INBOUND_DIRECT_SEND_BLOCKED_MESSAGE_KEYS = new Set<OnboardingOutboundMessageKey>([
+  "onboarding_message_1",
+  "onboarding_message_2",
+  "onboarding_message_3",
+  "onboarding_message_4",
+]);
 
 const DEFAULT_ONBOARDING_ENGINE_DEPENDENCIES: OnboardingEngineDependencies = {
   scheduleOnboardingStep: scheduleOnboardingStep,
@@ -187,6 +193,12 @@ export async function runOnboardingEngine(
     inputText: input.payload.body_raw,
   });
   for (const step of inboundResult.outboundPlan) {
+    if (INBOUND_DIRECT_SEND_BLOCKED_MESSAGE_KEYS.has(step.message_key)) {
+      throw new Error(
+        `Burst onboarding steps must never be direct-sent from inbound runtime. Blocked message_key='${step.message_key}'.`,
+      );
+    }
+
     await sendAndRecordOutboundMessage({
       supabase: input.supabase,
       userId: input.decision.user_id,
@@ -209,13 +221,22 @@ export async function runOnboardingEngine(
       throw new Error("Unable to schedule onboarding burst without a profile id.");
     }
 
+    await persistConversationSessionState({
+      supabase: input.supabase,
+      sessionId: session.id,
+      mode: "interviewing",
+      stateToken: ONBOARDING_AWAITING_BURST,
+      currentStepId: null,
+      lastInboundMessageSid: input.payload.inbound_message_sid,
+    });
+
     const stepId: OnboardingStepId = "onboarding_message_1";
     await dependencies.scheduleOnboardingStep(
       {
         profile_id: profileId,
         session_id: session.id,
         step_id: stepId,
-        expected_state_token: onboardingStateToken,
+        expected_state_token: ONBOARDING_AWAITING_BURST,
         idempotency_key: buildOnboardingStepIdempotencyKey({
           profileId,
           sessionId: session.id,
@@ -224,18 +245,18 @@ export async function runOnboardingEngine(
       },
       0,
     );
+  } else {
+    await persistConversationSessionState({
+      supabase: input.supabase,
+      sessionId: session.id,
+      mode: "interviewing",
+      stateToken: inboundResult.nextStateToken,
+      currentStepId: inboundResult.nextStateToken === INTERVIEW_ACTIVITY_01_STATE_TOKEN
+        ? "activity_01"
+        : null,
+      lastInboundMessageSid: input.payload.inbound_message_sid,
+    });
   }
-
-  await persistConversationSessionState({
-    supabase: input.supabase,
-    sessionId: session.id,
-    mode: "interviewing",
-    stateToken: inboundResult.nextStateToken,
-    currentStepId: inboundResult.nextStateToken === INTERVIEW_ACTIVITY_01_STATE_TOKEN
-      ? "activity_01"
-      : null,
-    lastInboundMessageSid: input.payload.inbound_message_sid,
-  });
 
   if (
     inboundResult.handoffToInterview &&
