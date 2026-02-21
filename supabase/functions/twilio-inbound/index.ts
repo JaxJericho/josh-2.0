@@ -1,4 +1,5 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+// @ts-ignore: Deno runtime requires explicit file extensions for local imports.
+import { createServiceRoleDbClient } from "../../../packages/db/src/client-deno.mjs";
 import {
   dispatchConversationRoute,
   routeConversationMessage,
@@ -97,8 +98,11 @@ Deno.serve(async (req) => {
     const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
     const encryptionKey = requireEnv("SMS_BODY_ENCRYPTION_KEY");
 
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false },
+    const supabase = createServiceRoleDbClient({
+      env: {
+        SUPABASE_URL: supabaseUrl,
+        SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+      },
     });
 
     phase = "db_lookup_user";
@@ -400,7 +404,7 @@ function parseMediaCount(value: string | null): number {
 }
 
 async function encryptBody(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createServiceRoleDbClient>,
   body: string,
   key: string
 ): Promise<string> {
@@ -436,7 +440,7 @@ function isDuplicateSidError(error: { code?: string; message?: string }): boolea
 }
 
 async function recordOptOut(
-  supabase: ReturnType<typeof createClient>,
+  supabase: ReturnType<typeof createServiceRoleDbClient>,
   userId: string | null,
   phoneE164: string
 ): Promise<Error | null> {

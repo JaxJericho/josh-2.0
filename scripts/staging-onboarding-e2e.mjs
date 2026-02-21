@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { Client as QStashClient } from "@upstash/qstash";
-import { createClient } from "@supabase/supabase-js";
+import { createDbClient } from "../packages/db/src/client-node.mjs";
 
 const SCRIPT_TAG = "staging-onboarding-e2e";
 
@@ -44,7 +44,7 @@ loadDotEnv(".env.local");
 const harnessMode = parseHarnessMode(requiredEnv("HARNESS_QSTASH_MODE"));
 const appEnv = readOptionalEnv("APP_ENV");
 const supabaseUrl = requiredEnv("SUPABASE_URL");
-const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 const twilioAuthToken = requiredEnv("TWILIO_AUTH_TOKEN");
 const adminSecret =
   readOptionalEnv("STAGING_RUNNER_SECRET") ??
@@ -58,12 +58,7 @@ let harnessQStashClient = null;
 assertValidUrl(supabaseUrl, "SUPABASE_URL");
 assertValidUrl(appBaseUrl, "APP_BASE_URL/VERCEL_URL");
 
-const supabase = createClient(supabaseUrl, serviceRoleKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-  },
-});
+const supabase = createDbClient({ role: "service" });
 
 await main();
 

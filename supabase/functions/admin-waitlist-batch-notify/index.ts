@@ -1,4 +1,8 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.43.4";
+// @ts-ignore: Deno runtime requires explicit file extensions for local imports.
+import {
+  createAnonDbClient,
+  createServiceRoleDbClient,
+} from "../../../packages/db/src/client-deno.mjs";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   ELIGIBLE_WAITLIST_STATUSES,
@@ -45,8 +49,11 @@ Deno.serve(async (req) => {
     const command = parseWaitlistBatchNotifyRequest(parsedBody);
 
     phase = "repository";
-    const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false },
+    const serviceClient = createServiceRoleDbClient({
+      env: {
+        SUPABASE_URL: supabaseUrl,
+        SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+      },
     });
     const repository = createRepository({
       supabase: serviceClient,
@@ -94,7 +101,7 @@ Deno.serve(async (req) => {
 });
 
 function createRepository(input: {
-  supabase: ReturnType<typeof createClient>;
+  supabase: ReturnType<typeof createServiceRoleDbClient>;
 }): WaitlistBatchNotifyRepository {
   return {
     findRegionBySlug: async (slug: string): Promise<WaitlistBatchRegion | null> => {
@@ -228,13 +235,12 @@ async function verifyAdminAccess(
   }
 
   const anonKey = requireEnv("SUPABASE_ANON_KEY");
-  const authClient = createClient(supabaseUrl, anonKey, {
-    auth: { persistSession: false },
-    global: {
-      headers: {
-        authorization,
-      },
+  const authClient = createAnonDbClient({
+    env: {
+      SUPABASE_URL: supabaseUrl,
+      SUPABASE_ANON_KEY: anonKey,
     },
+    authorization,
   });
 
   const { data: userData, error: userError } = await authClient.auth.getUser();

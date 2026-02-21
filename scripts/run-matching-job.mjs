@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { createDbClient } from "../packages/db/src/client-node.mjs";
 
 const DEFAULT_SOURCE_LIMIT = 25;
 const DEFAULT_CANDIDATE_LIMIT = 15;
@@ -12,19 +12,14 @@ const RUN_MODES = new Set(["one_to_one", "linkup"]);
 loadDotEnv(".env.local");
 
 const args = parseArgs(process.argv.slice(2));
-const supabaseUrl = requiredEnv("SUPABASE_URL");
-const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+requiredEnv("SUPABASE_URL");
+requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 
 if (!RUN_MODES.has(args.mode)) {
   fail(`Invalid --mode '${args.mode}'. Expected one of: ${Array.from(RUN_MODES).join(", ")}.`);
 }
 
-const supabase = createClient(supabaseUrl, serviceRoleKey, {
-  auth: {
-    persistSession: false,
-    autoRefreshToken: false,
-  },
-});
+const supabase = createDbClient({ role: "service" });
 
 let runId = null;
 let runKey = null;

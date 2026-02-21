@@ -1,0 +1,11 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`interview/messages > matches approved interview messaging copy 1`] = `
+{
+  "dropout_nudge_rendered": "Hey Avery — you were mid-way through your JOSH profile. No pressure, but whenever you want to pick back up, just reply anything and we'll continue from where you left off.",
+  "dropout_nudge_template": "Hey {firstName} — you were mid-way through your JOSH profile. No pressure, but whenever you want to pick back up, just reply anything and we'll continue from where you left off.",
+  "dropout_resume": "Welcome back. Picking up from where we left off.",
+  "version": "v1",
+  "wrap": "That's everything. Your profile is set. I now have a real sense of your style — the kinds of plans you'd enjoy, how you like to connect, and what a good match looks like for you. Whenever you're ready to do something, just text me naturally. Something like 'I’m free Saturday morning' or 'I want to go skiing this weekend' and I'll take it from there.",
+}
+`;
