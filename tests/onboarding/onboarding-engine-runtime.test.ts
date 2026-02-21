@@ -82,7 +82,18 @@ describe("onboarding engine runtime idempotency", () => {
 });
 
 describe("onboarding runtime state-token resolution", () => {
-  it("prefers routed onboarding token when persisted state drifts", () => {
+  it("prefers persisted onboarding token when routed state drifts", () => {
+    const resolved = resolveOnboardingStateForInbound({
+      routedStateToken: "onboarding:awaiting_interview_start",
+      persistedStateToken: "onboarding:awaiting_explanation_response",
+      userId: "usr_123",
+      inboundMessageSid: "SM_123",
+    });
+
+    expect(resolved).toBe("onboarding:awaiting_explanation_response");
+  });
+
+  it("falls back to routed onboarding token when persisted token is non-onboarding", () => {
     const resolved = resolveOnboardingStateForInbound({
       routedStateToken: "onboarding:awaiting_opening_response",
       persistedStateToken: "interview:motive_01",
@@ -142,6 +153,28 @@ describe("onboarding explanation affirmative scheduling", () => {
 
     expect(insertedJobRows).toHaveLength(0);
     expect(stateTokenUpdates).toContain("onboarding:awaiting_burst");
+    expect(stateTokenUpdates).not.toContain("onboarding:awaiting_interview_start");
+  });
+
+  it("records onboarding_step_transition to awaiting_burst and never direct-jumps to awaiting_interview_start", async () => {
+    const { insertedConversationEvents } = await runExplanationAffirmativeScenario({
+      routedStateToken: "onboarding:awaiting_interview_start",
+      persistedStateToken: "onboarding:awaiting_explanation_response",
+      nextTransition: "onboarding:awaiting_interview_start",
+    });
+
+    expect(
+      insertedConversationEvents.some(
+        (event) =>
+          event.event_type === "onboarding_step_transition" &&
+          event.step_token === "onboarding:awaiting_burst",
+      ),
+    ).toBe(true);
+    expect(
+      insertedConversationEvents.some(
+        (event) => event.step_token === "onboarding:awaiting_interview_start",
+      ),
+    ).toBe(false);
   });
 });
 
@@ -479,7 +512,13 @@ function createActivationSupabaseStub(input: {
   return { supabase };
 }
 
-async function runExplanationAffirmativeScenario(): Promise<{
+async function runExplanationAffirmativeScenario(input?: {
+  routedStateToken?: string;
+  persistedStateToken?: string;
+  nextTransition?: string;
+  bodyRaw?: string;
+  bodyNormalized?: string;
+}): Promise<{
   scheduleCalls: Array<{
     payload: {
       profile_id: string;
@@ -491,6 +530,7 @@ async function runExplanationAffirmativeScenario(): Promise<{
     delayMs: number;
   }>;
   insertedJobRows: Array<Record<string, unknown>>;
+  insertedConversationEvents: Array<Record<string, unknown>>;
   stateTokenUpdates: string[];
   callOrder: string[];
 }> {
@@ -509,7 +549,14 @@ async function runExplanationAffirmativeScenario(): Promise<{
     },
   };
 
+  const routedStateToken = input?.routedStateToken ?? "onboarding:awaiting_explanation_response";
+  const persistedStateToken = input?.persistedStateToken ?? "onboarding:awaiting_explanation_response";
+  const nextTransition = input?.nextTransition ?? routedStateToken;
+  const bodyRaw = input?.bodyRaw ?? "yes";
+  const bodyNormalized = input?.bodyNormalized ?? "YES";
+
   const insertedJobRows: Array<Record<string, unknown>> = [];
+  const insertedConversationEvents: Array<Record<string, unknown>> = [];
   const stateTokenUpdates: string[] = [];
   const callOrder: string[] = [];
   const scheduleCalls: Array<{
@@ -541,7 +588,7 @@ async function runExplanationAffirmativeScenario(): Promise<{
               data: {
                 id: "ses_123",
                 mode: "interviewing",
-                state_token: "onboarding:awaiting_explanation_response",
+                state_token: persistedStateToken,
                 current_step_id: null,
                 last_inbound_message_sid: null,
               },
@@ -588,6 +635,9 @@ async function runExplanationAffirmativeScenario(): Promise<{
           if (table === "sms_outbound_jobs") {
             insertedJobRows.push(payload);
           }
+          if (table === "conversation_events") {
+            insertedConversationEvents.push(payload);
+          }
           return Promise.resolve({ error: null });
         },
       };
@@ -609,20 +659,20 @@ async function runExplanationAffirmativeScenario(): Promise<{
           user_id: "usr_123",
           state: {
             mode: "interviewing",
-            state_token: "onboarding:awaiting_explanation_response",
+            state_token: routedStateToken,
           },
           profile_is_complete_mvp: false,
           route: "onboarding_engine",
           safety_override_applied: false,
-          next_transition: "onboarding:awaiting_explanation_response",
+          next_transition: nextTransition,
         },
         payload: {
           inbound_message_id: "msg_123",
           inbound_message_sid: "SM_EXPLAIN_2",
           from_e164: "+15555550111",
           to_e164: "+15555550222",
-          body_raw: "yes",
-          body_normalized: "YES",
+          body_raw: bodyRaw,
+          body_normalized: bodyNormalized,
         },
       },
       {
@@ -648,6 +698,7 @@ async function runExplanationAffirmativeScenario(): Promise<{
     return {
       scheduleCalls,
       insertedJobRows,
+      insertedConversationEvents,
       stateTokenUpdates,
       callOrder,
     };

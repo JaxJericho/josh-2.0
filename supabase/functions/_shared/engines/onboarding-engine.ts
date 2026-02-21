@@ -405,34 +405,48 @@ export function resolveOnboardingStateForInbound(params: {
   inboundMessageSid: string;
 }): OnboardingStateToken {
   const routedStateToken = assertOnboardingToken(params.routedStateToken);
-  const persistedStateToken = params.persistedStateToken?.trim() ?? "";
+  const persistedStateTokenRaw = params.persistedStateToken?.trim() ?? "";
+  const persistedStateToken = parseOnboardingToken(persistedStateTokenRaw);
 
   if (
-    persistedStateToken.length > 0 &&
-    persistedStateToken !== routedStateToken
+    persistedStateTokenRaw.length > 0 &&
+    persistedStateTokenRaw !== routedStateToken
   ) {
     console.warn("onboarding_engine.state_token_drift", {
       user_id: params.userId,
       inbound_message_sid: params.inboundMessageSid,
       routed_state_token: routedStateToken,
-      persisted_state_token: persistedStateToken,
+      persisted_state_token: persistedStateTokenRaw,
     });
+  }
+
+  if (persistedStateToken) {
+    return persistedStateToken;
   }
 
   return routedStateToken;
 }
 
 function assertOnboardingToken(stateToken: string): OnboardingStateToken {
-  if (
-    stateToken !== ONBOARDING_AWAITING_OPENING_RESPONSE &&
-    stateToken !== ONBOARDING_AWAITING_EXPLANATION_RESPONSE &&
-    stateToken !== ONBOARDING_AWAITING_BURST &&
-    stateToken !== ONBOARDING_AWAITING_INTERVIEW_START
-  ) {
-    throw new Error(`Invalid onboarding state token '${stateToken}'.`);
+  const parsed = parseOnboardingToken(stateToken);
+  if (parsed) {
+    return parsed;
   }
 
-  return stateToken;
+  throw new Error(`Invalid onboarding state token '${stateToken}'.`);
+}
+
+function parseOnboardingToken(stateToken: string): OnboardingStateToken | null {
+  if (
+    stateToken === ONBOARDING_AWAITING_OPENING_RESPONSE ||
+    stateToken === ONBOARDING_AWAITING_EXPLANATION_RESPONSE ||
+    stateToken === ONBOARDING_AWAITING_BURST ||
+    stateToken === ONBOARDING_AWAITING_INTERVIEW_START
+  ) {
+    return stateToken;
+  }
+
+  return null;
 }
 
 function onboardingOpeningSendIdempotencyKey(userId: string): string {
@@ -859,7 +873,7 @@ function resolveHarnessQStashMode(): "stub" | "real" {
 
 function resolveQStashPublishEndpoint(targetUrl: string): string {
   const qstashBaseUrl = (readEnv("QSTASH_URL") ?? "https://qstash.upstash.io").replace(/\/$/, "");
-  return `${qstashBaseUrl}/v2/publish/${encodeURIComponent(targetUrl)}`;
+  return `${qstashBaseUrl}/v2/publish/${targetUrl}`;
 }
 
 function resolveOnboardingStepUrl(): string {
