@@ -164,6 +164,41 @@ describe("sendSms", () => {
     expect(result.attempts).toBe(2);
   });
 
+  it("supports messagingServiceSid-only sends without from", async () => {
+    const { persistence, state } = createInMemoryPersistence();
+    const sendMessage = vi.fn().mockResolvedValue({
+      sid: "SM_MG_ONLY",
+      status: "queued",
+      from: null,
+    });
+
+    const result = await sendSms({
+      client: {
+        sendMessage,
+        fetchMessageBySid: vi.fn(),
+      },
+      persistence,
+      to: "+15555550002",
+      body: "Messaging service send",
+      correlationId: "corr_mg_only",
+      purpose: "onboarding_opening",
+      idempotencyKey: "idem_mg_only",
+      messagingServiceSid: "MG1234567890abcdef1234567890abcd",
+    });
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "+15555550002",
+        from: null,
+        messagingServiceSid: "MG1234567890abcdef1234567890abcd",
+      }),
+    );
+    expect(result.twilioMessageSid).toBe("SM_MG_ONLY");
+    expect(result.fromE164).toBe("MG1234567890abcdef1234567890abcd");
+    expect(state.rows[0]?.fromE164).toBe("MG1234567890abcdef1234567890abcd");
+  });
+
   it("does not retry on 4xx Twilio errors", async () => {
     const { persistence } = createInMemoryPersistence();
     const sendMessage = vi.fn().mockRejectedValue(

@@ -660,21 +660,27 @@ async function sendAndRecordOutboundMessage(params: {
 
   const encryptedBody = await encryptBody(params.supabase, params.body, params.twilio.encryptionKey);
 
-  const fromNumberForTwilio = params.twilio.fromE164 ?? params.fallbackFromE164 ?? "";
-  if (!fromNumberForTwilio) {
-    throw new Error("Unable to resolve outbound from_e164 for onboarding delivery.");
+  const shouldUseMessagingServiceSid = Boolean(params.twilio.messagingServiceSid);
+  const fromNumberForTwilio = shouldUseMessagingServiceSid
+    ? null
+    : params.twilio.fromE164 ?? params.fallbackFromE164;
+
+  if (!shouldUseMessagingServiceSid && !fromNumberForTwilio) {
+    throw new Error(
+      "Unable to resolve outbound sender identity for onboarding delivery. Configure TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID.",
+    );
   }
 
   const sendResult = await sendSms({
     client: params.twilio.client,
     db: params.supabase,
     to: params.toE164,
-    from: fromNumberForTwilio,
     body: params.body,
     correlationId: params.correlationId ?? params.idempotencyKey,
     purpose: onboardingOutboundPurpose(params.messageKey),
     idempotencyKey: params.idempotencyKey,
     messagingServiceSid: params.twilio.messagingServiceSid,
+    ...(fromNumberForTwilio ? { from: fromNumberForTwilio } : {}),
     statusCallbackUrl: params.twilio.statusCallbackUrl,
     bodyCiphertext: encryptedBody,
     keyVersion: 1,

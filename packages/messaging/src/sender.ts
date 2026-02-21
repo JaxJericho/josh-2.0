@@ -34,6 +34,8 @@ type SmsMessagesQuery = {
 
 const LEGACY_REGION_LAUNCH_NOTIFY_PURPOSE = "region_launch_notify";
 const LEGACY_REGION_LAUNCH_NOTIFY_IDEMPOTENCY_PREFIX = "region_launch_notify:";
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class SendSmsError extends Error {
   readonly correlationId: string;
@@ -62,12 +64,21 @@ export class SendSmsError extends Error {
 
 export async function sendSms(request: SendSmsRequest): Promise<SendSmsResult> {
   validateSendRequest(request);
+  const normalizedFrom = normalizeOptionalString(request.from);
+  const normalizedMessagingServiceSid = normalizeOptionalString(request.messagingServiceSid);
+  const persistenceFromE164 = resolvePersistenceFromSenderIdentity(
+    normalizedFrom,
+    normalizedMessagingServiceSid,
+  );
+  const persistenceCorrelationId = normalizeIdempotencyKeyForSmsCorrelation(
+    request.idempotencyKey,
+  );
 
   const log = request.logger ?? noopLogger;
   const now = request.now ?? (() => new Date());
   const persistence = resolvePersistence(request);
 
-  const existingDelivery = await persistence.findDeliveredByIdempotencyKey(request.idempotencyKey);
+  const existingDelivery = await persistence.findDeliveredByIdempotencyKey(persistenceCorrelationId);
   if (existingDelivery) {
     return {
       messageId: existingDelivery.messageId,
@@ -79,14 +90,14 @@ export async function sendSms(request: SendSmsRequest): Promise<SendSmsResult> {
     };
   }
 
-  let pendingMessage = await persistence.findPendingByIdempotencyKey(request.idempotencyKey);
+  let pendingMessage = await persistence.findPendingByIdempotencyKey(persistenceCorrelationId);
   if (!pendingMessage) {
     pendingMessage = await persistence.insertPending({
       userId: request.userId ?? null,
       profileId: request.profileId ?? null,
-      fromE164: request.from,
+      fromE164: persistenceFromE164,
       toE164: request.to,
-      idempotencyKey: request.idempotencyKey,
+      idempotencyKey: persistenceCorrelationId,
       bodyCiphertext: request.bodyCiphertext ?? null,
       bodyIv: request.bodyIv ?? null,
       bodyTag: request.bodyTag ?? null,
@@ -103,12 +114,12 @@ export async function sendSms(request: SendSmsRequest): Promise<SendSmsResult> {
         to: request.to,
         body: request.body,
         idempotencyKey: request.idempotencyKey,
-        from: request.from,
-        messagingServiceSid: request.messagingServiceSid ?? null,
+        from: normalizedFrom,
+        messagingServiceSid: normalizedMessagingServiceSid,
         statusCallbackUrl: request.statusCallbackUrl ?? null,
       });
 
-      const resolvedFromE164 = sent.from ?? request.from;
+      const resolvedFromE164 = sent.from ?? persistenceFromE164;
       const status = sent.status ?? "queued";
 
       await persistence.finalizeSent({
@@ -279,11 +290,11 @@ export function createSupabaseSmsMessagePersistence(db: SmsDbClient): SmsMessage
 
 function validateSendRequest(request: SendSmsRequest): void {
   assertNonEmpty("to", request.to);
-  assertNonEmpty("from", request.from);
   assertNonEmpty("body", request.body);
   assertNonEmpty("correlationId", request.correlationId);
   assertNonEmpty("purpose", request.purpose);
   assertNonEmpty("idempotencyKey", request.idempotencyKey);
+  assertSenderIdentityPresent(request.from, request.messagingServiceSid);
   assertNoLegacyRegionLaunchNotifyContract(request.purpose, request.idempotencyKey);
 
   if (!request.client || typeof request.client.sendMessage !== "function") {
@@ -295,6 +306,29 @@ function assertNonEmpty(name: string, value: string): void {
   if (!value || value.trim().length === 0) {
     throw new Error(`sendSms requires a non-empty ${name}.`);
   }
+}
+
+function assertSenderIdentityPresent(
+  from: string | null | undefined,
+  messagingServiceSid: string | null | undefined,
+): void {
+  if (!normalizeOptionalString(from) && !normalizeOptionalString(messagingServiceSid)) {
+    throw new Error("sendSms requires a non-empty from or messagingServiceSid.");
+  }
+}
+
+function resolvePersistenceFromSenderIdentity(
+  from: string | null,
+  messagingServiceSid: string | null,
+): string {
+  if (from) {
+    return from;
+  }
+  if (messagingServiceSid) {
+    return messagingServiceSid;
+  }
+
+  throw new Error("sendSms requires a non-empty from or messagingServiceSid.");
 }
 
 function assertNoLegacyRegionLaunchNotifyContract(purpose: string, idempotencyKey: string): void {
@@ -380,4 +414,54 @@ function toSafeMessage(error: unknown): string {
 
 function noopLogger(): void {
   // No-op when no logger is provided.
+}
+
+function normalizeOptionalString(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeIdempotencyKeyForSmsCorrelation(idempotencyKey: string): string {
+  const normalized = idempotencyKey.trim();
+  if (UUID_PATTERN.test(normalized)) {
+    return normalized;
+  }
+
+  return deterministicUuidFromString(normalized);
+}
+
+function deterministicUuidFromString(input: string): string {
+  const hex = [
+    fnv1a32(`0:${input}`),
+    fnv1a32(`1:${input}`),
+    fnv1a32(`2:${input}`),
+    fnv1a32(`3:${input}`),
+  ]
+    .map((part) => part.toString(16).padStart(8, "0"))
+    .join("");
+
+  const chars = hex.split("");
+  chars[12] = "5";
+  const variant = parseInt(chars[16] ?? "0", 16);
+  chars[16] = ((variant & 0x3) | 0x8).toString(16);
+  const canonical = chars.join("");
+
+  return `${canonical.slice(0, 8)}-${canonical.slice(8, 12)}-${canonical.slice(12, 16)}-${
+    canonical.slice(16, 20)
+  }-${canonical.slice(20, 32)}`;
+}
+
+function fnv1a32(input: string): number {
+  let hash = 0x811c9dc5;
+
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+
+  return hash >>> 0;
 }

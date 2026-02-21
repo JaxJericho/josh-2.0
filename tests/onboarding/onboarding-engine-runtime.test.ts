@@ -1,8 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const sendSmsMock = vi.hoisted(() => vi.fn());
+vi.mock("../../packages/messaging/src/sender.ts", () => ({
+  sendSms: sendSmsMock,
+}));
+
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   resolveOnboardingStateForInbound,
   runOnboardingEngine,
+  startOnboardingForActivatedUser,
 } from "../../supabase/functions/_shared/engines/onboarding-engine";
 
 describe("onboarding engine runtime idempotency", () => {
@@ -211,6 +218,266 @@ describe("onboarding concurrent request dedupe (atomic SID claim)", () => {
     expect(result.reply_message).toBeNull();
   });
 });
+
+describe("onboarding activation sender identity", () => {
+  it("supports messagingServiceSid-only config without requiring from", async () => {
+    const userId = "usr_mg_only";
+    const profileId = "pro_mg_only";
+    const envMap = new Map<string, string>([
+      ["TWILIO_ACCOUNT_SID", "TWILIO_ACCOUNT_SID_PLACEHOLDER"],
+      ["TWILIO_AUTH_TOKEN", "auth-token-123"],
+      ["SMS_BODY_ENCRYPTION_KEY", "sms-encryption-key-123"],
+      ["TWILIO_MESSAGING_SERVICE_SID", "MG1234567890abcdef1234567890abcd"],
+      ["PROJECT_REF", "rcqlnfywwfsixznrmzmv"],
+    ]);
+
+    sendSmsMock.mockReset();
+    sendSmsMock.mockResolvedValue({
+      messageId: "msg_mg_only",
+      twilioMessageSid: "SM_MG_ONLY",
+      status: "queued",
+      fromE164: "+15555550123",
+      deduplicated: false,
+      attempts: 1,
+    });
+
+    const { supabase } = createActivationSupabaseStub({
+      userId,
+      profileId,
+      phoneE164: "+15555550010",
+      firstName: "Alex",
+    });
+
+    await withDenoEnv(envMap, async () => {
+      const result = await startOnboardingForActivatedUser({
+        supabase,
+        userId,
+        correlationId: "wle_mg_only",
+        activationIdempotencyKey: "waitlist_activation_onboarding:reg:pro_mg_only:onboarding_opening",
+      });
+
+      expect(result).toBe("inserted");
+    });
+
+    expect(sendSmsMock).toHaveBeenCalledTimes(1);
+    const request = sendSmsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(request.to).toBe("+15555550010");
+    expect(typeof request.body).toBe("string");
+    expect(request.messagingServiceSid).toBe("MG1234567890abcdef1234567890abcd");
+    expect("from" in request).toBe(false);
+  });
+
+  it("keeps from-number-only config behavior", async () => {
+    const userId = "usr_from_only";
+    const profileId = "pro_from_only";
+    const envMap = new Map<string, string>([
+      ["TWILIO_ACCOUNT_SID", "TWILIO_ACCOUNT_SID_PLACEHOLDER"],
+      ["TWILIO_AUTH_TOKEN", "auth-token-123"],
+      ["SMS_BODY_ENCRYPTION_KEY", "sms-encryption-key-123"],
+      ["TWILIO_FROM_NUMBER", "+15555550123"],
+      ["PROJECT_REF", "rcqlnfywwfsixznrmzmv"],
+    ]);
+
+    sendSmsMock.mockReset();
+    sendSmsMock.mockResolvedValue({
+      messageId: "msg_from_only",
+      twilioMessageSid: "SM_FROM_ONLY",
+      status: "queued",
+      fromE164: "+15555550123",
+      deduplicated: false,
+      attempts: 1,
+    });
+
+    const { supabase } = createActivationSupabaseStub({
+      userId,
+      profileId,
+      phoneE164: "+15555550011",
+      firstName: "Jordan",
+    });
+
+    await withDenoEnv(envMap, async () => {
+      const result = await startOnboardingForActivatedUser({
+        supabase,
+        userId,
+        correlationId: "wle_from_only",
+        activationIdempotencyKey: "waitlist_activation_onboarding:reg:pro_from_only:onboarding_opening",
+      });
+
+      expect(result).toBe("inserted");
+    });
+
+    expect(sendSmsMock).toHaveBeenCalledTimes(1);
+    const request = sendSmsMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(request.to).toBe("+15555550011");
+    expect(typeof request.body).toBe("string");
+    expect(request.from).toBe("+15555550123");
+    expect(request.messagingServiceSid).toBeNull();
+  });
+});
+
+async function withDenoEnv<T>(
+  envMap: Map<string, string>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previousDeno = (globalThis as { Deno?: unknown }).Deno;
+  (globalThis as { Deno?: unknown }).Deno = {
+    env: {
+      get: (key: string) => envMap.get(key),
+    },
+  };
+
+  try {
+    return await run();
+  } finally {
+    if (previousDeno === undefined) {
+      delete (globalThis as { Deno?: unknown }).Deno;
+    } else {
+      (globalThis as { Deno?: unknown }).Deno = previousDeno;
+    }
+  }
+}
+
+function createActivationSupabaseStub(input: {
+  userId: string;
+  profileId: string;
+  phoneE164: string;
+  firstName: string;
+}) {
+  const supabase = {
+    from(table: string) {
+      const filters = new Map<string, unknown>();
+
+      const query = {
+        select() {
+          return query;
+        },
+        eq(column: string, value: unknown) {
+          filters.set(column, value);
+          return query;
+        },
+        in() {
+          return query;
+        },
+        not() {
+          return query;
+        },
+        is() {
+          return query;
+        },
+        order() {
+          return query;
+        },
+        limit() {
+          return query;
+        },
+        async maybeSingle() {
+          if (table === "profiles") {
+            if (filters.has("user_id")) {
+              return { data: { id: input.profileId }, error: null };
+            }
+            if (filters.has("id")) {
+              return { data: { id: input.profileId, user_id: input.userId }, error: null };
+            }
+          }
+
+          if (table === "profile_region_assignments") {
+            return { data: null, error: null };
+          }
+
+          if (table === "waitlist_entries") {
+            return { data: null, error: null };
+          }
+
+          if (table === "profile_entitlements") {
+            return { data: null, error: null };
+          }
+
+          if (table === "safety_holds") {
+            return { data: null, error: null };
+          }
+
+          if (table === "conversation_sessions") {
+            return {
+              data: {
+                id: `ses_${input.userId}`,
+                mode: "interviewing",
+                state_token: "onboarding:awaiting_opening_response",
+                current_step_id: null,
+                last_inbound_message_sid: null,
+              },
+              error: null,
+            };
+          }
+
+          if (table === "users") {
+            return {
+              data: {
+                first_name: input.firstName,
+                phone_e164: input.phoneE164,
+              },
+              error: null,
+            };
+          }
+
+          if (table === "conversation_events") {
+            return { data: null, error: null };
+          }
+
+          if (table === "sms_outbound_jobs") {
+            return { data: null, error: null };
+          }
+
+          return { data: null, error: null };
+        },
+        single: async () => ({ data: null, error: null }),
+        update() {
+          const updateQuery = {
+            eq() {
+              return Promise.resolve({ error: null });
+            },
+            is() {
+              return updateQuery;
+            },
+            select() {
+              return updateQuery;
+            },
+            maybeSingle: async () => ({ data: null, error: null }),
+          };
+          return updateQuery;
+        },
+        insert(payload: Record<string, unknown>) {
+          if (table === "sms_outbound_jobs" || table === "conversation_events") {
+            return Promise.resolve({ error: null });
+          }
+
+          if (table === "conversation_sessions") {
+            return {
+              select() {
+                return this;
+              },
+              single: async () => ({
+                data: payload,
+                error: null,
+              }),
+            };
+          }
+
+          return Promise.resolve({ error: null });
+        },
+      };
+
+      return query;
+    },
+    rpc: async (fn: string) => {
+      if (fn === "encrypt_sms_body") {
+        return { data: "ciphertext", error: null };
+      }
+      throw new Error(`Unexpected rpc call: ${fn}`);
+    },
+  };
+
+  return { supabase };
+}
 
 async function runExplanationAffirmativeScenario(): Promise<{
   scheduleCalls: Array<{
