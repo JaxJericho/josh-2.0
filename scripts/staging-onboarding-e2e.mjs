@@ -422,7 +422,6 @@ async function triggerWaitlistActivation() {
     limit: 1,
     dry_run: false,
     open_region: false,
-    notification_template_version: "v1",
   };
 
   const response = await fetch(endpoint, {
