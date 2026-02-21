@@ -23,7 +23,7 @@ import { SAFETY_HOLD_MESSAGE } from "../waitlist/waitlist-operations.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { runProfileInterviewEngine } from "./profile-interview-engine.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import { createTwilioClientFromEnv } from "../../../../packages/messaging/src/client.ts";
+import { resolveTwilioRuntimeFromEnv, type TwilioEnvClient } from "../../../../packages/messaging/src/client.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { sendSms } from "../../../../packages/messaging/src/sender.ts";
 
@@ -36,7 +36,7 @@ type ConversationSessionRow = {
 };
 
 type OutboundTwilioConfig = {
-  client: ReturnType<typeof createTwilioClientFromEnv>["client"];
+  client: TwilioEnvClient["client"];
   messagingServiceSid: string | null;
   fromE164: string | null;
   statusCallbackUrl: string | null;
@@ -737,7 +737,7 @@ async function encryptBody(
 }
 
 function readOutboundTwilioConfig(): OutboundTwilioConfig {
-  const twilio = createTwilioClientFromEnv({
+  const twilio = resolveTwilioRuntimeFromEnv({
     getEnv: (name) => readEnv(name),
   });
 

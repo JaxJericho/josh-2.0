@@ -244,6 +244,15 @@ export function createTwilioClientFromEnv(input: {
   };
 }
 
+export function resolveTwilioRuntimeFromEnv(input: {
+  getEnv: EnvReader;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+  requireSenderIdentity?: boolean;
+}): TwilioEnvClient {
+  return createTwilioClientFromEnv(input);
+}
+
 export function createNodeEnvReader(
   env: Record<string, string | undefined> = process.env,
 ): EnvReader {

@@ -26,7 +26,7 @@ import {
   ONBOARDING_STEP_DELAY_MS,
   type OnboardingStepId,
 } from "../../packages/core/src/onboarding/step-ids";
-import { createTwilioClientFromEnv, createNodeEnvReader } from "../../packages/messaging/src/client";
+import { createNodeEnvReader, resolveTwilioRuntimeFromEnv } from "../../packages/messaging/src/client";
 import { sendSms } from "../../packages/messaging/src/sender";
 import {
   onboardingBurstMessage1,
@@ -306,7 +306,7 @@ function getServiceRoleClient(): DbClient {
 
 export function createDefaultOnboardingStepHandlerDependencies(): OnboardingStepHandlerDependencies {
   const supabase = getServiceRoleClient();
-  const twilio = createTwilioClientFromEnv({
+  const twilio = resolveTwilioRuntimeFromEnv({
     getEnv: createNodeEnvReader(),
   });
 

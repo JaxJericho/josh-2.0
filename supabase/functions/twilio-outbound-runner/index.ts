@@ -1,7 +1,7 @@
 // @ts-ignore: Deno runtime requires explicit file extensions for local imports.
 import { createServiceRoleDbClient } from "../../../packages/db/src/client-deno.mjs";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import { createTwilioClientFromEnv } from "../../../packages/messaging/src/client.ts";
+import { resolveTwilioRuntimeFromEnv } from "../../../packages/messaging/src/client.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { SendSmsError, sendSms } from "../../../packages/messaging/src/sender.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
@@ -59,7 +59,7 @@ Deno.serve(async (req) => {
     const supabaseUrl = requireEnv("SUPABASE_URL");
     const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
     const encryptionKey = requireEnv("SMS_BODY_ENCRYPTION_KEY");
-    const twilio = createTwilioClientFromEnv({
+    const twilio = resolveTwilioRuntimeFromEnv({
       getEnv: (name) => Deno.env.get(name) ?? undefined,
     });
     const twilioMessagingServiceSid = twilio.senderIdentity.messagingServiceSid;

@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { createNodeEnvReader, createTwilioClientFromEnv } from "../../../../packages/messaging/src/client";
+import { createNodeEnvReader, resolveTwilioRuntimeFromEnv } from "../../../../packages/messaging/src/client";
 import { generateRequestId, logEvent } from "../../../lib/observability";
 
 type Summary = {
@@ -254,7 +254,7 @@ async function handle(request: Request): Promise<Response> {
   try {
     const supabaseUrl = requireEnv("SUPABASE_URL");
     const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
-    const twilio = createTwilioClientFromEnv({
+    const twilio = resolveTwilioRuntimeFromEnv({
       getEnv: createNodeEnvReader(),
       requireSenderIdentity: false,
     });
