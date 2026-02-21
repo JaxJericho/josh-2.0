@@ -1,0 +1,41 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`messaging templates snapshots > renders all template categories with stable copy 1`] = `
+{
+  "interview_dropout_nudge_rendered": "Hey Avery — you were mid-way through your JOSH profile. No pressure, but whenever you want to pick back up, just reply anything and we'll continue from where you left off.",
+  "interview_dropout_nudge_template": "Hey {firstName} — you were mid-way through your JOSH profile. No pressure, but whenever you want to pick back up, just reply anything and we'll continue from where you left off.",
+  "interview_dropout_resume": "Welcome back. Picking up from where we left off.",
+  "interview_wrap": "That's everything. Your profile is set. I now have a real sense of your style — the kinds of plans you'd enjoy, how you like to connect, and what a good match looks like for you. Whenever you're ready to do something, just text me naturally. Something like 'I’m free Saturday morning' or 'I want to go skiing this weekend' and I'll take it from there.",
+  "linkup_coordination": "Your LinkUp for brunch is set: Southside Cafe, Saturday at 11:00 AM. Reply HELP if you need support.",
+  "linkup_invite": "Hey Avery — want in on a LinkUp for brunch this Saturday at 11am? Reply YES or NO.",
+  "linkup_lock_confirmation": "You're in. This LinkUp is now locked.",
+  "linkup_reminder": "Reminder: your LinkUp for brunch starts in 2 hours.",
+  "onboarding_explanation": "Perfect. I'll walk you through how this works — a few short messages, back to back. You only need to reply to this one and the last one. Ready?",
+  "onboarding_later": "No problem. Reply Yes whenever you're ready and we'll pick up here.",
+  "onboarding_message_1": "My full government name is Journey of Shared Hope, but JOSH fits better as a contact name in your phone. I exist because making real friends as an adult is genuinely hard — schedules are full, social circles are set, and even when you put yourself out there it rarely turns into anything. That shouldn't be the default.",
+  "onboarding_message_2": "Here's how I work. No complicated setup — just you and me in an ongoing conversation. I don't just learn what you like — I learn what it means to you. Why you like it, how it makes you feel, what a good version of it looks like. That's what actually makes the difference when I'm putting people together.",
+  "onboarding_message_3": "Plans here are called LinkUps. You can start one whenever you feel like doing something — I'll find compatible people and build it around something that fits your style. And if someone else starts a plan that suits you, I'll bring you in. Either way, it's a small group of people worth meeting. Just a good reason to be in the same place as people you're likely to click with.",
+  "onboarding_message_4": "That's the idea. Ready to get started?",
+  "onboarding_opening_rendered": "Call me JOSH. Nice to meet you, Avery. You're off the waitlist — time to find your people.
+
+Quick heads up: a profile photo is required before I can lock in your first LinkUp. You can add it anytime through your dashboard — now or later both work. Just know it needs to be there before any plan gets confirmed. Sound good?",
+  "onboarding_opening_template": "Call me JOSH. Nice to meet you, {firstName}. You're off the waitlist — time to find your people.
+
+Quick heads up: a profile photo is required before I can lock in your first LinkUp. You can add it anytime through your dashboard — now or later both work. Just know it needs to be there before any plan gets confirmed. Sound good?",
+  "post_event_attendance": "Hey Avery — hope brunch went well. Did you make it? Reply Yes or No.",
+  "post_event_contact_intro": "Want to stay in touch with anyone from brunch? You can share your number with anyone who shares theirs back. Reply Yes to share with everyone, No to keep private, or name someone specific.",
+  "post_event_contact_reveal": "Good news — Jordan wants to stay in touch too. Here's their number: +1 (555) 444-0099. Reply STOP anytime.",
+  "post_event_do_again": "Glad you made it. Would you want to hang out with this group again? Reply A) Yes, B) Maybe, C) Probably not.",
+  "post_event_do_again_clarifier": "Just reply A, B, or C.",
+  "post_event_dropout_nudge": "Still there, Avery? No pressure — just reply when you can.",
+  "post_event_feedback": "Anything that would have made it better? Reply or just skip this one.",
+  "safety_block_confirmation": "Done. Jordan won't be included in any future plans with you.",
+  "safety_crisis_resources": "I'm concerned about you. If you're in crisis, please reach out to the 988 Suicide and Crisis Lifeline by calling or texting 988. They're available 24/7. You can also text HOME to 741741 for the Crisis Text Line.",
+  "safety_hold_notification": "Your account is currently paused for safety review. Reply HELP for support.",
+  "safety_report_confirmation": "Got it. We'll look into it. Thanks for letting us know.",
+  "safety_report_prompt": "What's this about? Reply A) Inappropriate behavior, B) Made me uncomfortable, C) No-show or canceled last minute, D) Other.",
+  "system_help_response": "JOSH help: Reply STOP to opt out. Reply START to resubscribe.",
+  "system_otp": "JOSH verification code: 123456. It expires in 10 minutes.",
+  "system_unknown_intent_response": "I didn't catch that. Reply HELP if you need support.",
+}
+`;

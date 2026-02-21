@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { createNodeEnvReader, createTwilioClientFromEnv } from "../../../../packages/messaging/src/client";
 import { generateRequestId, logEvent } from "../../../lib/observability";
 
 type Summary = {
@@ -19,8 +20,6 @@ type SmsMessageCandidate = {
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
 const DEFAULT_STALE_MINUTES = 15;
-const TWILIO_TIMEOUT_MS = 6000;
-
 const MESSAGE_TERMINAL_STATUSES = new Set([
   "delivered",
   "undelivered",
@@ -118,11 +117,6 @@ function supabaseHeaders(serviceRoleKey: string): HeadersInit {
     Authorization: `Bearer ${serviceRoleKey}`,
     "content-type": "application/json",
   };
-}
-
-function twilioAuthHeader(accountSid: string, authToken: string): string {
-  const basic = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
-  return `Basic ${basic}`;
 }
 
 function parseTwilioEventAt(payload: Record<string, unknown>): string | null {
@@ -232,37 +226,6 @@ async function patchOutboundJobsBySid(input: {
   }
 }
 
-async function fetchTwilioMessage(input: {
-  accountSid: string;
-  authToken: string;
-  messageSid: string;
-}): Promise<Record<string, unknown>> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TWILIO_TIMEOUT_MS);
-
-  try {
-    const url = `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(
-      input.accountSid
-    )}/Messages/${encodeURIComponent(input.messageSid)}.json`;
-
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: twilioAuthHeader(input.accountSid, input.authToken),
-      },
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Twilio fetch failed (status=${response.status})`);
-    }
-
-    return (await response.json()) as Record<string, unknown>;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
 async function handle(request: Request): Promise<Response> {
   const startedAt = Date.now();
   const requestId = request.headers.get("x-request-id") ?? generateRequestId();
@@ -291,8 +254,10 @@ async function handle(request: Request): Promise<Response> {
   try {
     const supabaseUrl = requireEnv("SUPABASE_URL");
     const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
-    const twilioAccountSid = requireEnv("TWILIO_ACCOUNT_SID");
-    const twilioAuthToken = requireEnv("TWILIO_AUTH_TOKEN");
+    const twilio = createTwilioClientFromEnv({
+      getEnv: createNodeEnvReader(),
+      requireSenderIdentity: false,
+    });
 
     logEvent({
       level: "info",
@@ -326,11 +291,7 @@ async function handle(request: Request): Promise<Response> {
 
       let payload: Record<string, unknown>;
       try {
-        payload = await fetchTwilioMessage({
-          accountSid: twilioAccountSid,
-          authToken: twilioAuthToken,
-          messageSid,
-        });
+        payload = await twilio.client.fetchMessageBySid(messageSid);
       } catch (error) {
         const err = error as Error;
         summary.failed += 1;
@@ -459,4 +420,3 @@ export async function GET(request: Request): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   return handle(request);
 }
-

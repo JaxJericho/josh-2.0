@@ -1,10 +1,9 @@
 // @ts-ignore: Deno runtime requires explicit file extensions for local imports.
 import { createServiceRoleDbClient } from "../../../packages/db/src/client-deno.mjs";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import {
-  resolveTwilioStatusCallbackUrl,
-  sendTwilioRestMessage,
-} from "../_shared/twilio/send-message.ts";
+import { createTwilioClientFromEnv } from "../../../packages/messaging/src/client.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { SendSmsError, sendSms } from "../../../packages/messaging/src/sender.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { INTERVIEW_DROPOUT_NUDGE } from "../../../packages/core/src/interview/messages.ts";
 
@@ -60,15 +59,12 @@ Deno.serve(async (req) => {
     const supabaseUrl = requireEnv("SUPABASE_URL");
     const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
     const encryptionKey = requireEnv("SMS_BODY_ENCRYPTION_KEY");
-    const twilioAccountSid = requireEnv("TWILIO_ACCOUNT_SID");
-    const twilioAuthToken = requireEnv("TWILIO_AUTH_TOKEN");
-    const twilioMessagingServiceSid = Deno.env.get("TWILIO_MESSAGING_SERVICE_SID") ?? null;
-    const twilioFromNumber = Deno.env.get("TWILIO_FROM_NUMBER") ?? null;
-
-    const statusCallbackUrl = resolveTwilioStatusCallbackUrl({
-      explicitUrl: Deno.env.get("TWILIO_STATUS_CALLBACK_URL"),
-      projectRef: Deno.env.get("PROJECT_REF"),
+    const twilio = createTwilioClientFromEnv({
+      getEnv: (name) => Deno.env.get(name) ?? undefined,
     });
+    const twilioMessagingServiceSid = twilio.senderIdentity.messagingServiceSid;
+    const twilioFromNumber = twilio.senderIdentity.from;
+    const statusCallbackUrl = twilio.statusCallbackUrl;
 
     phase = "supabase_init";
     const supabase = createServiceRoleDbClient({
@@ -219,39 +215,53 @@ Deno.serve(async (req) => {
       }
 
       phase = "send";
-      const sendResult = await sendTwilioRestMessage({
-        accountSid: twilioAccountSid,
-        authToken: twilioAuthToken,
-        idempotencyKey: job.idempotency_key,
-        to: job.to_e164,
-        from: fromE164,
-        body: plaintext as string,
-        messagingServiceSid: twilioMessagingServiceSid,
-        statusCallbackUrl,
-      });
-
-      if (!sendResult.ok) {
+      let sendResult:
+        | Awaited<ReturnType<typeof sendSms>>
+        | null = null;
+      try {
+        sendResult = await sendSms({
+          client: twilio.client,
+          db: supabase,
+          to: job.to_e164,
+          from: fromE164,
+          body: plaintext as string,
+          correlationId: job.correlation_id ?? job.idempotency_key,
+          purpose: job.purpose,
+          idempotencyKey: job.idempotency_key,
+          userId: job.user_id,
+          messagingServiceSid: twilioMessagingServiceSid,
+          statusCallbackUrl,
+          bodyCiphertext: job.body_ciphertext,
+          bodyIv: job.body_iv,
+          bodyTag: job.body_tag,
+          keyVersion: job.key_version,
+          mediaCount: 0,
+        });
+      } catch (error) {
         failed += 1;
+        const sendError = error as Error;
+        const retryable = error instanceof SendSmsError
+          ? error.retryable
+          : false;
         await markJobFailure(
           supabase,
           job,
-          sendResult.errorMessage,
-          sendResult.retryable
+          sendError?.message ?? "Twilio send failed",
+          retryable
         );
         continue;
       }
 
-      const twilioSid = sendResult.sid;
-      sent += 1;
+      if (!sendResult) {
+        failed += 1;
+        await markJobFailure(supabase, job, "Twilio send failed", false);
+        continue;
+      }
+
+      const twilioSid = sendResult.twilioMessageSid;
+      sent += sendResult.deduplicated ? 0 : 1;
 
       await markJobSent(supabase, job, twilioSid, sendResult.status);
-      await ensureSmsMessage(
-        supabase,
-        job,
-        fromE164,
-        twilioSid,
-        sendResult.status ?? "queued"
-      );
     }
 
     return jsonResponse({

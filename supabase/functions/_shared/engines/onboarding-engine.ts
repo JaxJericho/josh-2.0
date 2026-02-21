@@ -23,10 +23,9 @@ import { SAFETY_HOLD_MESSAGE } from "../waitlist/waitlist-operations.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { runProfileInterviewEngine } from "./profile-interview-engine.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import {
-  resolveTwilioStatusCallbackUrl,
-  sendTwilioRestMessage,
-} from "../twilio/send-message.ts";
+import { createTwilioClientFromEnv } from "../../../../packages/messaging/src/client.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { sendSms } from "../../../../packages/messaging/src/sender.ts";
 
 type ConversationSessionRow = {
   id: string;
@@ -37,8 +36,7 @@ type ConversationSessionRow = {
 };
 
 type OutboundTwilioConfig = {
-  accountSid: string;
-  authToken: string;
+  client: ReturnType<typeof createTwilioClientFromEnv>["client"];
   messagingServiceSid: string | null;
   fromE164: string | null;
   statusCallbackUrl: string | null;
@@ -646,27 +644,22 @@ async function sendAndRecordOutboundMessage(params: {
     throw new Error("Unable to resolve outbound from_e164 for onboarding delivery.");
   }
 
-  const sendResult = await sendTwilioRestMessage({
-    accountSid: params.twilio.accountSid,
-    authToken: params.twilio.authToken,
-    idempotencyKey: params.idempotencyKey,
+  const sendResult = await sendSms({
+    client: params.twilio.client,
+    db: params.supabase,
     to: params.toE164,
     from: fromNumberForTwilio,
     body: params.body,
+    correlationId: params.correlationId ?? params.idempotencyKey,
+    purpose: onboardingOutboundPurpose(params.messageKey),
+    idempotencyKey: params.idempotencyKey,
     messagingServiceSid: params.twilio.messagingServiceSid,
     statusCallbackUrl: params.twilio.statusCallbackUrl,
+    bodyCiphertext: encryptedBody,
+    keyVersion: 1,
+    mediaCount: 0,
+    userId: params.userId,
   });
-
-  if (!sendResult.ok) {
-    throw new Error(
-      `Onboarding outbound send failed for '${params.messageKey}': ${sendResult.errorMessage}`,
-    );
-  }
-
-  const resolvedFromE164 = sendResult.from ?? params.fallbackFromE164 ?? params.twilio.fromE164;
-  if (!resolvedFromE164) {
-    throw new Error("Twilio response did not include a sender number for onboarding delivery.");
-  }
 
   const outboundTimestampIso = new Date().toISOString();
 
@@ -676,14 +669,14 @@ async function sendAndRecordOutboundMessage(params: {
       {
         user_id: params.userId,
         to_e164: params.toE164,
-        from_e164: resolvedFromE164,
+        from_e164: sendResult.fromE164,
         body_ciphertext: encryptedBody,
         body_iv: null,
         body_tag: null,
         key_version: 1,
         purpose: onboardingOutboundPurpose(params.messageKey),
         status: "sent",
-        twilio_message_sid: sendResult.sid,
+        twilio_message_sid: sendResult.twilioMessageSid,
         attempts: 1,
         next_attempt_at: null,
         last_error: null,
@@ -697,31 +690,6 @@ async function sendAndRecordOutboundMessage(params: {
 
   if (outboundJobError && !isDuplicateKeyError(outboundJobError)) {
     throw new Error("Unable to persist onboarding outbound job.");
-  }
-
-  const { error } = await params.supabase
-    .from("sms_messages")
-    .insert(
-      {
-        user_id: params.userId,
-        direction: "out",
-        from_e164: resolvedFromE164,
-        to_e164: params.toE164,
-        twilio_message_sid: sendResult.sid,
-        body_ciphertext: encryptedBody,
-        body_iv: null,
-        body_tag: null,
-        key_version: 1,
-        media_count: 0,
-        status: sendResult.status ?? "queued",
-        last_status_at: outboundTimestampIso,
-        correlation_id: params.correlationId,
-      },
-      { onConflict: "twilio_message_sid", ignoreDuplicates: true },
-    );
-
-  if (error && !isDuplicateKeyError(error)) {
-    throw new Error("Unable to persist onboarding outbound sms message.");
   }
 }
 
@@ -769,15 +737,15 @@ async function encryptBody(
 }
 
 function readOutboundTwilioConfig(): OutboundTwilioConfig {
+  const twilio = createTwilioClientFromEnv({
+    getEnv: (name) => readEnv(name),
+  });
+
   return {
-    accountSid: requireEnv("TWILIO_ACCOUNT_SID"),
-    authToken: requireEnv("TWILIO_AUTH_TOKEN"),
-    messagingServiceSid: readEnv("TWILIO_MESSAGING_SERVICE_SID") ?? null,
-    fromE164: readEnv("TWILIO_FROM_NUMBER") ?? null,
-    statusCallbackUrl: resolveTwilioStatusCallbackUrl({
-      explicitUrl: readEnv("TWILIO_STATUS_CALLBACK_URL") ?? null,
-      projectRef: readEnv("PROJECT_REF") ?? null,
-    }),
+    client: twilio.client,
+    messagingServiceSid: twilio.senderIdentity.messagingServiceSid,
+    fromE164: twilio.senderIdentity.from,
+    statusCallbackUrl: twilio.statusCallbackUrl,
     encryptionKey: requireEnv("SMS_BODY_ENCRYPTION_KEY"),
   };
 }
