@@ -1,13 +1,13 @@
 import {
   getTwilioErrorStatusCode,
   isTransientTwilioError,
-} from "./client";
+} from "./client.ts";
 import type {
   SendSmsRequest,
   SendSmsResult,
   SmsDbClient,
   SmsMessagePersistence,
-} from "./types";
+} from "./types.ts";
 
 type QueryError = {
   code?: string;
@@ -31,6 +31,9 @@ type SmsMessagesQuery = {
   insert: (payload: Record<string, unknown>) => SmsMessagesQuery;
   update: (payload: Record<string, unknown>) => SmsMessagesQuery;
 };
+
+const LEGACY_REGION_LAUNCH_NOTIFY_PURPOSE = "region_launch_notify";
+const LEGACY_REGION_LAUNCH_NOTIFY_IDEMPOTENCY_PREFIX = "region_launch_notify:";
 
 export class SendSmsError extends Error {
   readonly correlationId: string;
@@ -281,6 +284,7 @@ function validateSendRequest(request: SendSmsRequest): void {
   assertNonEmpty("correlationId", request.correlationId);
   assertNonEmpty("purpose", request.purpose);
   assertNonEmpty("idempotencyKey", request.idempotencyKey);
+  assertNoLegacyRegionLaunchNotifyContract(request.purpose, request.idempotencyKey);
 
   if (!request.client || typeof request.client.sendMessage !== "function") {
     throw new Error("A valid Twilio client is required.");
@@ -290,6 +294,15 @@ function validateSendRequest(request: SendSmsRequest): void {
 function assertNonEmpty(name: string, value: string): void {
   if (!value || value.trim().length === 0) {
     throw new Error(`sendSms requires a non-empty ${name}.`);
+  }
+}
+
+function assertNoLegacyRegionLaunchNotifyContract(purpose: string, idempotencyKey: string): void {
+  if (purpose === LEGACY_REGION_LAUNCH_NOTIFY_PURPOSE) {
+    throw new Error("Legacy region_launch_notify purpose is forbidden.");
+  }
+  if (idempotencyKey.startsWith(LEGACY_REGION_LAUNCH_NOTIFY_IDEMPOTENCY_PREFIX)) {
+    throw new Error("Legacy region_launch_notify idempotency keys are forbidden.");
   }
 }
 

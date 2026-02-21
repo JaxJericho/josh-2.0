@@ -165,17 +165,17 @@ Before setting a region to open:
    * ensure waitlist entries map to region  
    * ensure profiles have required fields  
 3. Batch notify waitlist users:  
-   * send “we’re live” message  
-   * rate limit sends  
+   * activate onboarding  
+   * send `ONBOARDING_OPENING` as the first outbound message  
 4. Set region status: `opening → open`.  
 5. Enable matching cadence gradually:  
    * ramp from small batch to full cadence
 
 ### Batch Notification Rate Limits
 
-* Use outbound jobs with idempotency keys:  
-  * `region_launch_notify:{region_id}:{user_id}`  
-* Send in waves to avoid carrier filtering.
+* Use onboarding activation idempotency keys:  
+  * `waitlist_activation_onboarding:{region_id}:{profile_id}:onboarding_opening`  
+* Activation must start onboarding directly; no separate region launch notification message is allowed.
 
 ### Race Condition Handling
 
@@ -233,7 +233,7 @@ Behavior:
 
 * Region assignment and waitlist entry creation must be idempotent:  
   * unique constraint `(user_id)` in waitlist\_entries  
-* Region launch notifications idempotent by per-user key.  
+* Waitlist activation onboarding idempotent by per-user key (`waitlist_activation_onboarding:{region_id}:{profile_id}:onboarding_opening`).  
 * Activation workflow is stateful and must be resumable:  
   * store activation run record with checkpoints.
 
@@ -262,12 +262,12 @@ Behavior:
 
 * Waitlist entry creation idempotent.  
 * Activation workflow transitions and resumability.  
-* Launch notification job idempotency.
+* Onboarding activation idempotency (`waitlist_activation_onboarding:*`) and no legacy launch-notify jobs.
 
 ### End-To-End Tests
 
 1. Register in closed region, complete onboarding, verify pre-launch messaging.  
-2. Activate region, verify launch notification and transition to active status.  
+2. Activate region, verify `ONBOARDING_OPENING` is sent first and transition to active status.  
 3. Register during opening, verify correct gating.  
 4. Pause region, verify suppression of matching and messaging.
 
@@ -281,7 +281,7 @@ Emit events:
 * `waitlist_joined`  
 * `waitlist_onboarded`  
 * `region_activation_started/completed/failed`  
-* `region_launch_notify_sent`  
+* `waitlist_activation_onboarding_started`  
 * `region_paused`
 
 ### Operational Runbook
@@ -294,7 +294,7 @@ Emit events:
 
 * In staging, create a test region set to closed.  
 * Register test users, complete onboarding.  
-* Run activation, verify notifications.  
+* Run activation, verify `ONBOARDING_OPENING` is sent first.  
 * Verify matching starts only after open.
 
 ## Implementation Checklist
@@ -304,6 +304,6 @@ Emit events:
 * Implement pre-launch onboarding policy.  
 * Implement inbound SMS behavior for closed/paused regions.  
 * Implement region activation workflow with checkpoints.  
-* Implement launch notification job with rate limits.  
+* Implement waitlist activation onboarding start with deterministic idempotency.  
 * Add admin tools to open/pause regions.  
 * Add observability dashboards and alerts.

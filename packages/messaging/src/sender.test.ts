@@ -197,4 +197,40 @@ describe("sendSms", () => {
 
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
+
+  it("fails fast when legacy region_launch_notify contract is requested", async () => {
+    const { persistence } = createInMemoryPersistence();
+    const client: TwilioClient = {
+      sendMessage: vi.fn(),
+      fetchMessageBySid: vi.fn(),
+    };
+
+    await expect(
+      sendSms({
+        client,
+        persistence,
+        to: "+15555550004",
+        from: "+15555550123",
+        body: "legacy",
+        correlationId: "corr_legacy_purpose",
+        purpose: "region_launch_notify",
+        idempotencyKey: "waitlist_activation_onboarding:reg:profile:onboarding_opening",
+      }),
+    ).rejects.toThrow("Legacy region_launch_notify purpose is forbidden.");
+
+    await expect(
+      sendSms({
+        client,
+        persistence,
+        to: "+15555550004",
+        from: "+15555550123",
+        body: "legacy",
+        correlationId: "corr_legacy_idem",
+        purpose: "onboarding_opening",
+        idempotencyKey: "region_launch_notify:reg:profile:v1",
+      }),
+    ).rejects.toThrow("Legacy region_launch_notify idempotency keys are forbidden.");
+
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
 });

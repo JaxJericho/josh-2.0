@@ -3,7 +3,7 @@
 This runbook covers the admin-only waitlist batch endpoint used to:
 
 - Optionally open/activate a region.
-- Notify waitlisted users exactly once per profile via outbound queue jobs.
+- Activate waitlisted users exactly once per profile into the onboarding opening path.
 
 Endpoint:
 
@@ -17,7 +17,7 @@ Endpoint:
   "limit": 25,
   "dry_run": false,
   "open_region": true,
-  "notification_template_version": "v1"
+  "notification_template_version": "onboarding_opening"
 }
 ```
 
@@ -27,7 +27,7 @@ Fields:
 - `limit` (optional): integer clamped to `1..500`, default `50`.
 - `dry_run` (optional): boolean, default `false`.
 - `open_region` (optional): boolean, default `false`.
-- `notification_template_version` (optional): currently supports `v1`; default `v1`.
+- `notification_template_version` (optional): supports `onboarding_opening`; default `onboarding_opening`.
 
 ## Auth (Admin-Only)
 
@@ -59,9 +59,10 @@ The endpoint returns structured JSON:
   - `last_notified_at IS NULL`
 - Claim uses compare-and-set semantics:
   - update only rows that still have `last_notified_at IS NULL`
-  - claimed rows are transitioned to `status='notified'` with `last_notified_at=now()`
-- Outbound queue uses deterministic idempotency key:
-  - `region_launch_notify:{region_id}:{profile_id}:{template_version}`
+  - claimed rows are transitioned to `status='activated'` with `last_notified_at=now()`
+- Activation uses deterministic idempotency key:
+  - `waitlist_activation_onboarding:{region_id}:{profile_id}:onboarding_opening`
+- Activation path calls onboarding engine start and sends `ONBOARDING_OPENING` first.
 
 Re-running with the same region after a successful run should produce `claimed_count=0` and `sent_count=0`.
 
@@ -74,7 +75,7 @@ curl -sS -X POST \
   "https://<project-ref>.supabase.co/functions/v1/admin-waitlist-batch-notify" \
   -H "content-type: application/json" \
   -H "x-admin-secret: <QSTASH_RUNNER_SECRET>" \
-  --data '{"region_slug":"waitlist","limit":2,"dry_run":true,"open_region":false,"notification_template_version":"v1"}'
+  --data '{"region_slug":"waitlist","limit":2,"dry_run":true,"open_region":false,"notification_template_version":"onboarding_opening"}'
 ```
 
 Live run:
@@ -84,7 +85,7 @@ curl -sS -X POST \
   "https://<project-ref>.supabase.co/functions/v1/admin-waitlist-batch-notify" \
   -H "content-type: application/json" \
   -H "x-admin-secret: <QSTASH_RUNNER_SECRET>" \
-  --data '{"region_slug":"waitlist","limit":2,"dry_run":false,"open_region":true,"notification_template_version":"v1"}'
+  --data '{"region_slug":"waitlist","limit":2,"dry_run":false,"open_region":true,"notification_template_version":"onboarding_opening"}'
 ```
 
 Replay run (same params, should not send duplicates):
@@ -94,7 +95,7 @@ curl -sS -X POST \
   "https://<project-ref>.supabase.co/functions/v1/admin-waitlist-batch-notify" \
   -H "content-type: application/json" \
   -H "x-admin-secret: <QSTASH_RUNNER_SECRET>" \
-  --data '{"region_slug":"waitlist","limit":2,"dry_run":false,"open_region":true,"notification_template_version":"v1"}'
+  --data '{"region_slug":"waitlist","limit":2,"dry_run":false,"open_region":true,"notification_template_version":"onboarding_opening"}'
 ```
 
 ## SQL Verification Snippets

@@ -1,10 +1,12 @@
+import { ONBOARDING_OPENING } from "../../../../packages/core/src/onboarding/messages.ts";
+
 export const DEFAULT_WAITLIST_BATCH_LIMIT = 50;
 export const MAX_WAITLIST_BATCH_LIMIT = 500;
 
 export const ELIGIBLE_WAITLIST_STATUSES = ["waiting", "onboarded"] as const;
 export type EligibleWaitlistStatus = (typeof ELIGIBLE_WAITLIST_STATUSES)[number];
 
-export const SUPPORTED_NOTIFICATION_TEMPLATE_VERSIONS = ["v1"] as const;
+export const SUPPORTED_NOTIFICATION_TEMPLATE_VERSIONS = ["onboarding_opening"] as const;
 export type NotificationTemplateVersion =
   (typeof SUPPORTED_NOTIFICATION_TEMPLATE_VERSIONS)[number];
 
@@ -121,10 +123,8 @@ export function renderWaitlistNotificationTemplate(input: {
   regionDisplayName: string | null;
 }): string {
   switch (input.version) {
-    case "v1": {
-      const label = input.regionDisplayName?.trim() || "your area";
-      return `JOSH is now live in ${label}. You're off the waitlist. Reply START to continue onboarding. [template:v1]`;
-    }
+    case "onboarding_opening":
+      return ONBOARDING_OPENING;
     default:
       throw new WaitlistBatchNotifyError(
         400,
@@ -134,12 +134,15 @@ export function renderWaitlistNotificationTemplate(input: {
   }
 }
 
-export function buildWaitlistNotificationIdempotencyKey(input: {
+export function buildWaitlistActivationOnboardingIdempotencyKey(input: {
   regionId: string;
   profileId: string;
   templateVersion: NotificationTemplateVersion;
 }): string {
-  return `waitlist_activation_onboarding:${input.regionId}:${input.profileId}:${input.templateVersion}`;
+  const idempotencyKey =
+    `waitlist_activation_onboarding:${input.regionId}:${input.profileId}:${input.templateVersion}`;
+  assertNotLegacyRegionLaunchNotifyIdempotency(idempotencyKey);
+  return idempotencyKey;
 }
 
 export function resolveRegionBySlug(
@@ -296,7 +299,7 @@ export async function executeWaitlistBatchNotify(params: {
         user_id: entry.user_id,
         profile_id: entry.profile_id,
         waitlist_entry_id: entry.id,
-        idempotency_key: buildWaitlistNotificationIdempotencyKey({
+        idempotency_key: buildWaitlistActivationOnboardingIdempotencyKey({
           regionId: entry.region_id,
           profileId: entry.profile_id,
           templateVersion: params.request.notification_template_version,
@@ -382,7 +385,7 @@ function parseBooleanField(
 
 function parseTemplateVersion(raw: unknown): NotificationTemplateVersion {
   if (raw === undefined || raw === null) {
-    return "v1";
+    return "onboarding_opening";
   }
   if (typeof raw !== "string" || raw.trim().length === 0) {
     throw new WaitlistBatchNotifyError(
@@ -405,6 +408,16 @@ function parseTemplateVersion(raw: unknown): NotificationTemplateVersion {
     );
   }
   return normalized as NotificationTemplateVersion;
+}
+
+function assertNotLegacyRegionLaunchNotifyIdempotency(idempotencyKey: string): void {
+  if (idempotencyKey.startsWith("region_launch_notify:")) {
+    throw new WaitlistBatchNotifyError(
+      500,
+      "LEGACY_REGION_LAUNCH_NOTIFY_FORBIDDEN",
+      "Legacy region_launch_notify idempotency keys are forbidden.",
+    );
+  }
 }
 
 function compareWaitlistEntries(a: WaitlistBatchEntry, b: WaitlistBatchEntry): number {
