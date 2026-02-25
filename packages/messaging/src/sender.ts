@@ -425,7 +425,7 @@ function normalizeOptionalString(value: string | null | undefined): string | nul
   return normalized.length > 0 ? normalized : null;
 }
 
-function normalizeIdempotencyKeyForSmsCorrelation(idempotencyKey: string): string {
+export function normalizeIdempotencyKeyForSmsCorrelation(idempotencyKey: string): string {
   const normalized = idempotencyKey.trim();
   if (UUID_PATTERN.test(normalized)) {
     return normalized;

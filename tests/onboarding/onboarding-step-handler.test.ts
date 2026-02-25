@@ -5,6 +5,7 @@ import {
   type OnboardingStepHandlerDependencies,
   type OnboardingStepPayload,
 } from "../../app/lib/onboarding-step-handler";
+import { normalizeIdempotencyKeyForSmsCorrelation } from "../../packages/messaging/src/sender";
 
 type HarnessOptions = {
   sessionExists?: boolean;
@@ -39,6 +40,7 @@ const BASE_PAYLOAD: OnboardingStepPayload = {
   expected_state_token: "onboarding:awaiting_burst",
   idempotency_key: "onboarding:profile_123:session_123:onboarding_message_1",
 };
+const BASE_CORRELATION_ID = normalizeIdempotencyKeyForSmsCorrelation(BASE_PAYLOAD.idempotency_key);
 
 const ONBOARDING_STEP_SCHEDULING_CASES: OnboardingStepCase[] = [
   {
@@ -97,12 +99,12 @@ function createHarness(options: HarnessOptions = {}): {
     stateUpdates: [],
     scheduleCalls: [],
     logs: [],
-    deliveredRows: options.deliveredBeforeSend ? [BASE_PAYLOAD.idempotency_key] : [],
+    deliveredRows: options.deliveredBeforeSend ? [BASE_CORRELATION_ID] : [],
   };
 
   let sessionToken = options.sessionStateToken ?? BASE_PAYLOAD.expected_state_token;
   let sendFailedOnce = false;
-  let lastIdempotencyKey = BASE_PAYLOAD.idempotency_key;
+  let lastCorrelationId = BASE_CORRELATION_ID;
 
   const deps: OnboardingStepHandlerDependencies = {
     verifyQStashSignature: async () => true,
@@ -124,7 +126,7 @@ function createHarness(options: HarnessOptions = {}): {
     isSessionPaused: async () => Boolean(options.paused),
 
     hasDeliveredMessage: async (idempotencyKey: string) => {
-      lastIdempotencyKey = idempotencyKey;
+      lastCorrelationId = idempotencyKey;
       return state.deliveredRows.includes(idempotencyKey);
     },
 
@@ -136,7 +138,7 @@ function createHarness(options: HarnessOptions = {}): {
 
       state.sendCount += 1;
       if (options.deliveredAfterSend !== false) {
-        state.deliveredRows.push(lastIdempotencyKey);
+        state.deliveredRows.push(lastCorrelationId);
       }
     },
 
@@ -260,7 +262,7 @@ describe("onboarding step handler integration-like flows", () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(state.sendCount).toBe(1);
-    expect(state.deliveredRows).toEqual([BASE_PAYLOAD.idempotency_key]);
+    expect(state.deliveredRows).toEqual([BASE_CORRELATION_ID]);
     expect(state.stateUpdates).toHaveLength(1);
   });
 
@@ -273,7 +275,7 @@ describe("onboarding step handler integration-like flows", () => {
     expect(first.status).toBe(500);
     expect(second.status).toBe(200);
     expect(state.sendCount).toBe(1);
-    expect(state.deliveredRows).toEqual([BASE_PAYLOAD.idempotency_key]);
+    expect(state.deliveredRows).toEqual([BASE_CORRELATION_ID]);
     expect(state.stateUpdates).toEqual(["onboarding:awaiting_burst"]);
   });
 
