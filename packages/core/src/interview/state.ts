@@ -36,6 +36,7 @@ export type ConversationMode =
   | "interviewing"
   | "linkup_forming"
   | "awaiting_invite_reply"
+  | "post_event"
   | "safety_hold";
 
 export type InterviewSessionSnapshot = {

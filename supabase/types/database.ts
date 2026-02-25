@@ -2502,6 +2502,7 @@ export type Database = {
         | "interviewing"
         | "linkup_forming"
         | "awaiting_invite_reply"
+        | "post_event"
         | "safety_hold"
       entitlement_source: "stripe" | "admin_override" | "reconciled"
       invite_state: "pending" | "accepted" | "declined" | "expired" | "closed"
@@ -2709,6 +2710,7 @@ export const Constants = {
         "interviewing",
         "linkup_forming",
         "awaiting_invite_reply",
+        "post_event",
         "safety_hold",
       ],
       entitlement_source: ["stripe", "admin_override", "reconciled"],

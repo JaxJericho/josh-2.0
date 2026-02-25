@@ -4,15 +4,22 @@ import { runDefaultEngine } from "../engines/default-engine.ts";
 import { runProfileInterviewEngine } from "../engines/profile-interview-engine.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { runOnboardingEngine } from "../engines/onboarding-engine.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { runPostEventEngine } from "../engines/post-event-engine.ts";
 
 export type ConversationMode =
   | "idle"
   | "interviewing"
   | "linkup_forming"
   | "awaiting_invite_reply"
+  | "post_event"
   | "safety_hold";
 
-export type RouterRoute = "profile_interview_engine" | "default_engine" | "onboarding_engine";
+export type RouterRoute =
+  | "profile_interview_engine"
+  | "default_engine"
+  | "onboarding_engine"
+  | "post_event_engine";
 
 export type ConversationState = {
   mode: ConversationMode;
@@ -57,6 +64,7 @@ type ConversationSessionRow = {
   id: string;
   mode: string | null;
   state_token: string | null;
+  linkup_id: string | null;
 };
 
 type ProfileSummary = {
@@ -73,14 +81,26 @@ const ONBOARDING_STATE_TOKENS = [
   "onboarding:awaiting_burst",
   "onboarding:awaiting_interview_start",
 ] as const;
+const POST_EVENT_STATE_TOKENS = [
+  "post_event:attendance",
+  "post_event:do_again",
+  "post_event:feedback",
+  "post_event:contact_intro",
+  "post_event:contact_choices",
+] as const;
 type OnboardingStateToken = (typeof ONBOARDING_STATE_TOKENS)[number];
+type PostEventStateToken = (typeof POST_EVENT_STATE_TOKENS)[number];
 type InterviewingStateTokenKind = "onboarding" | "interview";
 
 const ONBOARDING_STATE_TOKEN_SET: ReadonlySet<OnboardingStateToken> = new Set(
   ONBOARDING_STATE_TOKENS,
 );
+const POST_EVENT_STATE_TOKEN_SET: ReadonlySet<PostEventStateToken> = new Set(
+  POST_EVENT_STATE_TOKENS,
+);
 const INTERVIEW_TOKEN_PATTERN = /^interview:[a-z0-9_]+$/;
 const ONBOARDING_TOKEN_PATTERN = /^onboarding:[a-z_]+$/;
+const POST_EVENT_TOKEN_PATTERN = /^post_event:[a-z0-9_]+$/;
 const STOP_HELP_COMMANDS = new Set([
   "STOP",
   "UNSUBSCRIBE",
@@ -96,6 +116,7 @@ const CONVERSATION_MODES: readonly ConversationMode[] = [
   "interviewing",
   "linkup_forming",
   "awaiting_invite_reply",
+  "post_event",
   "safety_hold",
 ];
 
@@ -106,6 +127,7 @@ const STATE_TOKEN_PATTERN_BY_MODE: Record<ConversationMode, RegExp> = {
   interviewing: /^[a-z0-9:_-]+$/i,
   linkup_forming: /^[a-z0-9:_-]+$/i,
   awaiting_invite_reply: /^[a-z0-9:_-]+$/i,
+  post_event: POST_EVENT_TOKEN_PATTERN,
   safety_hold: /^[a-z0-9:_-]+$/i,
 };
 
@@ -114,6 +136,7 @@ const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
   interviewing: "profile_interview_engine",
   linkup_forming: "default_engine",
   awaiting_invite_reply: "default_engine",
+  post_event: "post_event_engine",
   safety_hold: "default_engine",
 };
 
@@ -122,6 +145,7 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
   interviewing: "interview:awaiting_next_input",
   linkup_forming: "linkup:awaiting_details",
   awaiting_invite_reply: "invite:awaiting_reply",
+  post_event: "post_event:attendance",
   safety_hold: "safety:hold_enforced",
 };
 
@@ -130,6 +154,7 @@ const LEGAL_TRANSITIONS_BY_MODE: Record<ConversationMode, ReadonlySet<string>> =
   interviewing: new Set(["interview:awaiting_next_input", ...ONBOARDING_STATE_TOKENS]),
   linkup_forming: new Set(["linkup:awaiting_details"]),
   awaiting_invite_reply: new Set(["invite:awaiting_reply"]),
+  post_event: new Set(POST_EVENT_STATE_TOKENS),
   safety_hold: new Set(["safety:hold_enforced"]),
 };
 
@@ -159,14 +184,22 @@ export async function routeConversationMessage(
   }
 
   const session = await fetchOrCreateConversationSession(params.supabase, user.id);
-  let state = validateConversationState(session.mode, session.state_token);
+  const transitionEvaluatedSession = await transitionConversationSessionForCompletedLinkup({
+    supabase: params.supabase,
+    session,
+    inboundMessageId: params.payload.inbound_message_id,
+  });
+  let state = validateConversationState(
+    transitionEvaluatedSession.mode,
+    transitionEvaluatedSession.state_token,
+  );
   const profile = await fetchProfileSummary(params.supabase, user.id);
   const shouldForceInterview = shouldRouteIdleUserToInterview(state, profile);
 
   if (shouldForceInterview) {
     const promotedSession = await promoteConversationSessionForOnboarding(
       params.supabase,
-      session.id,
+      transitionEvaluatedSession.id,
     );
     state = validateConversationState(
       promotedSession.mode,
@@ -252,6 +285,9 @@ export function validateConversationState(
   if (modeRaw === "interviewing") {
     classifyInterviewingStateToken(stateToken);
   }
+  if (modeRaw === "post_event") {
+    classifyPostEventStateToken(stateToken);
+  }
 
   return {
     mode: modeRaw,
@@ -285,6 +321,8 @@ export function resolveNextTransition(
 
   const nextTransition = state.mode === "interviewing" &&
       classifyInterviewingStateToken(state.state_token) === "onboarding"
+    ? state.state_token
+    : state.mode === "post_event"
     ? state.state_token
     : NEXT_TRANSITION_BY_MODE[state.mode];
   const allowedTransitions = LEGAL_TRANSITIONS_BY_MODE[state.mode];
@@ -340,6 +378,24 @@ function classifyInterviewingStateToken(
     "INVALID_STATE",
     `Unknown interviewing state token '${stateToken}'.`
   );
+}
+
+function classifyPostEventStateToken(stateToken: string): PostEventStateToken {
+  if (!POST_EVENT_TOKEN_PATTERN.test(stateToken)) {
+    throw new ConversationRouterError(
+      "INVALID_STATE",
+      `Unknown post-event state token '${stateToken}'.`
+    );
+  }
+
+  if (!POST_EVENT_STATE_TOKEN_SET.has(stateToken as PostEventStateToken)) {
+    throw new ConversationRouterError(
+      "INVALID_STATE",
+      `Unknown post-event state token '${stateToken}'.`
+    );
+  }
+
+  return stateToken as PostEventStateToken;
 }
 
 export async function dispatchConversationRoute(
@@ -408,6 +464,24 @@ export async function dispatchConversationRoute(
         throw error;
       }
     }
+    case "post_event_engine": {
+      try {
+        const result = await runPostEventEngine(input);
+        assertDispatchedEngineMatchesRoute(resolvedRoute, result.engine);
+        return result;
+      } catch (error) {
+        const err = error as Error;
+        console.error("conversation_router.dispatch_failed", {
+          user_id: input.decision.user_id,
+          route: resolvedRoute,
+          session_mode: input.decision.state.mode,
+          session_state_token: input.decision.state.state_token,
+          name: err?.name ?? "Error",
+          message: err?.message ?? String(error),
+        });
+        throw error;
+      }
+    }
     case "default_engine": {
       const result = await runDefaultEngine(input);
       assertDispatchedEngineMatchesRoute(resolvedRoute, result.engine);
@@ -451,7 +525,7 @@ async function fetchConversationSession(
 ): Promise<ConversationSessionRow | null> {
   const { data, error } = await supabase
     .from("conversation_sessions")
-    .select("id,mode,state_token")
+    .select("id,mode,state_token,linkup_id")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -470,6 +544,7 @@ async function fetchConversationSession(
     id: data.id,
     mode: data.mode ?? null,
     state_token: data.state_token ?? null,
+    linkup_id: data.linkup_id ?? null,
   };
 }
 
@@ -491,7 +566,7 @@ async function fetchOrCreateConversationSession(
       current_step_id: null,
       last_inbound_message_sid: null,
     })
-    .select("id,mode,state_token")
+    .select("id,mode,state_token,linkup_id")
     .single();
 
   if (error || !data?.id) {
@@ -505,6 +580,105 @@ async function fetchOrCreateConversationSession(
     id: data.id,
     mode: data.mode ?? null,
     state_token: data.state_token ?? null,
+    linkup_id: data.linkup_id ?? null,
+  };
+}
+
+async function transitionConversationSessionForCompletedLinkup(
+  params: {
+    supabase: SupabaseClientLike;
+    session: ConversationSessionRow;
+    inboundMessageId: string;
+  },
+): Promise<ConversationSessionRow> {
+  if (!params.session.linkup_id) {
+    return params.session;
+  }
+
+  if (typeof params.supabase.rpc !== "function") {
+    throw new ConversationRouterError(
+      "STATE_TRANSITION_MISCONFIGURED",
+      "Router requires Supabase RPC support for post-event session transitions.",
+    );
+  }
+
+  const { data, error } = await params.supabase.rpc(
+    "transition_session_to_post_event_if_linkup_completed",
+    {
+      p_session_id: params.session.id,
+      p_correlation_id: params.inboundMessageId,
+    },
+  );
+
+  if (error) {
+    throw new ConversationRouterError(
+      "STATE_TRANSITION_FAILED",
+      "Unable to evaluate post-event session transition.",
+    );
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | {
+      transitioned?: unknown;
+      reason?: unknown;
+      next_mode?: unknown;
+      state_token?: unknown;
+      linkup_id?: unknown;
+      linkup_state?: unknown;
+      correlation_id?: unknown;
+      linkup_correlation_id?: unknown;
+    }
+    | null
+    | undefined;
+
+  if (!row) {
+    throw new ConversationRouterError(
+      "STATE_TRANSITION_INVALID_RESPONSE",
+      "Post-event session transition returned no result row.",
+    );
+  }
+
+  const nextMode =
+    typeof row.next_mode === "string" ? row.next_mode : params.session.mode;
+  const nextStateToken =
+    typeof row.state_token === "string" ? row.state_token : params.session.state_token;
+
+  if (!nextMode || !isConversationMode(nextMode)) {
+    throw new ConversationRouterError(
+      "STATE_TRANSITION_INVALID_RESPONSE",
+      "Post-event session transition returned an invalid mode.",
+    );
+  }
+
+  if (!nextStateToken || typeof nextStateToken !== "string") {
+    throw new ConversationRouterError(
+      "STATE_TRANSITION_INVALID_RESPONSE",
+      "Post-event session transition returned an invalid state token.",
+    );
+  }
+
+  console.info("conversation_router.post_event_transition", {
+    inbound_message_id: params.inboundMessageId,
+    session_id: params.session.id,
+    linkup_id: typeof row.linkup_id === "string" ? row.linkup_id : params.session.linkup_id,
+    linkup_state: typeof row.linkup_state === "string" ? row.linkup_state : null,
+    transitioned: row.transitioned === true,
+    reason: typeof row.reason === "string" ? row.reason : null,
+    previous_mode: params.session.mode,
+    next_mode: nextMode,
+    next_state_token: nextStateToken,
+    correlation_id: typeof row.correlation_id === "string"
+      ? row.correlation_id
+      : params.inboundMessageId,
+    linkup_correlation_id: typeof row.linkup_correlation_id === "string"
+      ? row.linkup_correlation_id
+      : null,
+  });
+
+  return {
+    ...params.session,
+    mode: nextMode,
+    state_token: nextStateToken,
   };
 }
 
