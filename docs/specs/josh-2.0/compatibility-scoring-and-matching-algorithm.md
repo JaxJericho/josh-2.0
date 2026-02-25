@@ -1,206 +1,175 @@
-# Compatibility Scoring And Matching Algorithm (JOSH 2.0)
-
-## *Document \#9*
+# Compatibility Scoring And Matching Algorithm
 
 ## Summary
 
-This document defines the matching pipeline for JOSH 2.0: how the system selects eligible candidates, computes compatibility scores, ranks candidates, applies tie-breakers and relaxations, and outputs either a 1:1 intro or a LinkUp candidate set. It is designed to be implementation-ready and deterministic under retries, while still leaving room for iterative tuning.
+This document defines the matching pipeline for JOSH 3.0: how the system selects eligible candidates, computes compatibility scores, ranks candidates, applies tie-breakers and relaxations, and outputs a LinkUp candidate set. It is designed to be implementation-ready and deterministic under retries, while leaving room for iterative tuning.
 
-The core idea is a two-stage process: hard filters first (eligibility, region, safety, mutual constraints), then a weighted scoring model across the user’s stored signals (Friend Fingerprint and preferences) plus system-level constraints (recency, diversity, capacity, and fatigue controls). The output includes explainability fields that can be used for user messaging, admin debugging, and model iteration.
+The core process is two-stage: hard filters first (eligibility, region, safety, mutual constraints, profile state), then a weighted scoring model across stored coordination signals plus system-level constraints (recency, diversity, capacity, and fatigue controls). The output includes explainability fields for user messaging, admin debugging, and model iteration.
+
+The 1:1 Match Preview mode from JOSH 2.0 is deprecated. This spec covers LinkUp formation only.
+
+---
 
 ## Goals
 
-* Produce stable, high-quality match recommendations using explicitly defined filters, scores, and tie-breakers.  
-* Support both product modes:  
-  * 1:1 Match Preview (legacy mode)  
-  * LinkUp formation (group mode)  
+* Produce stable, high-quality LinkUp candidate sets using explicitly defined filters, scores, and tie-breakers.  
+* Support the 3.0 profile architecture: 6 coordination dimensions, 3 coordination signals, activity patterns with motive weights.  
+* Enforce the complete\_invited hard filter at every eligibility check call site.  
 * Be safe under retries, concurrency, and delayed jobs.  
 * Preserve user safety and consent via hard constraints and safety overrides.  
 * Provide explainability artifacts for debugging and iteration.
 
 ## Non-Goals
 
-* End-to-end learning, bandits, or automated weight tuning (covered by Doc 10).  
-* Novel embedding-based similarity search or heavy vector infrastructure (deferred unless added later).  
+* End-to-end learning, bandits, or automated weight tuning (covered by Learning And Adaptation System spec).  
+* Novel embedding-based similarity search or heavy vector infrastructure (deferred).  
 * Sophisticated graph matching or optimal assignment across the entire pool (deferred).  
-* Real-time “who is online now” availability matching (deferred).
+* Real-time "who is online now" availability matching (deferred).  
+* Plan Circle compatibility scoring — Plan Circle coordination uses profile signals for passive awareness only, not scored matching. See Plan Circle section below.  
+* Layer B (compatibility layer) scoring — schema exists, fields are nullable, not populated at MVP, not read by any matching logic at MVP.
 
 ## Key Decisions And Trade-Offs
 
 * Hard filters \+ weighted sum scoring: easier to implement, debug, and tune than opaque models.  
-* Deterministic ranking with bounded randomness: improves reliability and reduces repeated identical matches; randomness is optional and tightly controlled.  
+* Deterministic ranking with bounded randomness: improves reliability and reduces repeated identical matches.  
 * Explainability stored alongside results: increases storage and complexity, but enables trustworthy user messaging and operations.  
-* LinkUp selection uses greedy construction with constraints: simpler than combinatorial optimization; acceptable for MVP group sizes.
+* LinkUp selection uses greedy construction: simpler than combinatorial optimization; acceptable for MVP group sizes.  
+* complete\_invited is a hard filter, not a soft signal: users who joined via invitation and have not completed the full interview must never enter the stranger-matching pool. This is enforced at the query level and verified at every call site.
 
 ## Definitions
 
-* Candidate: A user eligible to be considered for matching with a given user.  
+* Candidate: A user eligible to be considered for LinkUp matching.  
 * Hard Filters: Boolean rules that must pass; failure excludes the candidate.  
 * Soft Constraints: Preferences that influence scoring but do not exclude.  
 * Score: Numeric value representing compatibility; higher is better.  
 * Explainability: A structured object describing the major score contributors and disqualifiers.  
-* Relaxation: A step-wise loosening of some hard constraints when the pool is too small.
+* Relaxation: Step-wise loosening of some hard constraints when the pool is too small.  
+* Coordination Layer (Layer A): The profile signals used for matching at MVP — 6 coordination dimensions, 3 coordination signals, activity patterns, preferences.  
+* Compatibility Layer (Layer B): Extended profile signals reserved for future paid tiers — `personality_substrate`, `relational_style`, `values_orientation`. Present in schema as nullable JSONB. Not read or written at MVP.
+
+---
+
+## Profile Architecture And Layer Separation
+
+### Layer A — Coordination Layer (MVP Matching)
+
+All matching at MVP uses Layer A signals only.
+
+Coordination dimensions (6):
+
+* `social_energy` — preference for high-stimulation vs. low-stimulation social environments  
+* `social_pace` — preference for spontaneous vs. structured plans  
+* `conversation_depth` — preference for surface-level vs. substantive conversation  
+* `adventure_orientation` — preference for familiar vs. novel experiences  
+* `group_dynamic` — preference for leading vs. following vs. collaborating in group settings  
+* `values_proximity` — importance of shared values and worldview in connections
+
+Each dimension: `range_value` (float 0–1), `confidence` (float 0–1), `freshness_days` (integer).
+
+Coordination signals (3):
+
+* `scheduling_availability` — time buckets when the user is typically available  
+* `notice_preference` — how far in advance plans need to be confirmed  
+* `coordination_style` — how the user prefers to handle logistics (delegating vs. co-planning)
+
+Activity patterns: array of `{ activity_key, motive_weights, constraints, preferred_windows, confidence }`.
+
+Preferences: `group_size_pref`, `time_preferences`, `noise_sensitivity`, `outdoor_preference`.
+
+### Layer B — Compatibility Layer (Reserved, Not Used At MVP)
+
+Fields present in `profiles` schema as nullable JSONB:
+
+* `personality_substrate`  
+* `relational_style`  
+* `values_orientation`
+
+These fields are never populated during the MVP interview. They are never read by any matching, scoring, or eligibility logic at MVP. Any code that reads Layer B fields is a bug at MVP. Reserved for future paid friendship-matching tiers.
+
+---
 
 ## Inputs
 
-### Required User Signals (From Doc 06\)
+### Required User Signals
 
-The matching engine consumes a normalized representation of:
+The matching engine reads from the coordination layer only:
 
-* Friend Fingerprint (12 factors)  
+* 6 coordination dimensions with confidence values  
+* 3 coordination signals  
 * Activity patterns with motive weights  
 * Boundaries and dealbreakers  
-* Group/time preferences  
-* Communication style and energy  
+* Group size and time preferences  
 * Location (region / coarse area, privacy-preserving)
-
-These live in a canonical profile JSON plus derived structured fields.
 
 ### System Signals
 
-* Region open / gating status  
-* Subscription and entitlements status (Doc 11\)  
+* Region open / density status  
+* Subscription and entitlements status  
 * Safety status (holds, strikes, blocks)  
 * Match history and fatigue controls  
-* Pool density metrics per region
+* Pool density metrics per region  
+* Profile state (used for complete\_invited hard filter)
+
+---
 
 ## Outputs
 
-### For 1:1 Mode
-
-* A ranked list of candidate user IDs with:  
-  * `final_score`  
-  * `component_scores` (breakdown)  
-  * `explainability` (human-readable reasons)  
-  * `filter_rejections` (if stored for debugging)
-
-Typically only the top candidate is consumed into the preview pipeline.
-
 ### For LinkUp Mode
 
-* A LinkUp candidate set satisfying constraints:  
-  * size `N` (min and max)  
-  * time window compatibility  
-  * activity compatibility threshold  
-  * safety and mutual constraints  
-  * a group cohesion score and per-edge scores
+A LinkUp candidate set satisfying:
 
-## Scope Boundaries
+* Size N (min and max per LinkUp Brief)  
+* Time window compatibility  
+* Activity compatibility threshold  
+* Safety and mutual constraints  
+* Group cohesion score and per-edge scores  
+* Explainability object per candidate
 
-### In Scope
-
-* Eligibility filters and compatibility scoring for both modes.  
-* Ranking, tie-breakers, and relaxations.  
-* Deterministic selection logic.  
-* Explainability object schema.
-
-### Deferred
-
-* ML-based weight tuning and automated experimentation (Doc 10).  
-* Embedding retrieval or vector search.  
-* Full global optimization (Hungarian, max matching) across pools.
-
-## Architecture Placement
-
-* Matching is invoked by an async job (scheduler/queue) per region or per user.  
-* The job reads normalized profile signals and system constraints.  
-* The job writes results to match-intent tables (or a domain event stream) consumed by preview creation (1:1) or LinkUp orchestration (group).
-
-The matching job must be idempotent per run key.
-
-## Data Structures
-
-This doc assumes the schema from Doc 03 exists. If your schema differs, preserve semantics.
-
-### Canonical Match Run
-
-Create a durable record of each match run for observability and debugging.
-
-Table: `match_runs` (recommended; if already exists, adapt)
-
-* `id` (uuid)  
-* `mode` enum: `one_to_one | linkup`  
-* `region_id`  
-* `subject_user_id` (nullable for region batch runs)  
-* `run_key` (text, unique)  
-* `created_at`  
-* `completed_at`  
-* `status` enum: `started | completed | failed`  
-* `error_code` / `error_detail` (nullable)  
-* `params` jsonb (weights version, relaxation level)
-
-Uniqueness: `unique(run_key)`
-
-### Candidate Score Record
-
-Table: `match_candidates` (recommended)
-
-* `match_run_id`  
-* `subject_user_id`  
-* `candidate_user_id`  
-* `mode`  
-* `passed_hard_filters` boolean  
-* `final_score` numeric  
-* `component_scores` jsonb  
-* `explainability` jsonb  
-* `created_at`
-
-Indexes:
-
-* `(subject_user_id, mode, final_score desc)`  
-* `(match_run_id)`
-
-### Explainability Schema
-
-`explainability` jsonb should include:
-
-* `top_reasons`: array of `{key, label, contribution}`  
-* `dealbreakers_checked`: array of `{key, passed}`  
-* `activity_overlap`: `{shared_activities: [...], overlap_score}`  
-* `time_overlap`: `{windows_matched: [...], overlap_score}`  
-* `notes_for_admin`: optional
-
-Keep it bounded in size.
+---
 
 ## Hard Filters
 
-Hard filters are applied first. If any fail, the candidate is excluded.
+Hard filters are applied first. Any failure excludes the candidate entirely.
 
-### Eligibility Filters
+### 1\. Profile State Filter (complete\_invited Hard Rule)
 
-1. Region eligibility  
-   * Same active region OR region-crossing allowed by policy (default: no)  
-   * Candidate’s region must be open  
-2. Account status  
-   * Phone verified  
-   * Not deleted / not suspended  
-3. Entitlements (Doc 11\)  
-   * Subject user must be eligible to receive a match  
-   * Candidate user must be eligible to participate  
-4. Safety  
-   * Neither user on a safety hold that prevents matching  
-   * Candidate not flagged as “do not match”  
-5. Blocks  
-   * No block relationship either direction  
-6. Recent match prevention  
-   * Candidate not already in an active preview with subject  
-   * Candidate not recently introduced within `RECENCY_COOLDOWN_DAYS` (default 30\)  
-7. Availability / capacity  
-   * Candidate not at max active conversations/previews  
-   * For LinkUp: candidate not already locked into another LinkUp in same time window
+Candidates with `profile_state = complete_invited` are excluded from the stranger-matching pool without exception. This filter must be applied at the query level — do not retrieve complete\_invited profiles into the candidate pool at all.
 
-### Dealbreaker Filters
+Every call to `evaluateEligibility({ userId, action_type: 'can_initiate_linkup' })` must verify that the subject user's `profile_state` is `complete_mvp` or `complete_full`. A user with `complete_invited` cannot initiate a LinkUp or be matched into one.
 
-Dealbreakers come from profile signals and are treated as hard filters.
+This is the highest-priority hard filter. It is never relaxed. It is never overridden by pool size constraints.
 
-Examples (tunable):
+### 2\. Eligibility Filters
 
-* Age range requirements  
-* Group-size constraints (user refuses groups)  
-* Time window non-overlap (no compatible times)  
-* Boundary conflicts (e.g., “no drinking” vs “bar crawl only”)
+* Region: candidate's region must be open for LinkUps  
+* Account status: phone verified, not deleted, not suspended  
+* Entitlements: both subject and candidate must hold active subscriptions  
+* Profile completeness: `profile_state` must be `complete_mvp` or `complete_full`
 
-Dealbreakers must be explicit and limited. Avoid inventing hidden rules.
+### 3\. Safety Filters
+
+* Neither user on a safety hold that prevents matching  
+* Candidate not flagged as "do not match"  
+* No block relationship in either direction
+
+### 4\. Recency And Capacity Filters
+
+* Candidate not already in an active LinkUp in the same time window  
+* Candidate not recently introduced to the subject within `RECENCY_COOLDOWN_DAYS` (default 30\)  
+* Candidate not at max active conversations or pending LinkUps
+
+### 5\. Dealbreaker Filters
+
+Hard dealbreakers from profile signals:
+
+* Time window non-overlap (no compatible scheduling\_availability buckets)  
+* Group size constraint conflict (candidate refuses groups, or min/max incompatibility)  
+* Boundary conflicts (e.g., "no alcohol" vs. activity requiring alcohol)  
+* Notice preference extreme mismatch (if both extremes explicitly stated)
+
+Dealbreakers must be explicit and limited. Do not invent hidden rules.
+
+---
 
 ## Scoring Model
 
@@ -210,97 +179,102 @@ After hard filters, compute a final score:
 
 `final_score = Σ (weight_i * component_i)`
 
-Each component is normalized to a 0–1 range.
+Each component is normalized to a 0–1 range. All weights are versioned. The default weight set is the starting configuration and should be tuned based on behavioral outcomes.
 
-### Recommended Components
+### Scoring Components
 
-1. Friend Fingerprint Similarity (FFS)  
-   * Measures alignment across 12 factors.  
-   * Use weighted distance or cosine-like similarity across normalized factor vectors.  
-2. Activity Compatibility (ACT)  
-   * Measures overlap in activity categories and motive weights.  
-   * Reward shared “high weight” motives.  
-3. Time Window Compatibility (TIME)  
-   * Based on user’s preferred days/times and group cadence.  
-4. Communication Style Alignment (COMMS)  
-   * Energy, frequency, depth, humor, texting style.  
-5. Novelty And Diversity (NOV)  
-   * Encourages not repeating the same “type” repeatedly.  
-   * Penalty for matching within too-narrow a cluster, if you track clusters.  
-6. Proximity (PROX)  
-   * Coarse region proximity score.  
-   * Must not reveal precise location.  
-7. Reliability (REL)  
-   * Encourages candidates with a record of attendance/positive feedback.  
-   * Must be bounded and not permanently punish new users.
+#### Coordination Dimension Similarity (CDS)
 
-### Default Weight Set (Versioned)
+Replaces the 2.0 Friend Fingerprint Similarity component.
 
-Store weights as a versioned config:
+For each of the 6 coordination dimensions, compute per-dimension similarity:
 
-* `weights_version = v1`  
-* `w = {FFS: 0.30, ACT: 0.25, TIME: 0.15, COMMS: 0.10, PROX: 0.10, REL: 0.05, NOV: 0.05}`
+`dim_similarity = 1 - min(1, |a.range_value - b.range_value|)`
 
-These are starting values only and should be tuned. The key requirement is that weights are explicit and versioned.
+Weight each dimension's contribution by the minimum confidence of the two profiles on that dimension:
 
-### Component Definitions
+`dim_contribution = dim_similarity * min(a.confidence, b.confidence)`
 
-#### Friend Fingerprint Similarity (FFS)
+CDS is the average over all 6 dimensions with available confidence on both sides.
 
-* Represent each factor as normalized numeric or categorical mapping.  
-* For numeric: similarity \= `1 - min(1, |a-b|/range)`  
-* For categorical: similarity \= 1 if equal, else 0, or use partial mapping.
-
-FFS is an average over the 12 factors with optional factor-specific weights.
+If a dimension is missing from one or both profiles, exclude it from the average and reduce the CDS weight contribution proportionally. Do not substitute neutral values.
 
 #### Activity Compatibility (ACT)
 
-* Each user has activities with motive weights.  
-* Define overlap as:
+Measures overlap in activity patterns and motive weight alignment.
 
-`shared = Σ over activities min(w_subject, w_candidate)`
+For each activity shared by both users:
 
-Normalize shared by the subject’s total:
+`shared_motive = Σ over motives min(subject_weight, candidate_weight)`
 
-`ACT = shared / Σ w_subject`
+Sum across all shared activities, normalize by the subject's total motive weight:
 
-Add bonus if there are at least `K` shared activities above a threshold.
+`ACT = shared_motive_sum / Σ subject_motive_weights`
+
+Add a bonus if there are at least K=2 shared activities with activity-level confidence \>= 0.50 on both sides.
 
 #### Time Window Compatibility (TIME)
 
-* Each user defines preferred windows.  
-* Compute overlap duration across windows.  
-* Normalize by subject availability.
+Based on `scheduling_availability` signal and `time_preferences`.
 
-`TIME = overlap_minutes / subject_available_minutes`
+Compute overlap across preferred time buckets. Normalize by the subject's available bucket count.
+
+`TIME = matched_buckets / subject_total_buckets`
 
 Clamp to \[0,1\].
 
-#### Communication Style Alignment (COMMS)
+If `scheduling_availability` is missing for either user, TIME \= 0.5 (neutral). Do not exclude the candidate — scheduling signals are captured early in the abbreviated interview and may be present even for newer profiles.
 
-* Map styles to a small vector.  
-* Similarity via average factor similarity.
+#### Notice Preference Alignment (NOTICE)
+
+Based on `notice_preference` signal.
+
+Score \= 1 if both users are within one bucket of each other (same-day / 1-day / 2-3 days / week+). Score \= 0.5 if two buckets apart. Score \= 0 if three or more buckets apart.
+
+If either user's `notice_preference` is missing, NOTICE \= 0.5 (neutral).
 
 #### Proximity (PROX)
 
-* Score \= 1 if same city/zone, else decay by distance buckets.  
-* Must use coarse buckets.
+* Score \= 1 if same city or zone  
+* Score \= 0.5 if adjacent zone within region  
+* Score \= 0 if different region (should be excluded by hard filter, but include as a guard)
+
+Must use coarse geographic buckets only. Never expose or compute precise location.
 
 #### Reliability (REL)
 
-* A bounded score from post-event outcomes:  
-  * attended rate  
-  * do-again rate  
-  * no-show penalties
+A bounded score derived from post-event behavioral outcomes:
 
-For cold start:
+* Attendance rate  
+* Do-again rate (positive post-activity checkin signal)  
+* No-show penalty
 
-* If insufficient history, REL \= 0.5 (neutral).
+For cold start (insufficient behavioral history): REL \= 0.5 (neutral). REL penalty decays over time. No-show history must not be permanent. Decay rules are defined in the Learning And Adaptation System spec.
 
 #### Novelty And Diversity (NOV)
 
-* If you track “match archetype” tags, NOV penalizes repeating the same archetype too often.  
-* If not available, set NOV \= 0.5 (neutral) in v1.
+Penalizes repeated matching within too-narrow a cluster.
+
+If archetype tracking is available: apply penalty when the candidate is in the same archetype cluster as the subject's two most recent matches. If not available at MVP: NOV \= 0.5 (neutral).
+
+### Default Weight Set (v1)
+
+```
+weights_version = "scoring-v1"
+weights = {
+  CDS:    0.30,
+  ACT:    0.25,
+  TIME:   0.15,
+  NOTICE: 0.10,
+  PROX:   0.10,
+  REL:    0.05,
+  NOV:    0.05
+}
+```
+
+These are starting values. Weights must be versioned and stored with every match run. Do not change weights without bumping `weights_version` and recording a reason.
+
+---
 
 ## Ranking, Tie-Breakers, And Randomness
 
@@ -310,244 +284,305 @@ Rank candidates by `final_score desc`.
 
 ### Tie-Breakers
 
-When two candidates have the same score within `EPS = 0.001`, apply:
+When two candidates have the same score within `EPS = 0.001`, apply in order:
 
 1. Higher TIME  
 2. Higher ACT  
 3. Lower recency (longer since last match exposure)  
-4. Random stable hash tie-breaker
+4. Random stable hash: `hash(subject_user_id + candidate_user_id + run_key)`
 
 ### Bounded Randomness (Optional)
 
-If you want slight exploration without chaos:
+If slight exploration is desired without instability:
 
-* Take top `M` (e.g., 5\)  
-* Choose 1 using a softmax over scores with low temperature  
-* Seed randomness with `(subject_user_id, run_key)` so retries are deterministic
+* Take top M candidates (e.g., 5\)  
+* Choose using softmax over scores with low temperature  
+* Seed with `(subject_user_id, run_key)` so retries are deterministic
 
 If not implemented, choose the top candidate deterministically.
 
+---
+
 ## Relaxation Strategy
 
-Relaxations only occur when the eligible pool is below a minimum.
+Relaxations apply only when the eligible pool falls below a minimum threshold. The complete\_invited hard filter is never relaxed regardless of pool size.
 
 ### Pool Thresholds
 
-* 1:1 mode requires `MIN_POOL_ONE_TO_ONE = 10` eligible candidates (tunable)  
 * LinkUp mode requires `MIN_POOL_LINKUP = target_size * 3` eligible candidates (tunable)
-
-If pool \< threshold, apply relaxations step-wise.
 
 ### Relaxation Levels
 
-Each level relaxes only soft constraints first, then certain dealbreakers only if explicitly allowed.
+Level 0 (Default): All hard filters enforced.
 
-Level 0 (Default):
+Level 1: Expand time window matching to adjacent buckets. Lower minimum activity overlap threshold.
 
-* All hard filters enforced
+Level 2: Expand proximity buckets within the same region.
 
-Level 1:
+Level 3: Reduce recency cooldown (e.g., 30 → 14 days) except for explicitly rejected pairs.
 
-* Expand time window matching to “adjacent” windows  
-* Lower minimum activity overlap threshold
+Level 4 (Last Resort, Must Be Explicit In Policy): Allow candidates with partial dealbreaker mismatch only if the dealbreaker is marked "soft-dealbreaker" in profile signals.
 
-Level 2:
-
-* Expand proximity buckets within the same region
-
-Level 3:
-
-* Reduce recency cooldown (e.g., 30 → 14 days) except for explicitly rejected pairs
-
-Level 4 (Last Resort, Must Be Explicit In Policy):
-
-* Allow candidates with partial dealbreaker mismatch only if the dealbreaker is marked “soft-dealbreaker” in profile signals
-
-If still insufficient pool, do not match and instead:
-
-* For 1:1: queue a wait message and retry later  
-* For LinkUp: reduce target size within min bound or delay the event
+If the pool remains insufficient after Level 4: reduce target LinkUp size within min bound, or delay the event and notify the initiating user.
 
 All relaxation decisions must be stored in `match_runs.params`.
 
+---
+
 ## LinkUp Candidate Selection
 
-LinkUp selection must satisfy group constraints and aims to maximize group cohesion.
+LinkUp selection must satisfy group constraints and maximize group cohesion.
 
 ### Candidate Pool
 
-* Use hard filters as above.  
-* Add LinkUp-specific filters:  
-  * Must support group events  
-  * Must match required time window  
-  * Must meet minimum activity compatibility with LinkUp Brief
+Apply all hard filters. Add LinkUp-specific filters:
+
+* Must support group events (group\_dynamic not explicitly solo-only)  
+* Must match the required time window  
+* Must meet minimum activity compatibility with the LinkUp Brief
 
 ### Group Construction Algorithm (Greedy)
 
-Given a LinkUp Brief and a candidate pool:
+Given a LinkUp Brief and a filtered candidate pool:
 
-1. Choose a seed user:  
-   * Highest REL among pool, or highest score against the brief  
-2. Iteratively add the next user that maximizes:
+1. Choose a seed candidate: highest REL score in the pool, or highest pairwise score against the Brief initiator.  
+2. Iteratively add the next candidate that maximizes:
 
-`group_score = average(pairwise_score(existing_member, new_user)) + brief_score(new_user)`
+`group_score = average(pairwise_score(existing_member, new_candidate)) + brief_score(new_candidate)`
 
-3. Enforce constraints at each addition:  
-   * No blocks  
-   * Time overlap sufficient with group  
-   * Activity overlap meets threshold  
-4. Stop when size reaches target or pool exhausted
+3. Enforce at each addition:  
+   * No block relationship between new candidate and any existing member  
+   * Time window overlap sufficient with the group  
+   * Activity overlap meets threshold against the Brief  
+4. Stop when size reaches target or pool is exhausted.
 
 ### Pairwise Score
 
-Reuse the same scoring components but omit PROX if already covered by region.
+Reuse the same scoring components. Omit PROX if all candidates are already within the same region.
 
 ### Cohesion Threshold
 
 Require:
 
-* Average pairwise score ≥ `COHESION_MIN` (tunable)  
-* No member below `INDIVIDUAL_MIN` compatibility vs brief
+* Average pairwise score ≥ `COHESION_MIN` (tunable, default 0.55)  
+* No individual member below `INDIVIDUAL_MIN` compatibility vs. Brief (tunable, default 0.40)
 
-If constraints fail, backtrack once (remove worst fit) and try next candidate.
+If constraints fail: backtrack once (remove worst-fit member) and try the next candidate. If still failing: apply relaxation.
 
 ### Output
 
 * Selected participant IDs  
 * Group cohesion score  
+* Per-member brief\_score  
 * Explainability: top shared themes and shared activities
+
+---
+
+## Plan Circle And Compatibility Scoring
+
+Plan Circle coordination does not use the matching pipeline. There is no scored candidate selection for named-contact plans.
+
+At MVP, JOSH performs one passive awareness check when making a solo activity suggestion: it silently evaluates whether any of the user's Plan Circle contacts have activity patterns compatible with the suggested activity. This is not a score — it is a binary flag used to decide whether to mention the possibility of inviting a contact. No score is stored, no match record is created.
+
+If this awareness check expands in future versions, it will be defined as an explicit addition to this spec.
+
+---
 
 ## Explainability And User Messaging
 
-Explainability must support:
+Explainability must support admin debugging and safe user messaging. It must never expose private attributes, safety status, exact location, or internal scoring mechanics.
 
-* Admin debugging: “Why did this happen?”  
-* Safe user messaging: “You both love outdoor activities and prefer weekends.”
+### Explainability Schema
 
-Rules:
+`explainability` jsonb must include:
 
-* Never reveal private attributes.  
-* Do not mention safety status.  
-* Do not mention exact location.
+```json
+{
+  "top_reasons": [
+    { "key": "shared_activities", "label": "You both enjoy hiking and coffee walks", "contribution": 0.18 }
+  ],
+  "dealbreakers_checked": [
+    { "key": "time_window", "passed": true }
+  ],
+  "activity_overlap": {
+    "shared_activities": ["hiking", "coffee"],
+    "overlap_score": 0.72
+  },
+  "time_overlap": {
+    "windows_matched": ["weekend_morning", "weekday_evening"],
+    "overlap_score": 0.60
+  },
+  "notes_for_admin": "CDS confidence low on conversation_depth — both profiles early-stage"
+}
+```
 
 Recommended user-facing reason types:
 
 * Shared activities  
 * Shared time preferences  
 * Similar social energy  
-* Shared values style (if captured)
+* Similar planning style
+
+---
+
+## Data Structures
+
+### match\_runs Table
+
+* `id` (uuid)  
+* `mode` enum: `linkup`  
+* `region_id`  
+* `subject_user_id` (nullable for region batch runs)  
+* `run_key` (text, unique)  
+* `created_at`  
+* `completed_at`  
+* `status` enum: `started | completed | failed`  
+* `error_code` / `error_detail` (nullable)  
+* `params` jsonb (weights\_version, relaxation\_level, pool\_size\_at\_run)
+
+Uniqueness: `unique(run_key)`
+
+### match\_candidates Table
+
+* `match_run_id`  
+* `subject_user_id`  
+* `candidate_user_id`  
+* `passed_hard_filters` boolean  
+* `final_score` numeric  
+* `component_scores` jsonb  
+* `explainability` jsonb  
+* `created_at`
+
+Indexes:
+
+* `(subject_user_id, final_score desc)`  
+* `(match_run_id)`
+
+---
 
 ## Idempotency And Retry Safety
 
 ### Match Run Key
 
-Define a stable run key per invocation.
+Define a stable run key per invocation:
 
-Examples:
+* Region batch: `match:linkup:{region_id}:{YYYYMMDD}:{slot}`  
+* Per user: `match:linkup:{user_id}:{YYYYMMDD}:{slot}`
 
-* Region batch: `match:{mode}:{region_id}:{YYYYMMDD}:{slot}`  
-* Per user: `match:{mode}:{user_id}:{YYYYMMDD}:{slot}`
-
-Slot can be a time bucket (morning/afternoon/evening) or an explicit scheduler tick.
+Slot is a time bucket (morning / afternoon / evening) or an explicit scheduler tick.
 
 ### Deterministic Outputs
 
-* Given the same inputs and run\_key, the ranking must be stable.  
-* If bounded randomness is used, seed it deterministically.
+Given the same inputs and run\_key, ranking must be stable. If bounded randomness is used, seed it deterministically with `(subject_user_id, run_key)`.
 
 ### Concurrency Controls
 
-* Use the locking strategy from Doc 02 for preventing multiple active previews per user.  
-* For LinkUps, LinkUp orchestration will apply its own locks; matching should not over-allocate.
+Use the locking strategy from the Domain Model And State Machines spec to prevent multiple active LinkUp assignments per user in the same time window. The matching job must not over-allocate — LinkUp orchestration applies its own locks.
+
+---
 
 ## Edge Cases
 
-* Missing profile signals:  
-  * Use neutral defaults per component and reduce weight contribution.  
-  * If too incomplete, exclude candidate from pool until interview completeness threshold met.  
-* Sparse regions:  
-  * Apply relaxations up to configured maximum.  
-  * If still sparse, defer matching and notify user.  
-* High churn / repeated no-shows:  
-  * REL penalty should not be permanent; include decay (Doc 10).  
-* Conflicting user preferences:  
-  * Treat explicit dealbreakers as hard.  
-  * Treat vague preferences as soft.
+* Missing coordination dimension signals: exclude the dimension from CDS average and reduce weight contribution proportionally. Do not substitute neutral values. If more than 3 of 6 dimensions are missing, exclude the candidate from the pool.  
+* complete\_invited profiles: excluded by hard filter at query time. Never reached by scoring logic.  
+* Sparse regions: apply relaxations up to configured maximum. If still sparse, defer matching and notify the user via post-solo-suggestion message that LinkUps are coming.  
+* High churn / repeated no-shows: REL penalty decays over time per Learning And Adaptation System spec. No penalty is permanent.  
+* Conflicting user preferences: explicit dealbreakers are hard. Vague preferences are soft.
+
+---
+
+## Dependencies
+
+* Domain Model And State Machines spec: states, locks, and profile state enum.  
+* Database Schema spec: profiles, match\_runs, match\_candidates, activity\_patterns tables.  
+* Profile Interview And Signal Extraction Spec: coordination dimension and signal definitions, completeness thresholds, profile\_state enum values.  
+* Eligibility And Entitlements Enforcement spec: `evaluateEligibility()` — called before match run begins.  
+* Link Up Orchestration Contract: LinkUp Brief schema; consumes match output.  
+* Learning And Adaptation System spec: REL score computation and decay rules; behavioral outcome signals from post-activity checkins.
+
+---
 
 ## Testing Plan
 
 ### Unit Tests
 
-* Each component score computation (FFS, ACT, TIME, COMMS, PROX, REL).  
-* Normalization and clamping.  
-* Tie-breakers and deterministic hash.  
-* Relaxation progression.  
-* LinkUp group selection coherence rules.
+* CDS computation with full, partial, and missing dimension confidence values.  
+* ACT overlap with motive weights including cross-activity inference.  
+* TIME overlap with matching and non-matching availability buckets.  
+* NOTICE alignment across all bucket distance combinations.  
+* Tie-breaker determinism under identical scores.  
+* Relaxation progression respects complete\_invited hard filter even at Level 4\.  
+* `evaluateEligibility()` correctly blocks complete\_invited users from LinkUp initiation.
 
 ### Integration Tests
 
-* Candidate pool queries enforce hard filters correctly.  
+* Candidate pool query excludes complete\_invited profiles at the query level.  
 * Block and safety holds prevent selection.  
-* Match run idempotency prevents duplicates.  
-* Deterministic selection under retries.
+* Match run idempotency prevents duplicates under retry.  
+* Deterministic selection under retries.  
+* Relaxation level stored correctly in match\_runs.params.
 
 ### End-To-End Tests
 
 * Populate a synthetic region pool with known profiles.  
 * Run matching and verify:  
   * Top candidate matches expected based on controlled signals.  
+  * complete\_invited candidate never appears in pool.  
   * Relaxations apply only when pool thresholds not met.  
-  * LinkUp group selection yields a coherent set.  
+  * LinkUp group construction yields a cohesive set meeting cohesion threshold.  
   * Explainability includes expected reasons.
+
+---
 
 ## Production Readiness
 
 ### Observability
 
-Emit logs and metrics (Doc 05 conventions):
+Emit logs and metrics per Observability And Monitoring Stack conventions:
 
 * `match_run_started` / `match_run_completed` / `match_run_failed`  
-* `match_pool_size` gauge  
+* `match_pool_size` gauge (after hard filters)  
+* `match_pool_complete_invited_excluded` counter (audit signal — should always be \> 0 in active regions)  
 * `match_relaxation_level_applied` counter  
 * `match_candidate_scored` counter  
 * `match_candidate_selected` counter  
 * `linkup_group_constructed` counter
 
-All must include:
-
-* `correlation_id`  
-* `match_run_id`  
-* `region_id`  
-* `mode`
+All events must include: `correlation_id`, `match_run_id`, `region_id`, `weights_version`.
 
 ### Operational Guardrails
 
-* Cap max candidates scored per run to control costs.  
+* Cap max candidates scored per run to control LLM and compute costs.  
 * Enforce a maximum run duration; abort and retry later.  
-* Record `weights_version` and `relaxation_level` for audit.
+* Record `weights_version` and `relaxation_level` for every run.  
+* Alert if `match_pool_complete_invited_excluded` is zero for a region with active invited users — this may indicate the hard filter is not firing.
 
 ### Wiring Verification
 
 In staging:
 
-1. Create a test region with 30 synthetic users.  
-2. Populate profiles with known signals.  
-3. Trigger a match run (manual).  
-4. Verify:  
-   * Pool size and filters are correct.  
-   * Candidate scoring is stored.  
-   * Ranking is deterministic.  
-   * Preview creation consumes the selected candidate correctly.  
-   * LinkUp selection produces a valid group when in LinkUp mode.
+1. Create a test region with 30+ synthetic profiles including at least 2 complete\_invited profiles.  
+2. Trigger a match run.  
+3. Verify:  
+   * complete\_invited profiles are absent from match\_candidates.  
+   * Pool size and filter exclusions are logged.  
+   * Candidate scoring is stored with all component\_scores.  
+   * Ranking is deterministic across two identical runs.  
+   * Group construction produces a valid set meeting cohesion threshold.  
+   * Explainability object is populated with expected fields.
+
+---
 
 ## Implementation Checklist
 
-* Add `match_runs` and `match_candidates` tables (or adapt existing schema) with indexes.  
-* Implement candidate pool query with all hard filters.  
-* Implement scoring components and normalization.  
+* Confirm `match_runs` and `match_candidates` tables exist with correct indexes.  
+* Implement candidate pool query with complete\_invited hard filter at query level.  
+* Implement all hard filters with explicit test coverage for each.  
+* Implement CDS, ACT, TIME, NOTICE, PROX, REL, NOV scoring components.  
 * Implement explainability object generation.  
-* Implement ranking and deterministic tie-breakers.  
-* Implement relaxation strategy with persisted level.  
+* Implement ranking with deterministic tie-breakers.  
+* Implement relaxation strategy — verify complete\_invited filter is not included in relaxation path.  
 * Implement LinkUp group construction algorithm.  
-* Add observability events and dashboards.  
-* Add synthetic test harness for controlled profile pools.
+* Implement Plan Circle passive awareness check (separate from match pipeline).  
+* Add observability events and alerting including complete\_invited exclusion counter.  
+* Add synthetic test harness with controlled profile pools including complete\_invited users.
