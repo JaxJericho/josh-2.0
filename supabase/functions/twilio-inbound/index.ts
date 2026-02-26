@@ -2,6 +2,11 @@
 import { createServiceRoleDbClient } from "../../../packages/db/src/client-deno.mjs";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { systemHelpResponse } from "../../../packages/messaging/src/templates/system.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  runSafetyIntercept,
+  type SafetyInterceptRepository,
+} from "../../../packages/core/src/safety/intercept.ts";
 import {
   dispatchConversationRoute,
   routeConversationMessage,
@@ -15,6 +20,7 @@ const HELP_KEYWORDS = new Set(["HELP", "INFO"]);
 
 const STOP_REPLY = "You are opted out of JOSH SMS. Reply START to resubscribe.";
 const HELP_REPLY = systemHelpResponse();
+const SAFETY_INTERCEPT_BUILD = "11.1-KEYWORD-RATE-LIMIT-CRISIS";
 const BUILD_VERSION = "4.1B-DETERMINISTIC-ROUTING-01";
 
 const encoder = new TextEncoder();
@@ -195,6 +201,61 @@ Deno.serve(async (req) => {
         inbound_message_id: inboundMessageId,
       });
       return twimlResponse(HELP_REPLY);
+    }
+
+    phase = "safety_intercept";
+    const safetyDecision = await runSafetyIntercept({
+      repository: createSupabaseSafetyInterceptRepository(supabase),
+      inbound_message_id: inboundMessageId,
+      inbound_message_sid: messageSid,
+      user_id: user?.id ?? null,
+      from_e164: fromE164,
+      body_raw: bodyRaw,
+      config: readSafetyInterceptConfig(),
+    });
+
+    if (safetyDecision.intercepted) {
+      console.info("safety.inbound_intercepted", {
+        build_version: BUILD_VERSION,
+        safety_build: SAFETY_INTERCEPT_BUILD,
+        request_id: requestId,
+        inbound_message_id: inboundMessageId,
+        inbound_message_sid: messageSid,
+        user_id: user?.id ?? null,
+        action: safetyDecision.action,
+        severity: safetyDecision.severity,
+        keyword_version: safetyDecision.keyword_version,
+        matched_term: safetyDecision.matched_term,
+        strike_count: safetyDecision.strike_count,
+        safety_hold: safetyDecision.safety_hold,
+        replay: safetyDecision.replay,
+      });
+
+      if (safetyDecision.action === "rate_limit") {
+        console.info("safety.rate_limit_exceeded", {
+          build_version: BUILD_VERSION,
+          safety_build: SAFETY_INTERCEPT_BUILD,
+          request_id: requestId,
+          inbound_message_id: inboundMessageId,
+          inbound_message_sid: messageSid,
+          user_id: user?.id ?? null,
+        });
+      }
+
+      if (safetyDecision.action === "crisis") {
+        console.info("safety.crisis_intercepted", {
+          build_version: BUILD_VERSION,
+          safety_build: SAFETY_INTERCEPT_BUILD,
+          request_id: requestId,
+          inbound_message_id: inboundMessageId,
+          inbound_message_sid: messageSid,
+          user_id: user?.id ?? null,
+          keyword_version: safetyDecision.keyword_version,
+          matched_term: safetyDecision.matched_term,
+        });
+      }
+
+      return twimlResponse(safetyDecision.response_message ?? undefined);
     }
 
     phase = "route";
@@ -500,4 +561,179 @@ function requireEnv(name: string): string {
     throw new Error(`Missing required env var: ${name}`);
   }
   return value;
+}
+
+function readSafetyInterceptConfig(): {
+  rate_limit_max_messages: number;
+  rate_limit_window_seconds: number;
+  strike_escalation_threshold: number;
+} {
+  return {
+    rate_limit_max_messages: readPositiveIntEnv("SAFETY_RATE_LIMIT_MAX_MESSAGES", 10),
+    rate_limit_window_seconds: readPositiveIntEnv("SAFETY_RATE_LIMIT_WINDOW_SECONDS", 60),
+    strike_escalation_threshold: readPositiveIntEnv("SAFETY_STRIKE_ESCALATION_THRESHOLD", 3),
+  };
+}
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = Deno.env.get(name);
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer when set.`);
+  }
+
+  return parsed;
+}
+
+function createSupabaseSafetyInterceptRepository(
+  supabase: ReturnType<typeof createServiceRoleDbClient>,
+): SafetyInterceptRepository {
+  return {
+    acquireMessageLock: async ({ user_id, inbound_message_id, inbound_message_sid }) => {
+      const { data, error } = await supabase
+        .from("safety_events")
+        .insert(
+          {
+            user_id,
+            inbound_message_id,
+            inbound_message_sid,
+            severity: null,
+            keyword_version: null,
+            matched_term: null,
+            action_taken: "safety_intercept_lock",
+            metadata: {},
+          },
+          {
+            onConflict: "inbound_message_sid,action_taken",
+            ignoreDuplicates: true,
+          },
+        )
+        .select("id");
+
+      if (error) {
+        throw new Error(`Unable to acquire safety intercept lock: ${error.message ?? "unknown error"}`);
+      }
+
+      return Boolean(data && data.length > 0);
+    },
+
+    getUserSafetyState: async (userId: string) => {
+      const { data, error } = await supabase
+        .from("user_safety_state")
+        .select("strike_count,safety_hold")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (error) {
+        throw new Error(`Unable to fetch user safety state: ${error.message ?? "unknown error"}`);
+      }
+
+      if (!data) {
+        return null;
+      }
+
+      return {
+        strike_count: Number(data.strike_count ?? 0),
+        safety_hold: Boolean(data.safety_hold),
+      };
+    },
+
+    applyRateLimit: async ({ user_id, window_seconds, max_messages, now_iso }) => {
+      const { data, error } = await supabase.rpc("apply_user_safety_rate_limit", {
+        p_user_id: user_id,
+        p_window_seconds: window_seconds,
+        p_threshold: max_messages,
+        p_now: now_iso,
+      });
+
+      if (error) {
+        throw new Error(`Unable to apply safety rate limit: ${error.message ?? "unknown error"}`);
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) {
+        throw new Error("Safety rate limit RPC returned no row.");
+      }
+
+      return {
+        exceeded: Boolean(row.exceeded),
+        rate_limit_window_start: String(row.rate_limit_window_start ?? now_iso),
+        rate_limit_count: Number(row.rate_limit_count ?? 0),
+      };
+    },
+
+    applyStrikes: async ({ user_id, increment, escalation_threshold, now_iso }) => {
+      const { data, error } = await supabase.rpc("apply_user_safety_strikes", {
+        p_user_id: user_id,
+        p_increment: increment,
+        p_escalation_threshold: escalation_threshold,
+        p_now: now_iso,
+      });
+
+      if (error) {
+        throw new Error(`Unable to apply user safety strikes: ${error.message ?? "unknown error"}`);
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) {
+        throw new Error("Safety strike RPC returned no row.");
+      }
+
+      return {
+        strike_count: Number(row.strike_count ?? 0),
+        safety_hold: Boolean(row.safety_hold),
+        escalated: Boolean(row.escalated),
+      };
+    },
+
+    setSafetyHold: async ({ user_id, now_iso }) => {
+      const { data, error } = await supabase.rpc("set_user_safety_hold", {
+        p_user_id: user_id,
+        p_now: now_iso,
+      });
+
+      if (error) {
+        throw new Error(`Unable to set user safety hold: ${error.message ?? "unknown error"}`);
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) {
+        throw new Error("Set safety hold RPC returned no row.");
+      }
+
+      return {
+        strike_count: Number(row.strike_count ?? 0),
+        safety_hold: Boolean(row.safety_hold),
+      };
+    },
+
+    appendSafetyEvent: async (event) => {
+      const { error } = await supabase
+        .from("safety_events")
+        .insert(
+          {
+            user_id: event.user_id,
+            inbound_message_id: event.inbound_message_id,
+            inbound_message_sid: event.inbound_message_sid,
+            severity: event.severity,
+            keyword_version: event.keyword_version,
+            matched_term: event.matched_term,
+            action_taken: event.action_taken,
+            metadata: event.metadata ?? {},
+          },
+          {
+            onConflict: "inbound_message_sid,action_taken",
+            ignoreDuplicates: true,
+          },
+        );
+
+      if (error) {
+        throw new Error(`Unable to append safety event: ${error.message ?? "unknown error"}`);
+      }
+    },
+  };
 }
