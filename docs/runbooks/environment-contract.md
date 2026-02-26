@@ -84,6 +84,14 @@ If this file conflicts with any other env-var doc, this file wins.
 |---|---|---|---|---|---|
 | `SMS_BODY_ENCRYPTION_KEY` | Yes | `twilio-inbound` encrypt RPC and `twilio-outbound-runner` decrypt RPC | High-entropy passphrase; minimum 32+ chars recommended | Local: shell for local functions and scripts. Staging: Supabase staging function secret. Production: Supabase production function secret. | Secret. Rotate with key-version migration and dual-read plan. |
 
+### Safety
+
+| Name | Required | Used by | Format / constraints | Where set (local / staging / production) | Security / rotation notes |
+|---|---|---|---|---|---|
+| `SAFETY_RATE_LIMIT_MAX_MESSAGES` | No (optional override) | `supabase/functions/twilio-inbound/index.ts` inbound safety intercept per-user rate limit threshold | Positive integer; defaults to `10` when unset | Local: optional `.env.local` for tuning tests. Staging: optional Supabase function secret. Production: optional Supabase function secret. | Non-secret. Keep aligned with moderation policy changes. |
+| `SAFETY_RATE_LIMIT_WINDOW_SECONDS` | No (optional override) | `supabase/functions/twilio-inbound/index.ts` inbound safety intercept rolling window size | Positive integer seconds; defaults to `60` when unset | Local: optional `.env.local` for tuning tests. Staging: optional Supabase function secret. Production: optional Supabase function secret. | Non-secret. Tune conservatively to avoid false-positive throttling. |
+| `SAFETY_STRIKE_ESCALATION_THRESHOLD` | No (optional override) | `supabase/functions/twilio-inbound/index.ts` strike escalation threshold for setting `safety_hold` | Positive integer; defaults to `3` when unset | Local: optional `.env.local` for tuning tests. Staging: optional Supabase function secret. Production: optional Supabase function secret. | Non-secret. Must match documented safety policy thresholds. |
+
 ### Cron / Scheduler
 
 | Name | Required | Used by | Format / constraints | Where set (local / staging / production) | Security / rotation notes |
