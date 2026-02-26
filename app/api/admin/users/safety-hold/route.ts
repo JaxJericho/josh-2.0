@@ -150,7 +150,7 @@ async function parseRequestPayload(request: Request): Promise<{
 }> {
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
-    const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+    const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
     return {
       user_id: typeof body?.user_id === "string" ? body.user_id.trim() : "",
       safety_hold: typeof body?.safety_hold === "boolean" ? body.safety_hold : null,
