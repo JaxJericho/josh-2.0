@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectPostEventAttendanceResult,
   detectPostEventDoAgainDecision,
+  detectPostEventExchangeChoice,
   handlePostEventConversation,
 } from "../../packages/core/src/conversation/post-event-handler";
 
@@ -38,6 +39,12 @@ describe("post-event handler", () => {
     expect(detectPostEventDoAgainDecision("I am not sure")).toBe("unsure");
   });
 
+  it("parses contact exchange choice intent deterministically", () => {
+    expect(detectPostEventExchangeChoice("YES")).toBe("yes");
+    expect(detectPostEventExchangeChoice("No for now")).toBe("no");
+    expect(detectPostEventExchangeChoice("later")).toBe("later");
+  });
+
   it("prompts for do-again when complete-state message is ambiguous", () => {
     const result = handlePostEventConversation({
       user_id: "usr_123",
@@ -66,5 +73,21 @@ describe("post-event handler", () => {
         body_normalized: "YES",
         correlation_id: "msg_123",
       })).toThrow("Unsupported post-event state token");
+  });
+
+  it("parses contact exchange choice while in contact exchange state", () => {
+    const result = handlePostEventConversation({
+      user_id: "usr_123",
+      session_mode: "post_event",
+      session_state_token: "post_event:contact_exchange",
+      inbound_message_id: "msg_123",
+      inbound_message_sid: "SM123",
+      body_raw: "Later",
+      body_normalized: "LATER",
+      correlation_id: "msg_123",
+    });
+
+    expect(result.exchange_choice).toBe("later");
+    expect(result.reply_message).toContain("contact exchange");
   });
 });

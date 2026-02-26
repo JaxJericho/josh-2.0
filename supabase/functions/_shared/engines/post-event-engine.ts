@@ -1,16 +1,28 @@
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   handlePostEventConversation,
-  POST_EVENT_COMPLETE_ACK,
+  POST_EVENT_CONTACT_EXCHANGE_PROMPT,
   POST_EVENT_DO_AGAIN_PROMPT,
   POST_EVENT_REFLECTION_PROMPT,
   type PostEventAttendanceResult,
   type PostEventDoAgainDecision,
+  type PostEventExchangeChoice,
 } from "../../../../packages/core/src/conversation/post-event-handler.ts";
 import type {
   EngineDispatchInput,
   EngineDispatchResult,
 } from "../router/conversation-router.ts";
+
+const POST_EVENT_CONTACT_EXCHANGE_PENDING_ACK =
+  "Thanks. I recorded your choice. If others opt in too, JOSH will share contact details.";
+const POST_EVENT_CONTACT_EXCHANGE_DECLINED_ACK =
+  "Thanks. I recorded that you do not want to exchange contact details right now.";
+const POST_EVENT_CONTACT_EXCHANGE_LATER_ACK =
+  "Thanks. I recorded that for later. You can opt in when you're ready.";
+const POST_EVENT_CONTACT_EXCHANGE_MUTUAL_ACK =
+  "Mutual exchange confirmed. I just shared contact details with the people who also opted in.";
+const POST_EVENT_CONTACT_EXCHANGE_BLOCKED_ACK =
+  "I recorded your choice, but contact exchange is currently unavailable for safety review.";
 
 export async function runPostEventEngine(
   input: EngineDispatchInput,
@@ -88,9 +100,74 @@ export async function runPostEventEngine(
 
     return {
       engine: "post_event_engine",
-      reply_message: persisted.next_state_token === "post_event:finalized"
-        ? POST_EVENT_COMPLETE_ACK
+      reply_message: persisted.next_state_token === "post_event:contact_exchange"
+        ? POST_EVENT_CONTACT_EXCHANGE_PROMPT
         : conversation.reply_message,
+    };
+  }
+
+  if (conversation.session_state_token === "post_event:contact_exchange") {
+    if (!conversation.exchange_choice) {
+      return {
+        engine: "post_event_engine",
+        reply_message: POST_EVENT_CONTACT_EXCHANGE_PROMPT,
+      };
+    }
+
+    const persisted = await persistExchangeChoice({
+      supabase: input.supabase,
+      userId: input.decision.user_id,
+      inboundMessageId: input.payload.inbound_message_id,
+      inboundMessageSid: input.payload.inbound_message_sid,
+      exchangeChoice: conversation.exchange_choice,
+      correlationId: input.payload.inbound_message_id,
+      smsEncryptionKey: getOptionalDenoEnv("SMS_BODY_ENCRYPTION_KEY"),
+    });
+
+    if (persisted.reason === "state_not_contact_exchange") {
+      throw new Error(
+        "Invalid post-event contact exchange transition: expected post_event:contact_exchange state.",
+      );
+    }
+
+    const acceptedReason = persisted.reason === "captured" ||
+      persisted.reason === "captured_revealed" ||
+      persisted.reason === "mutual_already_revealed" ||
+      persisted.reason === "blocked_by_safety" ||
+      persisted.reason === "duplicate_replay";
+    if (!acceptedReason) {
+      throw new Error(
+        `Unable to persist post-event contact exchange choice: reason=${persisted.reason}`,
+      );
+    }
+
+    if (persisted.mutual_detected) {
+      console.info("post_event.mutual_detected", {
+        user_id: input.decision.user_id,
+        linkup_id: persisted.linkup_id,
+        correlation_id: persisted.correlation_id,
+      });
+    }
+
+    if (persisted.reveal_sent) {
+      console.info("post_event.reveal_sent", {
+        user_id: input.decision.user_id,
+        linkup_id: persisted.linkup_id,
+        correlation_id: persisted.correlation_id,
+      });
+    }
+
+    if (persisted.blocked_by_safety) {
+      console.info("safety.contact_exchange_suppressed", {
+        user_id: input.decision.user_id,
+        linkup_id: persisted.linkup_id,
+        correlation_id: persisted.correlation_id,
+      });
+    }
+
+    return {
+      engine: "post_event_engine",
+      reply_message: buildContactExchangeReply(persisted),
     };
   }
 
@@ -113,6 +190,20 @@ type DoAgainPersistResult = {
   attendance_result: string | null;
   do_again: PostEventDoAgainDecision;
   learning_signal_written: boolean;
+  duplicate: boolean;
+  reason: string;
+  correlation_id: string;
+  linkup_id: string | null;
+};
+
+type ContactExchangePersistResult = {
+  previous_state_token: string;
+  next_state_token: string;
+  exchange_choice: PostEventExchangeChoice;
+  exchange_opt_in: boolean | null;
+  mutual_detected: boolean;
+  reveal_sent: boolean;
+  blocked_by_safety: boolean;
   duplicate: boolean;
   reason: string;
   correlation_id: string;
@@ -296,4 +387,152 @@ async function persistDoAgainDecision(params: {
     correlation_id: correlationId,
     linkup_id: linkupId,
   };
+}
+
+async function persistExchangeChoice(params: {
+  supabase: EngineDispatchInput["supabase"];
+  userId: string;
+  inboundMessageId: string;
+  inboundMessageSid: string;
+  exchangeChoice: PostEventExchangeChoice;
+  correlationId: string;
+  smsEncryptionKey: string | null;
+}): Promise<ContactExchangePersistResult> {
+  if (typeof params.supabase.rpc !== "function") {
+    throw new Error(
+      "Post-event contact exchange capture requires Supabase RPC support.",
+    );
+  }
+
+  const { data, error } = await params.supabase.rpc("capture_post_event_exchange_choice", {
+    p_user_id: params.userId,
+    p_inbound_message_id: params.inboundMessageId,
+    p_inbound_message_sid: params.inboundMessageSid,
+    p_exchange_choice: params.exchangeChoice,
+    p_sms_encryption_key: params.smsEncryptionKey,
+    p_correlation_id: params.correlationId,
+  });
+
+  if (error) {
+    throw new Error(
+      `Unable to persist post-event contact exchange choice: ${error.message ?? "unknown error"}`,
+    );
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | {
+      previous_state_token?: unknown;
+      next_state_token?: unknown;
+      exchange_choice?: unknown;
+      exchange_opt_in?: unknown;
+      mutual_detected?: unknown;
+      reveal_sent?: unknown;
+      blocked_by_safety?: unknown;
+      duplicate?: unknown;
+      reason?: unknown;
+      correlation_id?: unknown;
+      linkup_id?: unknown;
+      mode?: unknown;
+    }
+    | null
+    | undefined;
+
+  if (!row) {
+    throw new Error("Post-event contact exchange capture returned no result row.");
+  }
+
+  const previousStateToken =
+    typeof row.previous_state_token === "string" ? row.previous_state_token : "";
+  const nextStateToken = typeof row.next_state_token === "string" ? row.next_state_token : "";
+  const exchangeChoiceRaw = typeof row.exchange_choice === "string" ? row.exchange_choice : "";
+  const reason = typeof row.reason === "string" ? row.reason : "unknown";
+  const duplicate = row.duplicate === true;
+  const correlationId = typeof row.correlation_id === "string"
+    ? row.correlation_id
+    : params.correlationId;
+  const linkupId = typeof row.linkup_id === "string" ? row.linkup_id : null;
+
+  if (!previousStateToken || !nextStateToken) {
+    throw new Error("Post-event contact exchange capture returned invalid state token values.");
+  }
+
+  if (
+    exchangeChoiceRaw !== "yes" &&
+    exchangeChoiceRaw !== "no" &&
+    exchangeChoiceRaw !== "later"
+  ) {
+    throw new Error("Post-event contact exchange capture returned invalid exchange_choice value.");
+  }
+
+  const exchangeOptIn = typeof row.exchange_opt_in === "boolean"
+    ? row.exchange_opt_in
+    : null;
+  const mutualDetected = row.mutual_detected === true;
+  const revealSent = row.reveal_sent === true;
+  const blockedBySafety = row.blocked_by_safety === true;
+
+  console.info("post_event.contact_choice_recorded", {
+    user_id: params.userId,
+    inbound_message_id: params.inboundMessageId,
+    inbound_message_sid: params.inboundMessageSid,
+    exchange_choice: exchangeChoiceRaw,
+    exchange_opt_in: exchangeOptIn,
+    previous_state_token: previousStateToken,
+    next_state_token: nextStateToken,
+    mode: typeof row.mode === "string" ? row.mode : null,
+    reason,
+    duplicate,
+    mutual_detected: mutualDetected,
+    reveal_sent: revealSent,
+    blocked_by_safety: blockedBySafety,
+    linkup_id: linkupId,
+    correlation_id: correlationId,
+  });
+
+  return {
+    previous_state_token: previousStateToken,
+    next_state_token: nextStateToken,
+    exchange_choice: exchangeChoiceRaw,
+    exchange_opt_in: exchangeOptIn,
+    mutual_detected: mutualDetected,
+    reveal_sent: revealSent,
+    blocked_by_safety: blockedBySafety,
+    duplicate,
+    reason,
+    correlation_id: correlationId,
+    linkup_id: linkupId,
+  };
+}
+
+function buildContactExchangeReply(result: ContactExchangePersistResult): string {
+  if (result.blocked_by_safety) {
+    return POST_EVENT_CONTACT_EXCHANGE_BLOCKED_ACK;
+  }
+
+  if (result.reveal_sent) {
+    return POST_EVENT_CONTACT_EXCHANGE_MUTUAL_ACK;
+  }
+
+  if (result.exchange_choice === "no") {
+    return POST_EVENT_CONTACT_EXCHANGE_DECLINED_ACK;
+  }
+
+  if (result.exchange_choice === "later") {
+    return POST_EVENT_CONTACT_EXCHANGE_LATER_ACK;
+  }
+
+  return POST_EVENT_CONTACT_EXCHANGE_PENDING_ACK;
+}
+
+function getOptionalDenoEnv(name: string): string | null {
+  const denoRuntime = (globalThis as unknown as {
+    Deno?: { env?: { get?: (key: string) => string | undefined } };
+  }).Deno;
+  const value = denoRuntime?.env?.get?.(name);
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }

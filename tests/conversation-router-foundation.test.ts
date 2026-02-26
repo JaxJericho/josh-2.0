@@ -73,6 +73,15 @@ describe("conversation router foundation", () => {
     expect(nextTransition).toBe("post_event:finalized");
   });
 
+  it("accepts post_event contact_exchange as a legal transition token", () => {
+    const state = validateConversationState("post_event", "post_event:contact_exchange");
+    const route = resolveRouteForState(state);
+    const nextTransition = resolveNextTransition(state, route);
+
+    expect(route).toBe("post_event_engine");
+    expect(nextTransition).toBe("post_event:contact_exchange");
+  });
+
   it("throws explicit error when state token is missing", () => {
     expect(() => validateConversationState("idle", ""))
       .toThrow(ConversationRouterError);
@@ -287,9 +296,49 @@ describe("conversation router foundation", () => {
     });
 
     expect(result.engine).toBe("post_event_engine");
-    expect(result.reply_message).toContain("Post-event follow-up is complete");
+    expect(result.reply_message).toContain("share your number");
     expect(supabase.debugState().postEventDoAgainWrites).toBe(1);
     expect(supabase.debugState().postEventLearningWrites).toBe(1);
+    expect(supabase.debugState().session?.state_token).toBe("post_event:contact_exchange");
+  });
+
+  it("dispatches post_event contact exchange capture through post-event engine", async () => {
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: {
+        id: "ses_123",
+        mode: "post_event",
+        state_token: "post_event:contact_exchange",
+        linkup_id: "lnk_123",
+      },
+      profile: { is_complete_mvp: true, state: "complete_mvp" },
+    });
+
+    const result = await dispatchConversationRoute({
+      supabase,
+      decision: {
+        user_id: "usr_123",
+        state: {
+          mode: "post_event",
+          state_token: "post_event:contact_exchange",
+        },
+        profile_is_complete_mvp: true,
+        route: "post_event_engine",
+        safety_override_applied: false,
+        next_transition: "post_event:contact_exchange",
+      },
+      payload: {
+        ...samplePayload(),
+        inbound_message_id: "00000000-0000-0000-0000-000000000123",
+        inbound_message_sid: "SM_EXCHANGE_ROUTER_1",
+        body_raw: "YES",
+        body_normalized: "YES",
+      },
+    });
+
+    expect(result.engine).toBe("post_event_engine");
+    expect(result.reply_message).toContain("recorded your choice");
+    expect(supabase.debugState().postEventExchangeWrites).toBe(1);
     expect(supabase.debugState().session?.state_token).toBe("post_event:finalized");
   });
 
@@ -403,10 +452,13 @@ function buildSupabaseMock(
     postEventAttendanceWrites: 0,
     postEventDoAgainWrites: 0,
     postEventLearningWrites: 0,
+    postEventExchangeWrites: 0,
     attendanceResult: "attended",
     doAgainDecision: null as "yes" | "no" | "unsure" | null,
+    exchangeChoice: null as "yes" | "no" | "later" | null,
     processedAttendanceSids: new Set<string>(),
     processedDoAgainSids: new Set<string>(),
+    processedExchangeSids: new Set<string>(),
   };
 
   return {
@@ -644,16 +696,119 @@ function buildSupabaseMock(
         state.processedDoAgainSids.add(inboundMessageSid);
         state.session = {
           ...state.session,
-          state_token: "post_event:finalized",
+          state_token: "post_event:contact_exchange",
         };
 
         return {
           data: [{
             previous_state_token: "post_event:complete",
-            next_state_token: "post_event:finalized",
+            next_state_token: "post_event:contact_exchange",
             attendance_result: state.attendanceResult,
             do_again: doAgainDecision,
             learning_signal_written: true,
+            duplicate: false,
+            reason: "captured",
+            correlation_id: correlationId,
+            linkup_id: state.session.linkup_id,
+            mode: state.session.mode,
+          }],
+          error: null,
+        };
+      }
+
+      if (fn === "capture_post_event_exchange_choice") {
+        const inboundMessageSid = typeof args?.p_inbound_message_sid === "string"
+          ? args.p_inbound_message_sid
+          : "";
+        const correlationId = typeof args?.p_correlation_id === "string"
+          ? args.p_correlation_id
+          : null;
+        const exchangeChoiceRaw = typeof args?.p_exchange_choice === "string"
+          ? args.p_exchange_choice
+          : "";
+        const exchangeChoice =
+          exchangeChoiceRaw === "yes" || exchangeChoiceRaw === "no" || exchangeChoiceRaw === "later"
+            ? exchangeChoiceRaw
+            : null;
+
+        if (!state.session) {
+          return {
+            data: null,
+            error: new Error("Session not found for post-event contact exchange capture."),
+          };
+        }
+        if (!inboundMessageSid) {
+          return {
+            data: null,
+            error: new Error("Missing inbound message sid."),
+          };
+        }
+        if (!exchangeChoice) {
+          return {
+            data: null,
+            error: new Error("Invalid contact exchange choice."),
+          };
+        }
+        if (state.processedExchangeSids.has(inboundMessageSid)) {
+          return {
+            data: [{
+              previous_state_token: state.session.state_token,
+              next_state_token: state.session.state_token,
+              exchange_choice: state.exchangeChoice ?? exchangeChoice,
+              exchange_opt_in: state.exchangeChoice === "yes"
+                ? true
+                : state.exchangeChoice === "no"
+                ? false
+                : null,
+              mutual_detected: false,
+              reveal_sent: false,
+              blocked_by_safety: false,
+              duplicate: true,
+              reason: "duplicate_replay",
+              correlation_id: correlationId,
+              linkup_id: state.session.linkup_id,
+              mode: state.session.mode,
+            }],
+            error: null,
+          };
+        }
+        if (state.session.state_token !== "post_event:contact_exchange") {
+          return {
+            data: [{
+              previous_state_token: state.session.state_token,
+              next_state_token: state.session.state_token,
+              exchange_choice: exchangeChoice,
+              exchange_opt_in: exchangeChoice === "yes" ? true : exchangeChoice === "no" ? false : null,
+              mutual_detected: false,
+              reveal_sent: false,
+              blocked_by_safety: false,
+              duplicate: false,
+              reason: "state_not_contact_exchange",
+              correlation_id: correlationId,
+              linkup_id: state.session.linkup_id,
+              mode: state.session.mode,
+            }],
+            error: null,
+          };
+        }
+
+        state.postEventExchangeWrites += 1;
+        state.exchangeChoice = exchangeChoice;
+        state.processedExchangeSids.add(inboundMessageSid);
+        state.session = {
+          ...state.session,
+          state_token: "post_event:finalized",
+        };
+
+        return {
+          data: [{
+            previous_state_token: "post_event:contact_exchange",
+            next_state_token: "post_event:finalized",
+            exchange_choice: exchangeChoice,
+            exchange_opt_in: exchangeChoice === "yes" ? true : exchangeChoice === "no" ? false : null,
+            mutual_detected: false,
+            reveal_sent: false,
+            blocked_by_safety: false,
             duplicate: false,
             reason: "captured",
             correlation_id: correlationId,

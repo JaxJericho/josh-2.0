@@ -39,7 +39,7 @@ describe("post-event engine", () => {
     expect(supabase.debugState().learningWrites).toBe(0);
   });
 
-  it("captures do-again and advances to finalized state", async () => {
+  it("captures do-again and advances to contact exchange state", async () => {
     const supabase = buildSupabaseMock({
       stateToken: "post_event:complete",
       attendanceResult: "attended",
@@ -53,49 +53,111 @@ describe("post-event engine", () => {
     }));
 
     expect(result.engine).toBe("post_event_engine");
-    expect(result.reply_message).toContain("Post-event follow-up is complete");
+    expect(result.reply_message).toContain("share your number");
     expect(supabase.debugState().doAgainWrites).toBe(1);
     expect(supabase.debugState().learningWrites).toBe(1);
-    expect(supabase.debugState().session.state_token).toBe("post_event:finalized");
+    expect(supabase.debugState().session.state_token).toBe("post_event:contact_exchange");
     expect(supabase.debugState().doAgainDecision).toBe("yes");
   });
 
-  it("does not duplicate do-again learning writes when same message is replayed", async () => {
+  it("records single opt-in without reveal when no mutual yes exists", async () => {
     const supabase = buildSupabaseMock({
-      stateToken: "post_event:complete",
-      attendanceResult: "attended",
+      stateToken: "post_event:contact_exchange",
+      counterpartOptIn: false,
+    });
+
+    const result = await runPostEventEngine(buildInput({
+      supabase,
+      stateToken: "post_event:contact_exchange",
+      inboundMessageSid: "SM_EXCHANGE_SINGLE_1",
+      bodyRaw: "YES",
+    }));
+
+    expect(result.engine).toBe("post_event_engine");
+    expect(result.reply_message).toContain("recorded your choice");
+    expect(supabase.debugState().exchangeWrites).toBe(1);
+    expect(supabase.debugState().revealWrites).toBe(0);
+    expect(supabase.debugState().session.state_token).toBe("post_event:finalized");
+  });
+
+  it("reveals exactly once when mutual opt-in is detected", async () => {
+    const supabase = buildSupabaseMock({
+      stateToken: "post_event:contact_exchange",
+      counterpartOptIn: true,
+    });
+
+    const result = await runPostEventEngine(buildInput({
+      supabase,
+      stateToken: "post_event:contact_exchange",
+      inboundMessageSid: "SM_EXCHANGE_MUTUAL_1",
+      bodyRaw: "YES",
+    }));
+
+    expect(result.engine).toBe("post_event_engine");
+    expect(result.reply_message).toContain("Mutual exchange confirmed");
+    expect(supabase.debugState().exchangeWrites).toBe(1);
+    expect(supabase.debugState().revealWrites).toBe(1);
+    expect(supabase.debugState().session.state_token).toBe("post_event:finalized");
+  });
+
+  it("does not duplicate reveal when same exchange submission is replayed", async () => {
+    const supabase = buildSupabaseMock({
+      stateToken: "post_event:contact_exchange",
+      counterpartOptIn: true,
     });
 
     await runPostEventEngine(buildInput({
       supabase,
-      stateToken: "post_event:complete",
-      inboundMessageSid: "SM_DO_AGAIN_DUP_1",
-      bodyRaw: "B",
+      stateToken: "post_event:contact_exchange",
+      inboundMessageSid: "SM_EXCHANGE_DUP_1",
+      bodyRaw: "YES",
     }));
+
+    supabase.setStateToken("post_event:contact_exchange");
+
     await runPostEventEngine(buildInput({
       supabase,
-      stateToken: "post_event:complete",
-      inboundMessageSid: "SM_DO_AGAIN_DUP_1",
-      bodyRaw: "B",
+      stateToken: "post_event:contact_exchange",
+      inboundMessageSid: "SM_EXCHANGE_DUP_1",
+      bodyRaw: "YES",
     }));
 
-    expect(supabase.debugState().doAgainWrites).toBe(1);
-    expect(supabase.debugState().learningWrites).toBe(1);
-    expect(supabase.debugState().processedDoAgainSids).toEqual(["SM_DO_AGAIN_DUP_1"]);
-    expect(supabase.debugState().session.state_token).toBe("post_event:finalized");
+    expect(supabase.debugState().exchangeWrites).toBe(1);
+    expect(supabase.debugState().revealWrites).toBe(1);
+    expect(supabase.debugState().processedExchangeSids).toEqual(["SM_EXCHANGE_DUP_1"]);
   });
 
-  it("rejects invalid do-again transition when persistence layer reports non-complete state", async () => {
+  it("blocks reveal when safety gate denies mutual exchange", async () => {
+    const supabase = buildSupabaseMock({
+      stateToken: "post_event:contact_exchange",
+      counterpartOptIn: true,
+      safetyBlocked: true,
+    });
+
+    const result = await runPostEventEngine(buildInput({
+      supabase,
+      stateToken: "post_event:contact_exchange",
+      inboundMessageSid: "SM_EXCHANGE_BLOCK_1",
+      bodyRaw: "YES",
+    }));
+
+    expect(result.engine).toBe("post_event_engine");
+    expect(result.reply_message).toContain("safety review");
+    expect(supabase.debugState().exchangeWrites).toBe(1);
+    expect(supabase.debugState().revealWrites).toBe(0);
+  });
+
+  it("rejects invalid contact exchange transition when persistence layer reports non-contact state", async () => {
     const supabase = buildSupabaseMock({
       stateToken: "post_event:reflection",
     });
 
     await expect(runPostEventEngine(buildInput({
       supabase,
-      stateToken: "post_event:complete",
-      inboundMessageSid: "SM_DO_AGAIN_BAD_STATE",
-      bodyRaw: "A",
-    }))).rejects.toThrow("Invalid post-event do-again transition");
+      stateToken: "post_event:contact_exchange",
+      inboundMessageSid: "SM_EXCHANGE_BAD_STATE",
+      bodyRaw: "YES",
+    }))).rejects.toThrow("Invalid post-event contact exchange transition");
   });
 
   it("rejects unsupported post-event state transitions", async () => {
@@ -141,7 +203,8 @@ function buildInput(params: {
 function buildSupabaseMock(params?: {
   stateToken?: string;
   attendanceResult?: string;
-  learningAlreadyWritten?: boolean;
+  counterpartOptIn?: boolean;
+  safetyBlocked?: boolean;
 }) {
   const state = {
     session: {
@@ -152,12 +215,18 @@ function buildSupabaseMock(params?: {
     },
     attendanceResult: params?.attendanceResult ?? "attended",
     doAgainDecision: null as "yes" | "no" | "unsure" | null,
+    exchangeChoice: null as "yes" | "no" | "later" | null,
+    counterpartOptIn: params?.counterpartOptIn ?? false,
+    safetyBlocked: params?.safetyBlocked ?? false,
+    revealAlreadySent: false,
     attendanceWrites: 0,
     doAgainWrites: 0,
     learningWrites: 0,
-    learningAlreadyWritten: params?.learningAlreadyWritten ?? false,
+    exchangeWrites: 0,
+    revealWrites: 0,
     processedAttendanceSids: new Set<string>(),
     processedDoAgainSids: new Set<string>(),
+    processedExchangeSids: new Set<string>(),
   };
 
   return {
@@ -170,6 +239,10 @@ function buildSupabaseMock(params?: {
         return handleDoAgainRpc(state, args);
       }
 
+      if (fn === "capture_post_event_exchange_choice") {
+        return handleExchangeChoiceRpc(state, args);
+      }
+
       return {
         data: null,
         error: new Error(`Unexpected rpc function '${fn}'.`),
@@ -177,14 +250,14 @@ function buildSupabaseMock(params?: {
     },
     debugState() {
       return {
-        session: { ...state.session },
-        attendanceWrites: state.attendanceWrites,
-        doAgainWrites: state.doAgainWrites,
-        learningWrites: state.learningWrites,
-        doAgainDecision: state.doAgainDecision,
+        ...state,
         processedAttendanceSids: Array.from(state.processedAttendanceSids),
         processedDoAgainSids: Array.from(state.processedDoAgainSids),
+        processedExchangeSids: Array.from(state.processedExchangeSids),
       };
+    },
+    setStateToken(nextStateToken: string) {
+      state.session.state_token = nextStateToken;
     },
   };
 }
@@ -274,7 +347,6 @@ function handleDoAgainRpc(
     doAgainDecision: "yes" | "no" | "unsure" | null;
     doAgainWrites: number;
     learningWrites: number;
-    learningAlreadyWritten: boolean;
     processedDoAgainSids: Set<string>;
   },
   args?: Record<string, unknown>,
@@ -323,27 +395,6 @@ function handleDoAgainRpc(
     };
   }
 
-  if (state.learningAlreadyWritten) {
-    state.processedDoAgainSids.add(inboundMessageSid);
-    state.session.state_token = "post_event:finalized";
-
-    return {
-      data: [{
-        previous_state_token: "post_event:complete",
-        next_state_token: "post_event:finalized",
-        attendance_result: state.attendanceResult,
-        do_again: state.doAgainDecision ?? doAgain,
-        learning_signal_written: false,
-        duplicate: false,
-        reason: "already_recorded",
-        correlation_id: correlationId,
-        linkup_id: state.session.linkup_id,
-        mode: state.session.mode,
-      }],
-      error: null,
-    };
-  }
-
   if (state.session.state_token !== "post_event:complete") {
     return {
       data: [{
@@ -365,19 +416,139 @@ function handleDoAgainRpc(
   state.processedDoAgainSids.add(inboundMessageSid);
   state.doAgainWrites += 1;
   state.learningWrites += 1;
-  state.learningAlreadyWritten = true;
   state.doAgainDecision = doAgain;
-  state.session.state_token = "post_event:finalized";
+  state.session.state_token = "post_event:contact_exchange";
 
   return {
     data: [{
       previous_state_token: "post_event:complete",
-      next_state_token: "post_event:finalized",
+      next_state_token: "post_event:contact_exchange",
       attendance_result: state.attendanceResult,
       do_again: doAgain,
       learning_signal_written: true,
       duplicate: false,
       reason: "captured",
+      correlation_id: correlationId,
+      linkup_id: state.session.linkup_id,
+      mode: state.session.mode,
+    }],
+    error: null,
+  };
+}
+
+function handleExchangeChoiceRpc(
+  state: {
+    session: { id: string; mode: string; state_token: string; linkup_id: string };
+    exchangeChoice: "yes" | "no" | "later" | null;
+    counterpartOptIn: boolean;
+    safetyBlocked: boolean;
+    revealAlreadySent: boolean;
+    exchangeWrites: number;
+    revealWrites: number;
+    processedExchangeSids: Set<string>;
+  },
+  args?: Record<string, unknown>,
+) {
+  const inboundMessageSid = typeof args?.p_inbound_message_sid === "string"
+    ? args.p_inbound_message_sid
+    : "";
+  const exchangeChoiceRaw = typeof args?.p_exchange_choice === "string"
+    ? args.p_exchange_choice
+    : "";
+  const correlationId = typeof args?.p_correlation_id === "string"
+    ? args.p_correlation_id
+    : "00000000-0000-0000-0000-000000000123";
+
+  const exchangeChoice = exchangeChoiceRaw === "yes" || exchangeChoiceRaw === "no" || exchangeChoiceRaw === "later"
+    ? exchangeChoiceRaw
+    : null;
+
+  if (!inboundMessageSid) {
+    return {
+      data: null,
+      error: new Error("Missing inbound message sid."),
+    };
+  }
+
+  if (!exchangeChoice) {
+    return {
+      data: null,
+      error: new Error("Invalid exchange choice."),
+    };
+  }
+
+  if (state.processedExchangeSids.has(inboundMessageSid)) {
+    return {
+      data: [{
+        previous_state_token: state.session.state_token,
+        next_state_token: state.session.state_token,
+        exchange_choice: state.exchangeChoice ?? exchangeChoice,
+        exchange_opt_in: state.exchangeChoice === "yes" ? true : state.exchangeChoice === "no" ? false : null,
+        mutual_detected: state.counterpartOptIn && (state.exchangeChoice ?? exchangeChoice) === "yes",
+        reveal_sent: false,
+        blocked_by_safety: false,
+        duplicate: true,
+        reason: "duplicate_replay",
+        correlation_id: correlationId,
+        linkup_id: state.session.linkup_id,
+        mode: state.session.mode,
+      }],
+      error: null,
+    };
+  }
+
+  if (state.session.state_token !== "post_event:contact_exchange") {
+    return {
+      data: [{
+        previous_state_token: state.session.state_token,
+        next_state_token: state.session.state_token,
+        exchange_choice: exchangeChoice,
+        exchange_opt_in: exchangeChoice === "yes" ? true : exchangeChoice === "no" ? false : null,
+        mutual_detected: false,
+        reveal_sent: false,
+        blocked_by_safety: false,
+        duplicate: false,
+        reason: "state_not_contact_exchange",
+        correlation_id: correlationId,
+        linkup_id: state.session.linkup_id,
+        mode: state.session.mode,
+      }],
+      error: null,
+    };
+  }
+
+  state.processedExchangeSids.add(inboundMessageSid);
+  state.exchangeWrites += 1;
+  state.exchangeChoice = exchangeChoice;
+
+  const mutualDetected = exchangeChoice === "yes" && state.counterpartOptIn;
+  const blockedBySafety = mutualDetected && state.safetyBlocked;
+  const revealSent = mutualDetected && !blockedBySafety && !state.revealAlreadySent;
+
+  if (revealSent) {
+    state.revealWrites += 1;
+    state.revealAlreadySent = true;
+  }
+
+  state.session.state_token = "post_event:finalized";
+
+  return {
+    data: [{
+      previous_state_token: "post_event:contact_exchange",
+      next_state_token: "post_event:finalized",
+      exchange_choice: exchangeChoice,
+      exchange_opt_in: exchangeChoice === "yes" ? true : exchangeChoice === "no" ? false : null,
+      mutual_detected: mutualDetected,
+      reveal_sent: revealSent,
+      blocked_by_safety: blockedBySafety,
+      duplicate: false,
+      reason: blockedBySafety
+        ? "blocked_by_safety"
+        : revealSent
+        ? "captured_revealed"
+        : mutualDetected
+        ? "mutual_already_revealed"
+        : "captured",
       correlation_id: correlationId,
       linkup_id: state.session.linkup_id,
       mode: state.session.mode,

@@ -902,6 +902,8 @@ export type Database = {
           attendance_response: string | null
           created_at: string
           do_again: boolean | null
+          exchange_opt_in: boolean | null
+          exchange_revealed_at: string | null
           feedback: string | null
           id: string
           linkup_id: string
@@ -913,6 +915,8 @@ export type Database = {
           attendance_response?: string | null
           created_at?: string
           do_again?: boolean | null
+          exchange_opt_in?: boolean | null
+          exchange_revealed_at?: string | null
           feedback?: string | null
           id?: string
           linkup_id: string
@@ -924,6 +928,8 @@ export type Database = {
           attendance_response?: string | null
           created_at?: string
           do_again?: boolean | null
+          exchange_opt_in?: boolean | null
+          exchange_revealed_at?: string | null
           feedback?: string | null
           id?: string
           linkup_id?: string
@@ -2472,6 +2478,31 @@ export type Database = {
           next_state_token: string
           previous_state_token: string
           reason: string
+          session_id: string
+        }[]
+      }
+      capture_post_event_exchange_choice: {
+        Args: {
+          p_correlation_id?: string
+          p_exchange_choice: string
+          p_inbound_message_id: string
+          p_inbound_message_sid: string
+          p_sms_encryption_key?: string
+          p_user_id: string
+        }
+        Returns: {
+          blocked_by_safety: boolean
+          correlation_id: string
+          duplicate: boolean
+          exchange_choice: string
+          exchange_opt_in: boolean | null
+          linkup_id: string
+          mode: Database["public"]["Enums"]["conversation_mode"]
+          mutual_detected: boolean
+          next_state_token: string
+          previous_state_token: string
+          reason: string
+          reveal_sent: boolean
           session_id: string
         }[]
       }
