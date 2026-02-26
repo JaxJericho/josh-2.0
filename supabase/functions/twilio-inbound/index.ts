@@ -7,6 +7,12 @@ import {
   runSafetyIntercept,
   type SafetyInterceptRepository,
 } from "../../../packages/core/src/safety/intercept.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  runBlockAndReportIntercept,
+  type BlockReportInterceptRepository,
+  type ModerationCounterpart,
+} from "../../../packages/core/src/safety/block-report.ts";
 import {
   dispatchConversationRoute,
   routeConversationMessage,
@@ -21,6 +27,7 @@ const HELP_KEYWORDS = new Set(["HELP", "INFO"]);
 const STOP_REPLY = "You are opted out of JOSH SMS. Reply START to resubscribe.";
 const HELP_REPLY = systemHelpResponse();
 const SAFETY_INTERCEPT_BUILD = "11.1-KEYWORD-RATE-LIMIT-CRISIS";
+const BLOCK_REPORT_BUILD = "11.2-BLOCK-AND-REPORT";
 const BUILD_VERSION = "4.1B-DETERMINISTIC-ROUTING-01";
 
 const encoder = new TextEncoder();
@@ -256,6 +263,62 @@ Deno.serve(async (req) => {
       }
 
       return twimlResponse(safetyDecision.response_message ?? undefined);
+    }
+
+    phase = "block_report_intercept";
+    const blockReportDecision = await runBlockAndReportIntercept({
+      repository: createSupabaseBlockReportInterceptRepository(supabase),
+      user_id: user?.id ?? null,
+      inbound_message_id: inboundMessageId,
+      inbound_message_sid: messageSid,
+      body_raw: bodyRaw,
+    });
+
+    if (blockReportDecision.intercepted) {
+      console.info("safety.block_report_intercepted", {
+        build_version: BUILD_VERSION,
+        block_report_build: BLOCK_REPORT_BUILD,
+        request_id: requestId,
+        inbound_message_id: inboundMessageId,
+        inbound_message_sid: messageSid,
+        user_id: user?.id ?? null,
+        action: blockReportDecision.action,
+        target_user_id: blockReportDecision.target_user_id,
+        linkup_id: blockReportDecision.linkup_id,
+        reason_category: blockReportDecision.reason_category,
+        incident_id: blockReportDecision.incident_id,
+      });
+
+      if (blockReportDecision.action === "block_created") {
+        console.info("safety.block_created", {
+          request_id: requestId,
+          correlation_id: inboundMessageId,
+          blocker_user_id: user?.id ?? null,
+          blocked_user_id: blockReportDecision.target_user_id,
+        });
+      }
+
+      if (blockReportDecision.action === "report_created") {
+        console.info("safety.report_created", {
+          request_id: requestId,
+          correlation_id: inboundMessageId,
+          reporter_user_id: user?.id ?? null,
+          reported_user_id: blockReportDecision.target_user_id,
+          reason_category: blockReportDecision.reason_category,
+          incident_id: blockReportDecision.incident_id,
+        });
+      }
+
+      if (blockReportDecision.action === "blocked_message_attempt") {
+        console.info("safety.blocked_message_attempt", {
+          request_id: requestId,
+          correlation_id: inboundMessageId,
+          user_id: user?.id ?? null,
+          linkup_id: blockReportDecision.linkup_id,
+        });
+      }
+
+      return twimlResponse(blockReportDecision.response_message ?? undefined);
     }
 
     phase = "route";
@@ -733,6 +796,273 @@ function createSupabaseSafetyInterceptRepository(
 
       if (error) {
         throw new Error(`Unable to append safety event: ${error.message ?? "unknown error"}`);
+      }
+    },
+  };
+}
+
+function createSupabaseBlockReportInterceptRepository(
+  supabase: ReturnType<typeof createServiceRoleDbClient>,
+): BlockReportInterceptRepository {
+  return {
+    resolveConversationContext: async (userId: string) => {
+      const { data: session, error: sessionError } = await supabase
+        .from("conversation_sessions")
+        .select("linkup_id")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (sessionError) {
+        throw new Error(`Unable to load conversation context: ${sessionError.message ?? "unknown error"}`);
+      }
+
+      let linkupId = session?.linkup_id ?? null;
+      if (!linkupId) {
+        const { data: recentMembership, error: recentMembershipError } = await supabase
+          .from("linkup_members")
+          .select("linkup_id")
+          .eq("user_id", userId)
+          .in("status", ["confirmed", "attended"])
+          .order("joined_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (recentMembershipError) {
+          throw new Error(`Unable to load recent linkup context: ${recentMembershipError.message ?? "unknown error"}`);
+        }
+
+        linkupId = recentMembership?.linkup_id ?? null;
+      }
+
+      if (!linkupId) {
+        return {
+          linkup_id: null,
+          counterparts: [],
+        };
+      }
+
+      const { data: counterpartRows, error: counterpartError } = await supabase
+        .from("linkup_members")
+        .select("user_id,users!inner(first_name,last_name)")
+        .eq("linkup_id", linkupId)
+        .neq("user_id", userId)
+        .in("status", ["confirmed", "attended"]);
+
+      if (counterpartError) {
+        throw new Error(`Unable to load linkup counterparts: ${counterpartError.message ?? "unknown error"}`);
+      }
+
+      const counterparts: ModerationCounterpart[] = (counterpartRows ?? [])
+        .map((row) => {
+          const usersRow = Array.isArray(row.users) ? row.users[0] : row.users;
+          return {
+            user_id: String(row.user_id),
+            first_name: typeof usersRow?.first_name === "string" ? usersRow.first_name : null,
+            last_name: typeof usersRow?.last_name === "string" ? usersRow.last_name : null,
+          };
+        })
+        .filter((row) => Boolean(row.user_id));
+
+      return {
+        linkup_id: String(linkupId),
+        counterparts,
+      };
+    },
+
+    hasBlockingRelationship: async ({ user_id, counterpart_user_ids }) => {
+      if (!counterpart_user_ids.length) {
+        return false;
+      }
+
+      const { data: outboundBlocks, error: outboundError } = await supabase
+        .from("user_blocks")
+        .select("id")
+        .eq("blocker_user_id", user_id)
+        .in("blocked_user_id", counterpart_user_ids)
+        .limit(1);
+
+      if (outboundError) {
+        throw new Error(`Unable to check outbound user blocks: ${outboundError.message ?? "unknown error"}`);
+      }
+
+      if (outboundBlocks && outboundBlocks.length > 0) {
+        return true;
+      }
+
+      const { data: inboundBlocks, error: inboundError } = await supabase
+        .from("user_blocks")
+        .select("id")
+        .in("blocker_user_id", counterpart_user_ids)
+        .eq("blocked_user_id", user_id)
+        .limit(1);
+
+      if (inboundError) {
+        throw new Error(`Unable to check inbound user blocks: ${inboundError.message ?? "unknown error"}`);
+      }
+
+      return Boolean(inboundBlocks && inboundBlocks.length > 0);
+    },
+
+    upsertUserBlock: async ({ blocker_user_id, blocked_user_id, now_iso }) => {
+      const { data, error } = await supabase.rpc("create_user_block", {
+        p_blocker_user_id: blocker_user_id,
+        p_blocked_user_id: blocked_user_id,
+        p_created_at: now_iso,
+      });
+
+      if (error) {
+        throw new Error(`Unable to create user block: ${error.message ?? "unknown error"}`);
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) {
+        throw new Error("create_user_block RPC returned no row.");
+      }
+
+      return {
+        created: Boolean(row.created),
+      };
+    },
+
+    getPendingReportPrompt: async (userId: string) => {
+      const { data: promptRows, error: promptError } = await supabase
+        .from("safety_events")
+        .select("metadata,created_at")
+        .eq("user_id", userId)
+        .eq("action_taken", "report_reason_prompted")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (promptError) {
+        throw new Error(`Unable to load pending report prompt: ${promptError.message ?? "unknown error"}`);
+      }
+
+      const prompt = promptRows?.[0];
+      const metadata = (prompt?.metadata ?? {}) as Record<string, unknown>;
+      const promptToken = typeof metadata.prompt_token === "string"
+        ? metadata.prompt_token
+        : null;
+      const reportedUserId = typeof metadata.reported_user_id === "string"
+        ? metadata.reported_user_id
+        : null;
+      const linkupId = typeof metadata.linkup_id === "string"
+        ? metadata.linkup_id
+        : null;
+
+      if (!promptToken || !reportedUserId) {
+        return null;
+      }
+
+      const { data: existingIncident, error: incidentError } = await supabase
+        .from("moderation_incidents")
+        .select("id")
+        .eq("prompt_token", promptToken)
+        .maybeSingle();
+
+      if (incidentError) {
+        throw new Error(`Unable to check existing moderation incident: ${incidentError.message ?? "unknown error"}`);
+      }
+
+      if (existingIncident?.id) {
+        return null;
+      }
+
+      const { data: completedRows, error: completedError } = await supabase
+        .from("safety_events")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("action_taken", "safety.report_created")
+        .contains("metadata", { prompt_token: promptToken })
+        .limit(1);
+
+      if (completedError) {
+        throw new Error(`Unable to check report completion state: ${completedError.message ?? "unknown error"}`);
+      }
+
+      if (completedRows && completedRows.length > 0) {
+        return null;
+      }
+
+      const { data: clarifierRows, error: clarifierError } = await supabase
+        .from("safety_events")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("action_taken", "report_reason_clarifier_prompted")
+        .contains("metadata", { prompt_token: promptToken })
+        .limit(1);
+
+      if (clarifierError) {
+        throw new Error(`Unable to check report reason clarifier state: ${clarifierError.message ?? "unknown error"}`);
+      }
+
+      return {
+        prompt_token: promptToken,
+        reported_user_id: reportedUserId,
+        linkup_id: linkupId,
+        clarifier_sent: Boolean(clarifierRows && clarifierRows.length > 0),
+      };
+    },
+
+    createModerationIncident: async ({
+      reporter_user_id,
+      reported_user_id,
+      linkup_id,
+      reason_category,
+      free_text,
+      prompt_token,
+      idempotency_key,
+      now_iso,
+    }) => {
+      const { data, error } = await supabase.rpc("create_moderation_incident", {
+        p_reporter_user_id: reporter_user_id,
+        p_reported_user_id: reported_user_id,
+        p_linkup_id: linkup_id,
+        p_reason_category: reason_category,
+        p_free_text: free_text,
+        p_status: "open",
+        p_prompt_token: prompt_token,
+        p_idempotency_key: idempotency_key,
+        p_metadata: {},
+        p_created_at: now_iso,
+      });
+
+      if (error) {
+        throw new Error(`Unable to create moderation incident: ${error.message ?? "unknown error"}`);
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row?.incident_id) {
+        throw new Error("create_moderation_incident RPC returned no incident row.");
+      }
+
+      return {
+        incident_id: String(row.incident_id),
+        created: Boolean(row.created),
+      };
+    },
+
+    appendSafetyEvent: async ({
+      user_id,
+      inbound_message_id,
+      inbound_message_sid,
+      action_taken,
+      metadata,
+      now_iso,
+    }) => {
+      const { error } = await supabase.rpc("append_safety_event", {
+        p_user_id: user_id,
+        p_inbound_message_id: inbound_message_id,
+        p_inbound_message_sid: inbound_message_sid,
+        p_severity: null,
+        p_keyword_version: null,
+        p_matched_term: null,
+        p_action_taken: action_taken,
+        p_metadata: metadata,
+        p_created_at: now_iso,
+      });
+
+      if (error) {
+        throw new Error(`Unable to append safety event for block/report: ${error.message ?? "unknown error"}`);
       }
     },
   };
