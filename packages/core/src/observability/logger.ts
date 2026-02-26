@@ -4,6 +4,8 @@ import {
   type EventCatalogEntry,
 } from "./event-catalog.ts";
 import { emitMetricBestEffort } from "./metrics.ts";
+import { redactPII } from "./redaction.ts";
+import { captureSentryFromStructuredLog } from "./sentry.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error" | "fatal";
 

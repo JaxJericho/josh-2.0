@@ -20,6 +20,10 @@ import {
   nowMetricMs,
 } from "../../core/src/observability/metrics.ts";
 import { estimateLlmCostUsd } from "../../core/src/observability/llm-pricing.ts";
+import {
+  captureSentryException,
+  setSentryContext,
+} from "../../core/src/observability/sentry.ts";
 
 export type InterviewExtractInput = {
   userId: string;

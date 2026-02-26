@@ -20,6 +20,8 @@ import {
   emitRpcFailureMetric,
   nowMetricMs,
 } from "../../../../packages/core/src/observability/metrics.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { startSentrySpan } from "../../../../packages/core/src/observability/sentry.ts";
 
 const POST_EVENT_CONTACT_EXCHANGE_PENDING_ACK =
   "Thanks. I recorded your choice. If others opt in too, JOSH will share contact details.";
