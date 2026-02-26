@@ -37,35 +37,65 @@ export type Database = {
       admin_users: {
         Row: {
           created_at: string
-          email: string
+          email: string | null
           id: string
-          role: string
+          role: Database["public"]["Enums"]["admin_role"]
           updated_at: string
-          user_id: string | null
+          user_id: string
         }
         Insert: {
           created_at?: string
-          email: string
+          email?: string | null
           id?: string
-          role: string
+          role: Database["public"]["Enums"]["admin_role"]
           updated_at?: string
-          user_id?: string | null
+          user_id: string
         }
         Update: {
           created_at?: string
-          email?: string
+          email?: string | null
           id?: string
-          role?: string
+          role?: Database["public"]["Enums"]["admin_role"]
           updated_at?: string
-          user_id?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      admin_audit_log: {
+        Row: {
+          action: string
+          admin_user_id: string
+          created_at: string
+          id: string
+          metadata_json: Json
+          target_id: string | null
+          target_type: string
+        }
+        Insert: {
+          action: string
+          admin_user_id: string
+          created_at?: string
+          id?: string
+          metadata_json?: Json
+          target_id?: string | null
+          target_type: string
+        }
+        Update: {
+          action?: string
+          admin_user_id?: string
+          created_at?: string
+          id?: string
+          metadata_json?: Json
+          target_id?: string | null
+          target_type?: string
         }
         Relationships: [
           {
-            foreignKeyName: "admin_users_user_id_fkey"
-            columns: ["user_id"]
+            foreignKeyName: "admin_audit_log_admin_user_id_fkey"
+            columns: ["admin_user_id"]
             isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
+            referencedRelation: "admin_users"
+            referencedColumns: ["user_id"]
           },
         ]
       }
@@ -2565,6 +2595,8 @@ export type Database = {
         Args: { key: string; plaintext: string }
         Returns: string
       }
+      current_admin_role: { Args: never; Returns: Database["public"]["Enums"]["admin_role"] }
+      has_admin_role: { Args: { required_roles: Database["public"]["Enums"]["admin_role"][] }; Returns: boolean }
       is_admin_user: { Args: never; Returns: boolean }
       is_linkup_visible_to_current_user: {
         Args: { linkup_uuid: string }
@@ -2573,6 +2605,7 @@ export type Database = {
       owns_profile: { Args: { profile_uuid: string }; Returns: boolean }
     }
     Enums: {
+      admin_role: "super_admin" | "moderator" | "ops"
       conversation_mode:
         | "idle"
         | "interviewing"
@@ -2782,6 +2815,7 @@ export const Constants = {
   },
   public: {
     Enums: {
+      admin_role: ["super_admin", "moderator", "ops"],
       conversation_mode: [
         "idle",
         "interviewing",
