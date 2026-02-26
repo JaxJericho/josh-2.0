@@ -3,6 +3,7 @@ import {
   type CanonicalEventName,
   type EventCatalogEntry,
 } from "./event-catalog.ts";
+import { emitMetricBestEffort } from "./metrics.ts";
 import { redactPII } from "./redaction.ts";
 import { captureSentryFromStructuredLog } from "./sentry.ts";
 
@@ -78,6 +79,7 @@ export function logEvent(input: StructuredLogEventInput, explicitEnv?: string): 
     payload: redactedPayload,
   };
 
+  emitDerivedMetricsFromLog(event);
   console.info(JSON.stringify(event));
   captureSentryFromStructuredLog(event);
   return event;
@@ -187,4 +189,195 @@ function readString(payload: Record<string, unknown>, key: string): string | nul
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function emitDerivedMetricsFromLog(event: StructuredLogEvent): void {
+  const payload = event.payload;
+  switch (event.event) {
+    case "system.unhandled_error":
+      emitMetricBestEffort({
+        metric: "system.error.count",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "structured_logger",
+          phase: safeTagValue(payload.phase) ?? "unknown",
+          error_name: safeTagValue(payload.error_name) ?? "Error",
+        },
+      });
+      return;
+
+    case "system.rpc_failure":
+      emitMetricBestEffort({
+        metric: "system.rpc.failure.count",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "structured_logger",
+          rpc_name: safeTagValue(payload.rpc_name) ?? "unknown",
+        },
+      });
+      return;
+
+    case "conversation.mode_transition": {
+      emitMetricBestEffort({
+        metric: "conversation.mode.transition",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "conversation_router",
+          previous_mode: safeTagValue(payload.previous_mode) ?? "unknown",
+          next_mode: safeTagValue(payload.next_mode) ?? "unknown",
+          reason: safeTagValue(payload.reason) ?? "unknown",
+        },
+      });
+
+      const linkupState = safeTagValue(payload.linkup_state);
+      const nextMode = safeTagValue(payload.next_mode);
+      const source = "conversation_mode_transition";
+
+      if (linkupState === "completed" || nextMode === "post_event") {
+        emitMetricBestEffort({
+          metric: "conversation.linkup.completed",
+          value: 1,
+          correlation_id: event.correlation_id,
+          tags: {
+            component: "conversation_router",
+            source,
+          },
+        });
+      }
+
+      if (
+        linkupState === "broadcasting" ||
+        linkupState === "pending" ||
+        linkupState === "locked"
+      ) {
+        emitMetricBestEffort({
+          metric: "conversation.linkup.created",
+          value: 1,
+          correlation_id: event.correlation_id,
+          tags: {
+            component: "conversation_router",
+            source,
+          },
+        });
+      }
+      return;
+    }
+
+    case "conversation.state_transition": {
+      const reason = safeTagValue(payload.reason);
+      if (!reason || !reason.startsWith("post_event_do_again_")) {
+        return;
+      }
+
+      emitMetricBestEffort({
+        metric: "post_event.do_again.recorded",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "post_event_engine",
+          do_again: safeTagValue(payload.do_again) ?? "unknown",
+          reason,
+        },
+      });
+      return;
+    }
+
+    case "safety.keyword_detected":
+      emitMetricBestEffort({
+        metric: "safety.keyword.detected",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "twilio_inbound",
+          severity: safeTagValue(payload.severity) ?? "unknown",
+          action: safeTagValue(payload.action) ?? "keyword",
+        },
+      });
+      return;
+
+    case "safety.strike_applied":
+      emitMetricBestEffort({
+        metric: "safety.strike.applied",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "twilio_inbound",
+          severity: safeTagValue(payload.severity) ?? "unknown",
+          safety_hold: safeTagValue(payload.safety_hold) ?? "false",
+        },
+      });
+      return;
+
+    case "safety.crisis_intercepted":
+      emitMetricBestEffort({
+        metric: "safety.crisis.intercepted",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "twilio_inbound",
+          severity: safeTagValue(payload.severity) ?? "critical",
+          action: safeTagValue(payload.action) ?? "crisis",
+        },
+      });
+      return;
+
+    case "post_event.attendance_recorded":
+      emitMetricBestEffort({
+        metric: "post_event.attendance.recorded",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "post_event_engine",
+          attendance_result: safeTagValue(payload.attendance_result) ?? "unknown",
+          reason: safeTagValue(payload.reason) ?? "unknown",
+        },
+      });
+      return;
+
+    case "post_event.contact_exchange_revealed":
+      emitMetricBestEffort({
+        metric: "post_event.exchange.revealed",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "post_event_engine",
+          exchange_choice: safeTagValue(payload.exchange_choice) ?? "unknown",
+          blocked_by_safety: safeTagValue(payload.blocked_by_safety) ?? "false",
+        },
+      });
+      return;
+
+    case "admin.action_performed":
+      emitMetricBestEffort({
+        metric: "admin.action.count",
+        value: 1,
+        correlation_id: event.correlation_id,
+        tags: {
+          component: "admin_api",
+          action: safeTagValue(payload.action) ?? "unknown",
+          target_type: safeTagValue(payload.target_type) ?? "unknown",
+        },
+      });
+      return;
+
+    default:
+      return;
+  }
+}
+
+function safeTagValue(value: unknown): string | null {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  return null;
 }

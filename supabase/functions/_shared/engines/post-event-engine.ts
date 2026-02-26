@@ -14,11 +14,14 @@ import type {
 } from "../router/conversation-router.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { logEvent } from "../../../../packages/core/src/observability/logger.ts";
-// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
-  setSentryContext,
-  startSentrySpan,
-} from "../../../../packages/core/src/observability/sentry.ts";
+  elapsedMetricMs,
+  emitMetricBestEffort,
+  emitRpcFailureMetric,
+  nowMetricMs,
+} from "../../../../packages/core/src/observability/metrics.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { startSentrySpan } from "../../../../packages/core/src/observability/sentry.ts";
 
 const POST_EVENT_CONTACT_EXCHANGE_PENDING_ACK =
   "Thanks. I recorded your choice. If others opt in too, JOSH will share contact details.";
@@ -34,179 +37,179 @@ const POST_EVENT_CONTACT_EXCHANGE_BLOCKED_ACK =
 export async function runPostEventEngine(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
-  setSentryContext({
-    category: "post_event",
-    correlation_id: input.payload.inbound_message_id,
-    user_id: input.decision.user_id,
-  });
-
-  return startSentrySpan(
-    {
-      name: "post_event.engine",
-      op: "post_event.engine",
-      attributes: {
-        correlation_id: input.payload.inbound_message_id,
-        session_state_token: input.decision.state.state_token,
-      },
-    },
-    async () => {
-      const conversation = handlePostEventConversation({
-        user_id: input.decision.user_id,
-        session_mode: "post_event",
-        session_state_token: input.decision.state.state_token,
-        inbound_message_id: input.payload.inbound_message_id,
-        inbound_message_sid: input.payload.inbound_message_sid,
-        body_raw: input.payload.body_raw,
-        body_normalized: input.payload.body_normalized,
-        correlation_id: input.payload.inbound_message_id,
-      });
-
-      if (conversation.session_state_token === "post_event:attendance") {
-        if (!conversation.attendance_result) {
-          throw new Error("Post-event attendance state requires parsed attendance_result.");
-        }
-
-    const persisted = await persistAttendanceResult({
-      supabase: input.supabase,
-      userId: input.decision.user_id,
-      inboundMessageId: input.payload.inbound_message_id,
-      inboundMessageSid: input.payload.inbound_message_sid,
-      attendanceResult: conversation.attendance_result,
-      correlationId: input.payload.inbound_message_id,
+  const startedAt = nowMetricMs();
+  let outcome: "success" | "error" = "success";
+  try {
+    const conversation = handlePostEventConversation({
+      user_id: input.decision.user_id,
+      session_mode: "post_event",
+      session_state_token: input.decision.state.state_token,
+      inbound_message_id: input.payload.inbound_message_id,
+      inbound_message_sid: input.payload.inbound_message_sid,
+      body_raw: input.payload.body_raw,
+      body_normalized: input.payload.body_normalized,
+      correlation_id: input.payload.inbound_message_id,
     });
 
-    return {
-      engine: "post_event_engine",
-      reply_message: persisted.next_state_token === "post_event:reflection"
-        ? POST_EVENT_REFLECTION_PROMPT
-        : conversation.reply_message,
-    };
-  }
+    if (conversation.session_state_token === "post_event:attendance") {
+      if (!conversation.attendance_result) {
+        throw new Error("Post-event attendance state requires parsed attendance_result.");
+      }
 
-      if (conversation.session_state_token === "post_event:complete") {
-        if (!conversation.do_again_decision) {
-          return {
-            engine: "post_event_engine",
-            reply_message: POST_EVENT_DO_AGAIN_PROMPT,
-          };
-        }
-
-    const persisted = await persistDoAgainDecision({
-      supabase: input.supabase,
-      userId: input.decision.user_id,
-      inboundMessageId: input.payload.inbound_message_id,
-      inboundMessageSid: input.payload.inbound_message_sid,
-      doAgain: conversation.do_again_decision,
-      correlationId: input.payload.inbound_message_id,
-    });
-
-    if (persisted.reason === "state_not_complete") {
-      throw new Error("Invalid post-event do-again transition: expected post_event:complete state.");
-    }
-
-    const acceptedReason = persisted.reason === "captured" ||
-      persisted.reason === "duplicate_replay" ||
-      persisted.reason === "already_recorded";
-    if (!acceptedReason) {
-      throw new Error(`Unable to persist post-event do-again decision: reason=${persisted.reason}`);
-    }
-
-    if (persisted.learning_signal_written) {
-      logEvent({
-        event: "post_event.learning_signal_written",
-        user_id: input.decision.user_id,
-        linkup_id: persisted.linkup_id,
-        correlation_id: persisted.correlation_id,
-        payload: {
-          attendance_result: persisted.attendance_result,
-          do_again: persisted.do_again,
-        },
+      const persisted = await persistAttendanceResult({
+        supabase: input.supabase,
+        userId: input.decision.user_id,
+        inboundMessageId: input.payload.inbound_message_id,
+        inboundMessageSid: input.payload.inbound_message_sid,
+        attendanceResult: conversation.attendance_result,
+        correlationId: input.payload.inbound_message_id,
       });
-    }
-
-    return {
-      engine: "post_event_engine",
-      reply_message: persisted.next_state_token === "post_event:contact_exchange"
-        ? POST_EVENT_CONTACT_EXCHANGE_PROMPT
-        : conversation.reply_message,
-    };
-  }
-
-      if (conversation.session_state_token === "post_event:contact_exchange") {
-        if (!conversation.exchange_choice) {
-          return {
-            engine: "post_event_engine",
-            reply_message: POST_EVENT_CONTACT_EXCHANGE_PROMPT,
-          };
-        }
-
-    const persisted = await persistExchangeChoice({
-      supabase: input.supabase,
-      userId: input.decision.user_id,
-      inboundMessageId: input.payload.inbound_message_id,
-      inboundMessageSid: input.payload.inbound_message_sid,
-      exchangeChoice: conversation.exchange_choice,
-      correlationId: input.payload.inbound_message_id,
-      smsEncryptionKey: getOptionalDenoEnv("SMS_BODY_ENCRYPTION_KEY"),
-    });
-
-    if (persisted.reason === "state_not_contact_exchange") {
-      throw new Error(
-        "Invalid post-event contact exchange transition: expected post_event:contact_exchange state.",
-      );
-    }
-
-    const acceptedReason = persisted.reason === "captured" ||
-      persisted.reason === "captured_revealed" ||
-      persisted.reason === "mutual_already_revealed" ||
-      persisted.reason === "blocked_by_safety" ||
-      persisted.reason === "duplicate_replay";
-    if (!acceptedReason) {
-      throw new Error(
-        `Unable to persist post-event contact exchange choice: reason=${persisted.reason}`,
-      );
-    }
-
-    if (persisted.mutual_detected) {
-      logEvent({
-        event: "post_event.contact_exchange_revealed",
-        user_id: input.decision.user_id,
-        linkup_id: persisted.linkup_id,
-        correlation_id: persisted.correlation_id,
-        payload: {
-          linkup_id: persisted.linkup_id,
-          mutual_detected: persisted.mutual_detected,
-          reveal_sent: persisted.reveal_sent,
-          exchange_choice: persisted.exchange_choice,
-        },
-      });
-    }
-
-    if (persisted.blocked_by_safety) {
-      logEvent({
-        event: "safety.blocked_message_attempt",
-        user_id: input.decision.user_id,
-        linkup_id: persisted.linkup_id,
-        correlation_id: persisted.correlation_id,
-        payload: {
-          linkup_id: persisted.linkup_id,
-          target_user_id: null,
-        },
-      });
-    }
-
-    return {
-      engine: "post_event_engine",
-      reply_message: buildContactExchangeReply(persisted),
-    };
-  }
 
       return {
         engine: "post_event_engine",
-        reply_message: conversation.reply_message,
+        reply_message: persisted.next_state_token === "post_event:reflection"
+          ? POST_EVENT_REFLECTION_PROMPT
+          : conversation.reply_message,
       };
-    },
-  );
+    }
+
+    if (conversation.session_state_token === "post_event:complete") {
+      if (!conversation.do_again_decision) {
+        return {
+          engine: "post_event_engine",
+          reply_message: POST_EVENT_DO_AGAIN_PROMPT,
+        };
+      }
+
+      const persisted = await persistDoAgainDecision({
+        supabase: input.supabase,
+        userId: input.decision.user_id,
+        inboundMessageId: input.payload.inbound_message_id,
+        inboundMessageSid: input.payload.inbound_message_sid,
+        doAgain: conversation.do_again_decision,
+        correlationId: input.payload.inbound_message_id,
+      });
+
+      if (persisted.reason === "state_not_complete") {
+        throw new Error("Invalid post-event do-again transition: expected post_event:complete state.");
+      }
+
+      const acceptedReason = persisted.reason === "captured" ||
+        persisted.reason === "duplicate_replay" ||
+        persisted.reason === "already_recorded";
+      if (!acceptedReason) {
+        throw new Error(`Unable to persist post-event do-again decision: reason=${persisted.reason}`);
+      }
+
+      if (persisted.learning_signal_written) {
+        logEvent({
+          event: "post_event.learning_signal_written",
+          user_id: input.decision.user_id,
+          linkup_id: persisted.linkup_id,
+          correlation_id: persisted.correlation_id,
+          payload: {
+            attendance_result: persisted.attendance_result,
+            do_again: persisted.do_again,
+          },
+        });
+      }
+
+      return {
+        engine: "post_event_engine",
+        reply_message: persisted.next_state_token === "post_event:contact_exchange"
+          ? POST_EVENT_CONTACT_EXCHANGE_PROMPT
+          : conversation.reply_message,
+      };
+    }
+
+    if (conversation.session_state_token === "post_event:contact_exchange") {
+      if (!conversation.exchange_choice) {
+        return {
+          engine: "post_event_engine",
+          reply_message: POST_EVENT_CONTACT_EXCHANGE_PROMPT,
+        };
+      }
+
+      const persisted = await persistExchangeChoice({
+        supabase: input.supabase,
+        userId: input.decision.user_id,
+        inboundMessageId: input.payload.inbound_message_id,
+        inboundMessageSid: input.payload.inbound_message_sid,
+        exchangeChoice: conversation.exchange_choice,
+        correlationId: input.payload.inbound_message_id,
+        smsEncryptionKey: getOptionalDenoEnv("SMS_BODY_ENCRYPTION_KEY"),
+      });
+
+      if (persisted.reason === "state_not_contact_exchange") {
+        throw new Error(
+          "Invalid post-event contact exchange transition: expected post_event:contact_exchange state.",
+        );
+      }
+
+      const acceptedReason = persisted.reason === "captured" ||
+        persisted.reason === "captured_revealed" ||
+        persisted.reason === "mutual_already_revealed" ||
+        persisted.reason === "blocked_by_safety" ||
+        persisted.reason === "duplicate_replay";
+      if (!acceptedReason) {
+        throw new Error(
+          `Unable to persist post-event contact exchange choice: reason=${persisted.reason}`,
+        );
+      }
+
+      if (persisted.mutual_detected) {
+        logEvent({
+          event: "post_event.contact_exchange_revealed",
+          user_id: input.decision.user_id,
+          linkup_id: persisted.linkup_id,
+          correlation_id: persisted.correlation_id,
+          payload: {
+            linkup_id: persisted.linkup_id,
+            mutual_detected: persisted.mutual_detected,
+            reveal_sent: persisted.reveal_sent,
+            exchange_choice: persisted.exchange_choice,
+          },
+        });
+      }
+
+      if (persisted.blocked_by_safety) {
+        logEvent({
+          event: "safety.blocked_message_attempt",
+          user_id: input.decision.user_id,
+          linkup_id: persisted.linkup_id,
+          correlation_id: persisted.correlation_id,
+          payload: {
+            linkup_id: persisted.linkup_id,
+            target_user_id: null,
+          },
+        });
+      }
+
+      return {
+        engine: "post_event_engine",
+        reply_message: buildContactExchangeReply(persisted),
+      };
+    }
+
+    return {
+      engine: "post_event_engine",
+      reply_message: conversation.reply_message,
+    };
+  } catch (error) {
+    outcome = "error";
+    throw error;
+  } finally {
+    emitMetricBestEffort({
+      metric: "system.request.latency",
+      value: elapsedMetricMs(startedAt),
+      correlation_id: input.payload.inbound_message_id,
+      tags: {
+        component: "post_event_engine",
+        operation: "run_post_event_engine",
+        outcome,
+      },
+    });
+  }
 }
 
 type AttendancePersistResult = {
@@ -265,6 +268,11 @@ async function persistAttendanceResult(params: {
   });
 
   if (error) {
+    emitRpcFailureMetric({
+      correlation_id: params.correlationId,
+      component: "post_event_engine",
+      rpc_name: "capture_post_event_attendance",
+    });
     throw new Error(`Unable to persist post-event attendance: ${error.message ?? "unknown error"}`);
   }
 
@@ -344,6 +352,11 @@ async function persistDoAgainDecision(params: {
   });
 
   if (error) {
+    emitRpcFailureMetric({
+      correlation_id: params.correlationId,
+      component: "post_event_engine",
+      rpc_name: "capture_post_event_do_again",
+    });
     throw new Error(`Unable to persist post-event do-again decision: ${error.message ?? "unknown error"}`);
   }
 
@@ -461,6 +474,11 @@ async function persistExchangeChoice(params: {
   );
 
   if (error) {
+    emitRpcFailureMetric({
+      correlation_id: params.correlationId,
+      component: "post_event_engine",
+      rpc_name: "capture_post_event_exchange_choice",
+    });
     throw new Error(
       `Unable to persist post-event contact exchange choice: ${error.message ?? "unknown error"}`,
     );

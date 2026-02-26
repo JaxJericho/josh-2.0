@@ -14,6 +14,7 @@ import type {
   EngineDispatchInput,
   EngineDispatchResult,
 } from "../router/conversation-router.ts";
+import { emitMetricBestEffort } from "../../../../packages/core/src/observability/metrics.ts";
 
 type ConversationSessionRow = {
   id: string;
@@ -208,6 +209,15 @@ async function fetchOrCreateConversationSession(
   if (createError || !created?.id) {
     throw new Error("Unable to create conversation session for interview engine.");
   }
+
+  emitMetricBestEffort({
+    metric: "conversation.session.started",
+    value: 1,
+    tags: {
+      component: "profile_interview_engine",
+      route: "session_create",
+    },
+  });
 
   return {
     id: created.id,

@@ -20,13 +20,12 @@ import {
 } from "../_shared/router/conversation-router.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { logEvent } from "../../../packages/core/src/observability/logger.ts";
-// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
-  setSentryContext,
-  startSentrySpan,
-  withSentryContext,
-} from "../../../packages/core/src/observability/sentry.ts";
-import { initializeEdgeSentry } from "../_shared/sentry.ts";
+  elapsedMetricMs,
+  emitMetricBestEffort,
+  emitRpcFailureMetric,
+  nowMetricMs,
+} from "../../../packages/core/src/observability/metrics.ts";
 
 type Command = "STOP" | "HELP" | "NONE";
 
@@ -45,10 +44,8 @@ initializeEdgeSentry("twilio-inbound");
 
 Deno.serve(async (req) => {
   const requestId = crypto.randomUUID();
-  setSentryContext({
-    category: "sms_inbound",
-    correlation_id: requestId,
-  });
+  const startedAt = nowMetricMs();
+  let outcome: "success" | "error" = "success";
   let phase = "start";
   return withSentryContext(
     {
@@ -452,6 +449,18 @@ Deno.serve(async (req) => {
 
     return twimlResponse(dispatchResult.reply_message ?? undefined);
   } catch (error) {
+    outcome = "error";
+    if (
+      phase === "encrypt_rpc" ||
+      phase === "safety_intercept" ||
+      phase === "block_report_intercept"
+    ) {
+      emitRpcFailureMetric({
+        correlation_id: requestId,
+        component: "twilio_inbound",
+        rpc_name: phase,
+      });
+    }
     const err = error as Error;
     logEvent({
       level: "error",
@@ -467,6 +476,17 @@ Deno.serve(async (req) => {
       },
     });
     return jsonErrorResponse(error, requestId, phase);
+  } finally {
+    emitMetricBestEffort({
+      metric: "system.request.latency",
+      value: elapsedMetricMs(startedAt),
+      correlation_id: requestId,
+      tags: {
+        component: "twilio_inbound",
+        operation: "pipeline",
+        outcome,
+      },
+    });
   }
     },
   );

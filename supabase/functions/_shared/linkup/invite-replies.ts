@@ -12,6 +12,14 @@ import {
   linkupInviteNotFound,
   linkupLockConfirmation,
 } from "../../../../packages/messaging/src/templates/linkup.ts";
+import {
+  emitMetricBestEffort,
+  emitRpcFailureMetric,
+} from "../../../../packages/core/src/observability/metrics.ts";
+
+const SEEN_LINKUP_IDS: Set<string> = new Set();
+const SEEN_LINKUP_ORDER: string[] = [];
+const MAX_TRACKED_LINKUPS = 5_000;
 
 export async function handleInviteReply(
   input: EngineDispatchInput,
@@ -40,10 +48,28 @@ export async function handleInviteReply(
   });
 
   if (error) {
+    emitRpcFailureMetric({
+      correlation_id: input.payload.inbound_message_id,
+      component: "linkup_invite_replies",
+      rpc_name: "linkup_apply_invite_reply_with_coordination",
+    });
     throw new Error(`Invite reply RPC failed: ${error.message ?? "unknown error"}`);
   }
 
   const status = readStatus(data);
+  const resolvedLinkupId = readLinkupId(data) ?? linkupId;
+  emitLinkupCreatedOnce(resolvedLinkupId, input.payload.inbound_message_id);
+  if (status === "accepted_and_locked") {
+    emitMetricBestEffort({
+      metric: "conversation.linkup.completed",
+      value: 1,
+      correlation_id: input.payload.inbound_message_id,
+      tags: {
+        component: "linkup_invite_replies",
+        source: "invite_reply_locked",
+      },
+    });
+  }
 
   return {
     engine: "default_engine",
@@ -94,6 +120,18 @@ function readStatus(payload: unknown): string {
   return typeof status === "string" ? status : "unknown";
 }
 
+function readLinkupId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const value = (payload as { linkup_id?: unknown }).linkup_id;
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function mapReplyMessage(status: string): string {
   switch (status) {
     case "accepted_and_locked":
@@ -142,4 +180,32 @@ function readOptionalDenoEnv(name: string): string | null {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function emitLinkupCreatedOnce(
+  linkupId: string,
+  correlationId: string,
+): void {
+  if (SEEN_LINKUP_IDS.has(linkupId)) {
+    return;
+  }
+
+  SEEN_LINKUP_IDS.add(linkupId);
+  SEEN_LINKUP_ORDER.push(linkupId);
+  if (SEEN_LINKUP_ORDER.length > MAX_TRACKED_LINKUPS) {
+    const oldest = SEEN_LINKUP_ORDER.shift();
+    if (oldest) {
+      SEEN_LINKUP_IDS.delete(oldest);
+    }
+  }
+
+  emitMetricBestEffort({
+    metric: "conversation.linkup.created",
+    value: 1,
+    correlation_id: correlationId,
+    tags: {
+      component: "linkup_invite_replies",
+      source: "invite_reply_observed",
+    },
+  });
 }

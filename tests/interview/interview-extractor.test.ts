@@ -4,6 +4,10 @@ import {
   createInterviewSignalExtractor,
 } from "../../packages/llm/src/interview-extractor";
 import { LlmProviderError, type LlmProvider } from "../../packages/llm/src/provider";
+import {
+  clearInMemoryMetrics,
+  getInMemoryMetrics,
+} from "../../packages/core/src/observability/metrics";
 
 function createInput() {
   return {
@@ -234,5 +238,58 @@ describe("interview extractor", () => {
       shouldFallback: true,
     });
     expect(callCount).toBe(2);
+  });
+
+  it("emits LLM token and cost metrics from provider usage", async () => {
+    clearInMemoryMetrics();
+    const correlationId = "corr-llm-metrics-1";
+    const provider: LlmProvider = {
+      async generateText() {
+        return {
+          provider: "anthropic",
+          model: "claude-3-5-haiku-latest",
+          text: JSON.stringify({
+            stepId: "motive_01",
+            extracted: {},
+          }),
+          usage: {
+            input_tokens: 1200,
+            output_tokens: 300,
+          },
+        };
+      },
+    };
+
+    const extractor = createInterviewSignalExtractor({
+      provider,
+      logger: {
+        info() {},
+        warn() {},
+      },
+    });
+
+    const output = await extractor({
+      ...createInput(),
+      correlationId,
+    });
+    expect(output.stepId).toBe("motive_01");
+
+    const emitted = getInMemoryMetrics();
+    const inputMetric = emitted.find((entry) => entry.metric === "llm.token.input");
+    const outputMetric = emitted.find((entry) => entry.metric === "llm.token.output");
+    const costMetric = emitted.find((entry) => entry.metric === "llm.cost.estimated_usd");
+    const requestMetric = emitted.find((entry) => entry.metric === "llm.request.count");
+    const latencyMetric = emitted.find((entry) =>
+      entry.metric === "system.request.latency" &&
+      entry.tags.component === "llm_call"
+    );
+
+    expect(inputMetric?.value).toBe(1200);
+    expect(outputMetric?.value).toBe(300);
+    expect(costMetric?.value).toBe(0.00216);
+    expect(requestMetric?.value).toBe(1);
+    expect(requestMetric?.tags.outcome).toBe("success");
+    expect(latencyMetric?.value).toBeGreaterThanOrEqual(0);
+    expect(costMetric?.correlation_id).toBe(correlationId);
   });
 });
