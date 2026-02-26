@@ -19,128 +19,130 @@ type DynamicClient = {
 
 export async function POST(request: Request): Promise<Response> {
   const startedAt = nowMetricMs();
+  const handler = "api/admin/users/safety-hold";
   let outcome: "success" | "error" = "success";
-  try {
-    const admin = await requireAdminRole(["super_admin", "moderator"], { request });
-    attachSentryScopeContext({
-      category: "admin_action",
-      correlation_id: admin.userId,
-      user_id: admin.userId,
-      tags: { handler },
-    });
-    const payload = await parseRequestPayload(request);
+  return traceApiRoute(handler, async () => {
+    try {
+      const admin = await requireAdminRole(["super_admin", "moderator"], { request });
+      attachSentryScopeContext({
+        category: "admin_action",
+        correlation_id: admin.userId,
+        user_id: admin.userId,
+        tags: { handler },
+      });
+      const payload = await parseRequestPayload(request);
 
-    if (!UUID_PATTERN.test(payload.user_id) || typeof payload.safety_hold !== "boolean") {
-      return NextResponse.json(
-        { code: "INVALID_REQUEST", message: "Expected user_id (uuid) and safety_hold (boolean)." },
-        { status: 400 },
-      );
-    }
+      if (!UUID_PATTERN.test(payload.user_id) || typeof payload.safety_hold !== "boolean") {
+        return NextResponse.json(
+          { code: "INVALID_REQUEST", message: "Expected user_id (uuid) and safety_hold (boolean)." },
+          { status: 400 },
+        );
+      }
 
-    const serviceClient = getSupabaseServiceRoleClient();
-    const dynamicDb = serviceClient as unknown as DynamicClient;
+      const serviceClient = getSupabaseServiceRoleClient();
+      const dynamicDb = serviceClient as unknown as DynamicClient;
 
-    const { data: before, error: beforeError } = await dynamicDb
-      .from("user_safety_state")
-      .select("user_id,safety_hold,strike_count,last_strike_at")
-      .eq("user_id", payload.user_id)
-      .maybeSingle();
-    if (beforeError) {
-      return NextResponse.json(
-        { code: "SAFETY_STATE_READ_FAILED", message: "Unable to read prior safety state." },
-        { status: 500 },
-      );
-    }
+      const { data: before, error: beforeError } = await dynamicDb
+        .from("user_safety_state")
+        .select("user_id,safety_hold,strike_count,last_strike_at")
+        .eq("user_id", payload.user_id)
+        .maybeSingle();
+      if (beforeError) {
+        return NextResponse.json(
+          { code: "SAFETY_STATE_READ_FAILED", message: "Unable to read prior safety state." },
+          { status: 500 },
+        );
+      }
 
-    const { data: updated, error: updateError } = await dynamicDb
-      .from("user_safety_state")
-      .upsert(
+      const { data: updated, error: updateError } = await dynamicDb
+        .from("user_safety_state")
+        .upsert(
+          {
+            user_id: payload.user_id,
+            safety_hold: payload.safety_hold,
+            last_safety_event_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" },
+        )
+        .select("user_id,safety_hold,strike_count,last_strike_at,last_safety_event_at")
+        .single();
+      if (updateError || !updated) {
+        return NextResponse.json(
+          { code: "SAFETY_STATE_UPDATE_FAILED", message: "Unable to update user safety hold." },
+          { status: 500 },
+        );
+      }
+
+      await logAdminAction(
         {
-          user_id: payload.user_id,
-          safety_hold: payload.safety_hold,
-          last_safety_event_at: new Date().toISOString(),
+          authorization: admin.authorization,
+          admin_user_id: admin.userId,
+          action: payload.safety_hold ? "user_safety_hold_enabled" : "user_safety_hold_disabled",
+          target_type: "user",
+          target_id: payload.user_id,
+          metadata_json: {
+            before_state: before ?? null,
+            after_state: updated,
+          },
         },
-        { onConflict: "user_id" },
-      )
-      .select("user_id,safety_hold,strike_count,last_strike_at,last_safety_event_at")
-      .single();
-    if (updateError || !updated) {
-      return NextResponse.json(
-        { code: "SAFETY_STATE_UPDATE_FAILED", message: "Unable to update user safety hold." },
-        { status: 500 },
+        { client: serviceClient },
       );
-    }
 
-    await logAdminAction(
-      {
-        authorization: admin.authorization,
-        admin_user_id: admin.userId,
-        action: payload.safety_hold ? "user_safety_hold_enabled" : "user_safety_hold_disabled",
-        target_type: "user",
-        target_id: payload.user_id,
-        metadata_json: {
+      logEvent({
+        level: "info",
+        event: "admin.safety_hold_toggled",
+        user_id: admin.userId,
+        correlation_id: payload.user_id,
+        payload: {
+          actor_admin_user_id: admin.userId,
+          target_user_id: payload.user_id,
+          safety_hold: updated.safety_hold,
           before_state: before ?? null,
           after_state: updated,
         },
-      },
-      { client: serviceClient },
-    );
+      });
 
-    logEvent({
-      level: "info",
-      event: "admin.safety_hold_toggled",
-      user_id: admin.userId,
-      correlation_id: payload.user_id,
-      payload: {
-        actor_admin_user_id: admin.userId,
-        target_user_id: payload.user_id,
-        safety_hold: updated.safety_hold,
-        before_state: before ?? null,
-        after_state: updated,
-      },
-    });
-
-    return NextResponse.json(
-      {
-        ok: true,
-        user_safety_state: {
-          user_id: updated.user_id,
-          safety_hold: updated.safety_hold,
-          strike_count: updated.strike_count,
-          last_strike_at: updated.last_strike_at,
-          last_safety_event_at: updated.last_safety_event_at,
+      return NextResponse.json(
+        {
+          ok: true,
+          user_safety_state: {
+            user_id: updated.user_id,
+            safety_hold: updated.safety_hold,
+            strike_count: updated.strike_count,
+            last_strike_at: updated.last_strike_at,
+            last_safety_event_at: updated.last_safety_event_at,
+          },
         },
-      },
-      { status: 200 },
-    );
-  } catch (error) {
-    outcome = "error";
-    if (error instanceof AdminAuthError) {
-      return NextResponse.json({ code: error.code, message: error.message }, { status: error.status });
-    }
+        { status: 200 },
+      );
+    } catch (error) {
+      outcome = "error";
+      if (error instanceof AdminAuthError) {
+        return NextResponse.json({ code: error.code, message: error.message }, { status: error.status });
+      }
 
-    const message = error instanceof Error ? error.message : "Internal server error.";
-    logEvent({
-      level: "error",
-      event: "system.unhandled_error",
-      payload: {
-        phase: "admin_users_safety_hold_route",
-        error_name: error instanceof Error ? error.name : "Error",
-        error_message: message,
-      },
-    });
-    return NextResponse.json({ code: "INTERNAL_ERROR", message }, { status: 500 });
-  } finally {
-    emitMetricBestEffort({
-      metric: "system.request.latency",
-      value: elapsedMetricMs(startedAt),
-      tags: {
-        component: "admin_api",
-        operation: "users_safety_hold_post",
-        outcome,
-      },
-    });
-  }
+      const message = error instanceof Error ? error.message : "Internal server error.";
+      logEvent({
+        level: "error",
+        event: "system.unhandled_error",
+        payload: {
+          phase: "admin_users_safety_hold_route",
+          error_name: error instanceof Error ? error.name : "Error",
+          error_message: message,
+        },
+      });
+      return NextResponse.json({ code: "INTERNAL_ERROR", message }, { status: 500 });
+    } finally {
+      emitMetricBestEffort({
+        metric: "system.request.latency",
+        value: elapsedMetricMs(startedAt),
+        tags: {
+          component: "admin_api",
+          operation: "users_safety_hold_post",
+          outcome,
+        },
+      });
+    }
   });
 }
 
