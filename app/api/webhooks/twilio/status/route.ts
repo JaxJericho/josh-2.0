@@ -1,6 +1,7 @@
 import crypto from "crypto";
-import * as Sentry from "@sentry/nextjs";
+import { captureSentryException } from "../../../../../packages/core/src/observability/sentry";
 import { generateRequestId, logEvent } from "../../../../lib/observability";
+import { attachSentryScopeContext, traceApiRoute } from "../../../../lib/sentry";
 
 type SmsMessageRow = {
   id: string;
@@ -48,8 +49,14 @@ export async function POST(request: Request): Promise<Response> {
   const startedAt = Date.now();
   const requestId = request.headers.get("x-request-id") ?? generateRequestId();
   const handler = "api/webhooks/twilio/status";
+  attachSentryScopeContext({
+    category: "sms_outbound",
+    correlation_id: requestId,
+    tags: { handler },
+  });
 
-  try {
+  return traceApiRoute(handler, async () => {
+    try {
     const contentType = request.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().includes("application/x-www-form-urlencoded")) {
       return new Response("Unsupported Media Type", { status: 415 });
@@ -90,6 +97,11 @@ export async function POST(request: Request): Promise<Response> {
     if (!payload.messageSid || !payload.messageStatus) {
       return new Response("Bad Request", { status: 400 });
     }
+    attachSentryScopeContext({
+      category: "sms_outbound",
+      correlation_id: payload.messageSid,
+      tags: { handler },
+    });
 
     const supabaseUrl = requireEnv("SUPABASE_URL");
     const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -174,12 +186,21 @@ export async function POST(request: Request): Promise<Response> {
       error_message: err?.message ?? "unknown",
       duration_ms: Date.now() - startedAt,
     });
-    Sentry.captureException(error, {
-      tags: { category: "sms_outbound" },
-      extra: { handler, requestId },
+    captureSentryException(error, {
+      level: "error",
+      event: "twilio.status_callback.unhandled_error",
+      context: {
+        category: "sms_outbound",
+        correlation_id: requestId,
+      },
+      payload: {
+        handler,
+        request_id: requestId,
+      },
     });
     return new Response("Internal error", { status: 500 });
   }
+  });
 }
 
 function parsePayload(rawBody: string, params: URLSearchParams): StatusCallbackPayload {

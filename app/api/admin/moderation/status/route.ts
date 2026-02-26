@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { logAdminAction } from "../../../../lib/admin-audit";
 import { AdminAuthError, requireAdminRole } from "../../../../lib/admin-auth";
 import { logEvent } from "../../../../lib/observability";
+import { attachSentryScopeContext, traceApiRoute } from "../../../../lib/sentry";
 import { getSupabaseServiceRoleClient } from "../../../../lib/supabase-service-role";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -13,8 +14,21 @@ type DynamicClient = {
 };
 
 export async function POST(request: Request): Promise<Response> {
-  try {
+  const handler = "api/admin/moderation/status";
+  attachSentryScopeContext({
+    category: "admin_action",
+    tags: { handler },
+  });
+
+  return traceApiRoute(handler, async () => {
+    try {
     const admin = await requireAdminRole(["super_admin", "moderator"], { request });
+    attachSentryScopeContext({
+      category: "admin_action",
+      correlation_id: admin.userId,
+      user_id: admin.userId,
+      tags: { handler },
+    });
     const payload = await parseRequestPayload(request);
 
     if (!UUID_PATTERN.test(payload.incident_id) || !ALLOWED_STATUSES.has(payload.status)) {
@@ -111,6 +125,7 @@ export async function POST(request: Request): Promise<Response> {
     });
     return NextResponse.json({ code: "INTERNAL_ERROR", message }, { status: 500 });
   }
+  });
 }
 
 async function parseRequestPayload(request: Request): Promise<{

@@ -4,10 +4,24 @@ import { logAdminAction } from "../../../../lib/admin-audit";
 import { AdminAuthError, createAdminScopedClient, requireAdminRole } from "../../../../lib/admin-auth";
 import { isAdminRole } from "../../../../lib/admin-session";
 import { logEvent } from "../../../../lib/observability";
+import { attachSentryScopeContext, traceApiRoute } from "../../../../lib/sentry";
 
 export async function POST(request: Request): Promise<Response> {
-  try {
+  const handler = "api/admin/users/role";
+  attachSentryScopeContext({
+    category: "admin_action",
+    tags: { handler },
+  });
+
+  return traceApiRoute(handler, async () => {
+    try {
     const admin = await requireAdminRole("super_admin", { request });
+    attachSentryScopeContext({
+      category: "admin_action",
+      correlation_id: admin.userId,
+      user_id: admin.userId,
+      tags: { handler },
+    });
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
 
     const userId = typeof body?.user_id === "string" ? body.user_id.trim() : "";
@@ -84,6 +98,7 @@ export async function POST(request: Request): Promise<Response> {
     });
     return NextResponse.json({ code: "INTERNAL_ERROR", message }, { status: 500 });
   }
+  });
 }
 
 function isValidUuid(value: string): boolean {

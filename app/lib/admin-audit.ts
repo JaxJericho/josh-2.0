@@ -1,5 +1,6 @@
 import type { Json } from "../../supabase/types/database";
 import type { DbClient } from "../../packages/db/src/types";
+import { setSentryContext, startSentrySpan } from "../../packages/core/src/observability/sentry";
 import { createAdminScopedClient } from "./admin-auth";
 import { logEvent } from "./observability";
 
@@ -14,6 +15,12 @@ export async function logAdminAction(input: {
   client?: Pick<DbClient, "from">;
 }): Promise<void> {
   const client = dependencies?.client ?? createAdminScopedClient(input.authorization);
+  setSentryContext({
+    category: "admin_action",
+    correlation_id: input.target_id ?? input.admin_user_id,
+    user_id: input.admin_user_id,
+  });
+
   const payload = {
     admin_user_id: input.admin_user_id,
     action: input.action,
@@ -22,7 +29,17 @@ export async function logAdminAction(input: {
     metadata_json: input.metadata_json ?? {},
   };
 
-  const { error } = await client.from("admin_audit_log").insert(payload);
+  const { error } = await startSentrySpan(
+    {
+      name: "admin.action",
+      op: "admin.action",
+      attributes: {
+        action: input.action,
+        target_type: input.target_type,
+      },
+    },
+    () => client.from("admin_audit_log").insert(payload),
+  );
   if (error) {
     throw new Error(`Unable to write admin audit log: ${error.message}`);
   }

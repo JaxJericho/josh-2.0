@@ -14,6 +14,11 @@ import type {
 } from "../router/conversation-router.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { logEvent } from "../../../../packages/core/src/observability/logger.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  setSentryContext,
+  startSentrySpan,
+} from "../../../../packages/core/src/observability/sentry.ts";
 
 const POST_EVENT_CONTACT_EXCHANGE_PENDING_ACK =
   "Thanks. I recorded your choice. If others opt in too, JOSH will share contact details.";
@@ -29,21 +34,37 @@ const POST_EVENT_CONTACT_EXCHANGE_BLOCKED_ACK =
 export async function runPostEventEngine(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
-  const conversation = handlePostEventConversation({
-    user_id: input.decision.user_id,
-    session_mode: "post_event",
-    session_state_token: input.decision.state.state_token,
-    inbound_message_id: input.payload.inbound_message_id,
-    inbound_message_sid: input.payload.inbound_message_sid,
-    body_raw: input.payload.body_raw,
-    body_normalized: input.payload.body_normalized,
+  setSentryContext({
+    category: "post_event",
     correlation_id: input.payload.inbound_message_id,
+    user_id: input.decision.user_id,
   });
 
-  if (conversation.session_state_token === "post_event:attendance") {
-    if (!conversation.attendance_result) {
-      throw new Error("Post-event attendance state requires parsed attendance_result.");
-    }
+  return startSentrySpan(
+    {
+      name: "post_event.engine",
+      op: "post_event.engine",
+      attributes: {
+        correlation_id: input.payload.inbound_message_id,
+        session_state_token: input.decision.state.state_token,
+      },
+    },
+    async () => {
+      const conversation = handlePostEventConversation({
+        user_id: input.decision.user_id,
+        session_mode: "post_event",
+        session_state_token: input.decision.state.state_token,
+        inbound_message_id: input.payload.inbound_message_id,
+        inbound_message_sid: input.payload.inbound_message_sid,
+        body_raw: input.payload.body_raw,
+        body_normalized: input.payload.body_normalized,
+        correlation_id: input.payload.inbound_message_id,
+      });
+
+      if (conversation.session_state_token === "post_event:attendance") {
+        if (!conversation.attendance_result) {
+          throw new Error("Post-event attendance state requires parsed attendance_result.");
+        }
 
     const persisted = await persistAttendanceResult({
       supabase: input.supabase,
@@ -62,13 +83,13 @@ export async function runPostEventEngine(
     };
   }
 
-  if (conversation.session_state_token === "post_event:complete") {
-    if (!conversation.do_again_decision) {
-      return {
-        engine: "post_event_engine",
-        reply_message: POST_EVENT_DO_AGAIN_PROMPT,
-      };
-    }
+      if (conversation.session_state_token === "post_event:complete") {
+        if (!conversation.do_again_decision) {
+          return {
+            engine: "post_event_engine",
+            reply_message: POST_EVENT_DO_AGAIN_PROMPT,
+          };
+        }
 
     const persisted = await persistDoAgainDecision({
       supabase: input.supabase,
@@ -111,13 +132,13 @@ export async function runPostEventEngine(
     };
   }
 
-  if (conversation.session_state_token === "post_event:contact_exchange") {
-    if (!conversation.exchange_choice) {
-      return {
-        engine: "post_event_engine",
-        reply_message: POST_EVENT_CONTACT_EXCHANGE_PROMPT,
-      };
-    }
+      if (conversation.session_state_token === "post_event:contact_exchange") {
+        if (!conversation.exchange_choice) {
+          return {
+            engine: "post_event_engine",
+            reply_message: POST_EVENT_CONTACT_EXCHANGE_PROMPT,
+          };
+        }
 
     const persisted = await persistExchangeChoice({
       supabase: input.supabase,
@@ -180,10 +201,12 @@ export async function runPostEventEngine(
     };
   }
 
-  return {
-    engine: "post_event_engine",
-    reply_message: conversation.reply_message,
-  };
+      return {
+        engine: "post_event_engine",
+        reply_message: conversation.reply_message,
+      };
+    },
+  );
 }
 
 type AttendancePersistResult = {
@@ -415,15 +438,27 @@ async function persistExchangeChoice(params: {
       "Post-event contact exchange capture requires Supabase RPC support.",
     );
   }
+  const rpc = params.supabase.rpc;
 
-  const { data, error } = await params.supabase.rpc("capture_post_event_exchange_choice", {
-    p_user_id: params.userId,
-    p_inbound_message_id: params.inboundMessageId,
-    p_inbound_message_sid: params.inboundMessageSid,
-    p_exchange_choice: params.exchangeChoice,
-    p_sms_encryption_key: params.smsEncryptionKey,
-    p_correlation_id: params.correlationId,
-  });
+  const { data, error } = await startSentrySpan(
+    {
+      name: "contact_exchange.reveal",
+      op: "contact_exchange.reveal",
+      attributes: {
+        correlation_id: params.correlationId,
+        inbound_message_id: params.inboundMessageId,
+      },
+    },
+    () =>
+      rpc("capture_post_event_exchange_choice", {
+        p_user_id: params.userId,
+        p_inbound_message_id: params.inboundMessageId,
+        p_inbound_message_sid: params.inboundMessageSid,
+        p_exchange_choice: params.exchangeChoice,
+        p_sms_encryption_key: params.smsEncryptionKey,
+        p_correlation_id: params.correlationId,
+      }),
+  );
 
   if (error) {
     throw new Error(

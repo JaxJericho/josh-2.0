@@ -6,11 +6,20 @@ import { updateSmsMessageStatusByTwilioSid } from "../../../packages/db/src/quer
 import { updateSmsOutboundJobStatusByTwilioSid } from "../../../packages/db/src/queries/sms-outbound-jobs.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { logEvent } from "../../../packages/core/src/observability/logger.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { setSentryContext } from "../../../packages/core/src/observability/sentry.ts";
+import { initializeEdgeSentry } from "../_shared/sentry.ts";
 
 const encoder = new TextEncoder();
 
+initializeEdgeSentry("twilio-status-callback");
+
 Deno.serve(async (req) => {
   const requestId = crypto.randomUUID();
+  setSentryContext({
+    category: "sms_outbound",
+    correlation_id: requestId,
+  });
   let phase = "start";
 
   try {
@@ -80,6 +89,10 @@ Deno.serve(async (req) => {
     if (!messageSid || !messageStatus) {
       return new Response("Bad Request", { status: 400 });
     }
+    setSentryContext({
+      category: "sms_outbound",
+      correlation_id: messageSid,
+    });
 
     const errorCode = params.get("ErrorCode")?.trim() ?? null;
     const errorMessage = params.get("ErrorMessage")?.trim() ?? null;
