@@ -1,6 +1,7 @@
 import type { Json } from "../../supabase/types/database";
 import type { DbClient } from "../../packages/db/src/types";
 import { createAdminScopedClient } from "./admin-auth";
+import { logEvent } from "./observability";
 
 export async function logAdminAction(input: {
   authorization: string;
@@ -25,4 +26,16 @@ export async function logAdminAction(input: {
   if (error) {
     throw new Error(`Unable to write admin audit log: ${error.message}`);
   }
+
+  logEvent({
+    level: "info",
+    event: "admin.action_performed",
+    user_id: input.admin_user_id,
+    payload: {
+      action: input.action,
+      target_type: input.target_type,
+      target_id: input.target_id ?? null,
+      metadata_json: input.metadata_json ?? {},
+    },
+  });
 }

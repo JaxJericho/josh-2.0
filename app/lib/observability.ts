@@ -1,68 +1,62 @@
 import crypto from "crypto";
+import {
+  logEvent as logStructuredEvent,
+  type LogLevel,
+  type StructuredLogEventInput,
+} from "../../packages/core/src/observability/logger";
 
-const REDACT_KEYS = new Set([
-  "authorization",
-  "cookie",
-  "set-cookie",
-  "runner_secret",
-  "cron_secret",
-  "sentry_dsn",
-  "next_public_sentry_dsn",
-]);
-
-type LogLevel = "debug" | "info" | "warn" | "error";
-
-type LogPayload = {
+type LegacyLogPayload = {
   level: LogLevel;
   event: string;
   env?: string;
+  user_id?: string | null;
+  linkup_id?: string | null;
   correlation_id?: string;
-  request_id?: string;
-  handler?: string;
-  status_code?: number;
-  duration_ms?: number;
-  error_code?: string;
-  error_message?: string;
+  payload?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
-function redactValue(key: string, value: unknown): unknown {
-  if (REDACT_KEYS.has(key.toLowerCase())) {
-    return "[REDACTED]";
-  }
-  return value;
-}
-
-function sanitize(payload: Record<string, unknown>): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(payload)) {
-    output[key] = redactValue(key, value);
-  }
-  return output;
-}
+type LogPayload = StructuredLogEventInput | LegacyLogPayload;
 
 export function generateRequestId(): string {
   return crypto.randomUUID();
 }
 
 export function logEvent(payload: LogPayload): void {
-  const base = {
-    ts: new Date().toISOString(),
-    env: process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? "unknown",
-  };
+  const normalizedPayload = payload as LegacyLogPayload;
+  const nestedPayload = (
+    typeof normalizedPayload.payload === "object" &&
+    normalizedPayload.payload &&
+    !Array.isArray(normalizedPayload.payload)
+  )
+    ? normalizedPayload.payload
+    : {};
 
-  const entry = sanitize({ ...base, ...payload });
-  const line = JSON.stringify(entry);
+  const {
+    level,
+    event,
+    env,
+    correlation_id,
+    user_id,
+    linkup_id,
+    payload: _ignoredPayload,
+    ...legacyTopLevelFields
+  } = normalizedPayload;
 
-  if (payload.level === "error") {
-    console.error(line);
-    return;
-  }
-  if (payload.level === "warn") {
-    console.warn(line);
-    return;
-  }
-  console.log(line);
+  logStructuredEvent(
+    {
+      level: level ?? "info",
+      event,
+      user_id: typeof user_id === "string" ? user_id : null,
+      linkup_id: typeof linkup_id === "string" ? linkup_id : null,
+      correlation_id: typeof correlation_id === "string" ? correlation_id : null,
+      payload: {
+        ...legacyTopLevelFields,
+        ...nestedPayload,
+      },
+    },
+    typeof env === "string" ? env : undefined,
+  );
 }
 
 export function isStaging(): boolean {

@@ -2,6 +2,7 @@ import {
   isPostEventStateToken,
   type PostEventStateToken,
 } from "../interview/state.ts";
+import { logEvent } from "../observability/logger.ts";
 
 export type PostEventConversationInput = {
   user_id: string;
@@ -61,13 +62,18 @@ export function handlePostEventConversation(
 ): PostEventConversationResult {
   const stateToken = assertPostEventStateToken(input.session_state_token);
 
-  console.info("conversation.post_event_handler_entered", {
+  logEvent({
+    event: "conversation.state_transition",
     user_id: input.user_id,
-    session_mode: input.session_mode,
-    session_state_token: stateToken,
-    inbound_message_id: input.inbound_message_id,
-    inbound_message_sid: input.inbound_message_sid,
     correlation_id: input.correlation_id,
+    payload: {
+      previous_state_token: stateToken,
+      next_state_token: stateToken,
+      reason: "post_event_handler_entered",
+      mode: input.session_mode,
+      inbound_message_id: input.inbound_message_id,
+      inbound_message_sid: input.inbound_message_sid,
+    },
   });
 
   if (stateToken === "post_event:attendance") {

@@ -4,6 +4,8 @@ import { createServiceRoleDbClient } from "../../../packages/db/src/client-deno.
 import { updateSmsMessageStatusByTwilioSid } from "../../../packages/db/src/queries/sms-messages.ts";
 // @ts-ignore: Deno runtime requires explicit file extensions for local imports.
 import { updateSmsOutboundJobStatusByTwilioSid } from "../../../packages/db/src/queries/sms-outbound-jobs.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { logEvent } from "../../../packages/core/src/observability/logger.ts";
 
 const encoder = new TextEncoder();
 
@@ -46,18 +48,23 @@ Deno.serve(async (req) => {
     if (!isValidSignature) {
       const hostSource = (buildSignatureUrls as { lastHostSource?: string })
         .lastHostSource ?? "unknown";
-      console.warn("twilio.status_callback_signature_failed", {
-        request_id: requestId,
-        method: req.method,
-        url: req.url,
-        headers: {
-          host: req.headers.get("host"),
-          "x-forwarded-host": req.headers.get("x-forwarded-host"),
-          "x-forwarded-proto": req.headers.get("x-forwarded-proto"),
+      logEvent({
+        level: "warn",
+        event: "twilio.status_callback.signature_failed",
+        correlation_id: requestId,
+        payload: {
+          request_id: requestId,
+          method: req.method,
+          url: req.url,
+          host_source: hostSource,
+          candidates: signatureResults.map((result) => result.url),
+          results: signatureResults.map((result) => result.ok),
+          headers: {
+            host: req.headers.get("host"),
+            "x-forwarded-host": req.headers.get("x-forwarded-host"),
+            "x-forwarded-proto": req.headers.get("x-forwarded-proto"),
+          },
         },
-        host_source: hostSource,
-        candidates: signatureResults.map((result) => result.url),
-        results: signatureResults.map((result) => result.ok),
       });
       return new Response("Forbidden", { status: 403 });
     }
@@ -97,10 +104,15 @@ Deno.serve(async (req) => {
         lastStatusAt: now,
       });
     } catch (messageUpdateError) {
-      console.error("twilio.status_callback_message_update_failed", {
-        request_id: requestId,
-        message_sid: messageSid,
-        error: (messageUpdateError as { message?: string })?.message ?? "unknown",
+      logEvent({
+        level: "error",
+        event: "twilio.status_callback.message_update_failed",
+        correlation_id: messageSid,
+        payload: {
+          request_id: requestId,
+          message_sid: messageSid,
+          error_message: (messageUpdateError as { message?: string })?.message ?? "unknown",
+        },
       });
     }
 
@@ -130,22 +142,42 @@ Deno.serve(async (req) => {
           typeof jobUpdate.last_error === "string" ? jobUpdate.last_error : null,
       });
     } catch (jobUpdateError) {
-      console.error("twilio.status_callback_job_update_failed", {
-        request_id: requestId,
-        message_sid: messageSid,
-        error: (jobUpdateError as { message?: string })?.message ?? "unknown",
+      logEvent({
+        level: "error",
+        event: "twilio.status_callback.job_update_failed",
+        correlation_id: messageSid,
+        payload: {
+          request_id: requestId,
+          message_sid: messageSid,
+          error_message: (jobUpdateError as { message?: string })?.message ?? "unknown",
+        },
       });
     }
+
+    logEvent({
+      event: "twilio.status_callback.processed",
+      correlation_id: messageSid,
+      payload: {
+        request_id: requestId,
+        message_sid: messageSid,
+        message_status: messageStatus,
+      },
+    });
 
     return new Response("OK", { status: 200 });
   } catch (error) {
     const err = error as Error;
-    console.error("twilio.status_callback_unhandled_error", {
-      request_id: requestId,
-      phase,
-      name: err?.name ?? "Error",
-      message: err?.message ?? String(error),
-      stack: err?.stack ?? null,
+    logEvent({
+      level: "error",
+      event: "system.unhandled_error",
+      correlation_id: requestId,
+      payload: {
+        request_id: requestId,
+        phase,
+        error_name: err?.name ?? "Error",
+        error_message: err?.message ?? String(error),
+        stack: err?.stack ?? null,
+      },
     });
     return jsonErrorResponse(error, requestId, phase);
   }

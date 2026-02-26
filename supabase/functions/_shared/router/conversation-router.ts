@@ -6,6 +6,8 @@ import { runProfileInterviewEngine } from "../engines/profile-interview-engine.t
 import { runOnboardingEngine } from "../engines/onboarding-engine.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { runPostEventEngine } from "../engines/post-event-engine.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { logEvent } from "../../../../packages/core/src/observability/logger.ts";
 
 export type ConversationMode =
   | "idle"
@@ -232,17 +234,19 @@ export async function routeConversationMessage(
     next_transition: nextTransition,
   };
 
-  console.info("conversation_router.decision", {
-    inbound_message_id: params.payload.inbound_message_id,
+  logEvent({
+    event: "conversation.router_decision",
     user_id: decision.user_id,
-    session_mode: decision.state.mode,
-    session_state_token: decision.state.state_token,
-    profile_is_complete_mvp: decision.profile_is_complete_mvp,
-    routing_decision: {
+    correlation_id: params.payload.inbound_message_id,
+    payload: {
+      inbound_message_id: params.payload.inbound_message_id,
       route: decision.route,
+      session_mode: decision.state.mode,
+      session_state_token: decision.state.state_token,
+      profile_is_complete_mvp: decision.profile_is_complete_mvp,
       next_transition: decision.next_transition,
+      override_applied: decision.safety_override_applied,
     },
-    override_flag: decision.safety_override_applied,
   });
 
   return decision;
@@ -403,12 +407,18 @@ export async function dispatchConversationRoute(
 ): Promise<EngineDispatchResult> {
   const resolvedRoute = resolveRouteForState(input.decision.state);
   if (resolvedRoute !== input.decision.route) {
-    console.warn("conversation_router.route_corrected", {
+    logEvent({
+      level: "warn",
+      event: "system.migration_mismatch_warning",
       user_id: input.decision.user_id,
-      requested_route: input.decision.route,
-      resolved_route: resolvedRoute,
-      session_mode: input.decision.state.mode,
-      session_state_token: input.decision.state.state_token,
+      correlation_id: input.payload.inbound_message_id,
+      payload: {
+        warning: "conversation route corrected during dispatch",
+        requested_route: input.decision.route,
+        resolved_route: resolvedRoute,
+        session_mode: input.decision.state.mode,
+        session_state_token: input.decision.state.state_token,
+      },
     });
   }
 
@@ -420,13 +430,19 @@ export async function dispatchConversationRoute(
         return result;
       } catch (error) {
         const err = error as Error;
-        console.error("conversation_router.dispatch_failed", {
+        logEvent({
+          level: "error",
+          event: "system.unhandled_error",
           user_id: input.decision.user_id,
-          route: resolvedRoute,
-          session_mode: input.decision.state.mode,
-          session_state_token: input.decision.state.state_token,
-          name: err?.name ?? "Error",
-          message: err?.message ?? String(error),
+          correlation_id: input.payload.inbound_message_id,
+          payload: {
+            phase: "router_dispatch",
+            error_name: err?.name ?? "Error",
+            error_message: err?.message ?? String(error),
+            route: resolvedRoute,
+            session_mode: input.decision.state.mode,
+            session_state_token: input.decision.state.state_token,
+          },
         });
         throw error;
       }
@@ -436,10 +452,16 @@ export async function dispatchConversationRoute(
         state: input.decision.state,
         payload: input.payload,
       })) {
-        console.info("conversation_router.onboarding_burst_held", {
+        logEvent({
+          event: "conversation.state_transition",
           user_id: input.decision.user_id,
-          session_state_token: input.decision.state.state_token,
-          inbound_message_sid: input.payload.inbound_message_sid,
+          correlation_id: input.payload.inbound_message_id,
+          payload: {
+            previous_state_token: input.decision.state.state_token,
+            next_state_token: input.decision.state.state_token,
+            reason: "onboarding_burst_hold",
+            inbound_message_sid: input.payload.inbound_message_sid,
+          },
         });
         return {
           engine: "onboarding_engine",
@@ -453,13 +475,19 @@ export async function dispatchConversationRoute(
         return result;
       } catch (error) {
         const err = error as Error;
-        console.error("conversation_router.dispatch_failed", {
+        logEvent({
+          level: "error",
+          event: "system.unhandled_error",
           user_id: input.decision.user_id,
-          route: resolvedRoute,
-          session_mode: input.decision.state.mode,
-          session_state_token: input.decision.state.state_token,
-          name: err?.name ?? "Error",
-          message: err?.message ?? String(error),
+          correlation_id: input.payload.inbound_message_id,
+          payload: {
+            phase: "router_dispatch",
+            error_name: err?.name ?? "Error",
+            error_message: err?.message ?? String(error),
+            route: resolvedRoute,
+            session_mode: input.decision.state.mode,
+            session_state_token: input.decision.state.state_token,
+          },
         });
         throw error;
       }
@@ -471,13 +499,19 @@ export async function dispatchConversationRoute(
         return result;
       } catch (error) {
         const err = error as Error;
-        console.error("conversation_router.dispatch_failed", {
+        logEvent({
+          level: "error",
+          event: "system.unhandled_error",
           user_id: input.decision.user_id,
-          route: resolvedRoute,
-          session_mode: input.decision.state.mode,
-          session_state_token: input.decision.state.state_token,
-          name: err?.name ?? "Error",
-          message: err?.message ?? String(error),
+          correlation_id: input.payload.inbound_message_id,
+          payload: {
+            phase: "router_dispatch",
+            error_name: err?.name ?? "Error",
+            error_message: err?.message ?? String(error),
+            route: resolvedRoute,
+            session_mode: input.decision.state.mode,
+            session_state_token: input.decision.state.state_token,
+          },
         });
         throw error;
       }
@@ -657,22 +691,45 @@ async function transitionConversationSessionForCompletedLinkup(
     );
   }
 
-  console.info("conversation_router.post_event_transition", {
-    inbound_message_id: params.inboundMessageId,
-    session_id: params.session.id,
-    linkup_id: typeof row.linkup_id === "string" ? row.linkup_id : params.session.linkup_id,
-    linkup_state: typeof row.linkup_state === "string" ? row.linkup_state : null,
-    transitioned: row.transitioned === true,
-    reason: typeof row.reason === "string" ? row.reason : null,
-    previous_mode: params.session.mode,
-    next_mode: nextMode,
-    next_state_token: nextStateToken,
-    correlation_id: typeof row.correlation_id === "string"
-      ? row.correlation_id
-      : params.inboundMessageId,
-    linkup_correlation_id: typeof row.linkup_correlation_id === "string"
-      ? row.linkup_correlation_id
-      : null,
+  const previousMode = params.session.mode ?? "unknown";
+  const previousStateToken = params.session.state_token ?? "unknown";
+  const transitionReason = typeof row.reason === "string" && row.reason.trim()
+    ? row.reason
+    : "unchanged";
+  const transitionCorrelationId = typeof row.correlation_id === "string"
+    ? row.correlation_id
+    : params.inboundMessageId;
+  const linkupId = typeof row.linkup_id === "string" ? row.linkup_id : params.session.linkup_id;
+
+  logEvent({
+    event: "conversation.mode_transition",
+    correlation_id: transitionCorrelationId,
+    linkup_id: linkupId ?? null,
+    payload: {
+      previous_mode: previousMode,
+      next_mode: nextMode,
+      reason: transitionReason,
+      session_id: params.session.id,
+      linkup_state: typeof row.linkup_state === "string" ? row.linkup_state : null,
+      transitioned: row.transitioned === true,
+      linkup_correlation_id: typeof row.linkup_correlation_id === "string"
+        ? row.linkup_correlation_id
+        : null,
+    },
+  });
+
+  logEvent({
+    event: "conversation.state_transition",
+    correlation_id: transitionCorrelationId,
+    linkup_id: linkupId ?? null,
+    payload: {
+      previous_state_token: previousStateToken,
+      next_state_token: nextStateToken,
+      reason: transitionReason,
+      mode: nextMode,
+      session_id: params.session.id,
+      transitioned: row.transitioned === true,
+    },
   });
 
   return {
@@ -686,6 +743,18 @@ async function promoteConversationSessionForOnboarding(
   supabase: SupabaseClientLike,
   sessionId: string,
 ): Promise<{ mode: string | null; state_token: string | null }> {
+  const existingSession = await supabase
+    .from("conversation_sessions")
+    .select("mode,state_token")
+    .eq("id", sessionId)
+    .maybeSingle();
+  const previousMode = typeof existingSession?.data?.mode === "string"
+    ? existingSession.data.mode
+    : "idle";
+  const previousStateToken = typeof existingSession?.data?.state_token === "string"
+    ? existingSession.data.state_token
+    : "idle";
+
   const { data, error } = await supabase
     .from("conversation_sessions")
     .update({
@@ -703,6 +772,26 @@ async function promoteConversationSessionForOnboarding(
       "Unable to persist deterministic onboarding conversation state."
     );
   }
+
+  logEvent({
+    event: "conversation.mode_transition",
+    payload: {
+      previous_mode: previousMode,
+      next_mode: data.mode ?? ONBOARDING_MODE,
+      reason: "idle_user_promoted_for_onboarding",
+      session_id: sessionId,
+    },
+  });
+  logEvent({
+    event: "conversation.state_transition",
+    payload: {
+      previous_state_token: previousStateToken,
+      next_state_token: data.state_token ?? ONBOARDING_STATE_TOKEN,
+      reason: "idle_user_promoted_for_onboarding",
+      mode: data.mode ?? ONBOARDING_MODE,
+      session_id: sessionId,
+    },
+  });
 
   return {
     mode: data.mode ?? null,

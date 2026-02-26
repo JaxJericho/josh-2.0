@@ -13,6 +13,7 @@ import {
   type LlmProvider,
 } from "./provider.ts";
 import { validateModelOutput } from "./output-validator.ts";
+import { logEvent as emitStructuredEvent } from "../../core/src/observability/logger.ts";
 
 export type InterviewExtractInput = {
   userId: string;
@@ -90,10 +91,20 @@ const DEFAULT_RETRY_COUNT = 1;
 function createDefaultLogger(): InterviewExtractorLogger {
   return {
     info(event, data) {
-      console.info(event, data);
+      emitStructuredEvent({
+        level: "info",
+        event,
+        correlation_id: typeof data.correlation_id === "string" ? data.correlation_id : null,
+        payload: data,
+      });
     },
     warn(event, data) {
-      console.warn(event, data);
+      emitStructuredEvent({
+        level: "warn",
+        event,
+        correlation_id: typeof data.correlation_id === "string" ? data.correlation_id : null,
+        payload: data,
+      });
     },
   };
 }

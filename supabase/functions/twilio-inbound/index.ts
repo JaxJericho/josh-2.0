@@ -18,6 +18,8 @@ import {
   routeConversationMessage,
   type NormalizedInboundMessagePayload,
 } from "../_shared/router/conversation-router.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { logEvent } from "../../../packages/core/src/observability/logger.ts";
 
 type Command = "STOP" | "HELP" | "NONE";
 
@@ -70,18 +72,22 @@ Deno.serve(async (req) => {
     if (!isValidSignature) {
       const hostSource = (buildSignatureUrls as { lastHostSource?: string })
         .lastHostSource ?? "unknown";
-      console.warn("twilio.signature_validation_failed", {
-        request_id: requestId,
-        method: req.method,
-        url: req.url,
-        headers: {
-          host: req.headers.get("host"),
-          "x-forwarded-host": req.headers.get("x-forwarded-host"),
-          "x-forwarded-proto": req.headers.get("x-forwarded-proto"),
+      logEvent({
+        level: "warn",
+        event: "twilio.signature_validation_failed",
+        payload: {
+          request_id: requestId,
+          method: req.method,
+          url: req.url,
+          host_source: hostSource,
+          candidates: signatureResults.map((result) => result.url),
+          results: signatureResults.map((result) => result.ok),
+          headers: {
+            host: req.headers.get("host"),
+            "x-forwarded-host": req.headers.get("x-forwarded-host"),
+            "x-forwarded-proto": req.headers.get("x-forwarded-proto"),
+          },
         },
-        host_source: hostSource,
-        candidates: signatureResults.map((result) => result.url),
-        results: signatureResults.map((result) => result.ok),
       });
       return new Response("Forbidden", { status: 403 });
     }
@@ -101,11 +107,15 @@ Deno.serve(async (req) => {
     const bodyNormalized = normalizeBody(bodyRaw);
     const command = detectCommand(bodyNormalized);
 
-    console.info("twilio.inbound_request", {
-      build_version: BUILD_VERSION,
-      request_id: requestId,
-      inbound_message_sid: messageSid,
-      command,
+    logEvent({
+      event: "twilio.inbound_received",
+      correlation_id: messageSid,
+      payload: {
+        build_version: BUILD_VERSION,
+        request_id: requestId,
+        inbound_message_sid: messageSid,
+        command,
+      },
     });
 
     phase = "db_init";
@@ -157,11 +167,15 @@ Deno.serve(async (req) => {
 
     if (insertError) {
       if (isDuplicateSidError(insertError)) {
-        console.info("twilio.inbound_duplicate_sid", {
-          build_version: BUILD_VERSION,
-          request_id: requestId,
-          inbound_message_sid: messageSid,
-          command,
+        logEvent({
+          event: "twilio.inbound_duplicate_sid",
+          correlation_id: messageSid,
+          payload: {
+            build_version: BUILD_VERSION,
+            request_id: requestId,
+            inbound_message_sid: messageSid,
+            command,
+          },
         });
         return deterministicResponse(command);
       }
@@ -170,11 +184,15 @@ Deno.serve(async (req) => {
 
     const isDuplicate = !insertedRows || insertedRows.length === 0;
     if (isDuplicate) {
-      console.info("twilio.inbound_duplicate_sid", {
-        build_version: BUILD_VERSION,
-        request_id: requestId,
-        inbound_message_sid: messageSid,
-        command,
+      logEvent({
+        event: "twilio.inbound_duplicate_sid",
+        correlation_id: messageSid,
+        payload: {
+          build_version: BUILD_VERSION,
+          request_id: requestId,
+          inbound_message_sid: messageSid,
+          command,
+        },
       });
       return deterministicResponse(command);
     }
@@ -186,11 +204,15 @@ Deno.serve(async (req) => {
 
     if (command === "STOP") {
       phase = "opt_out";
-      console.info("twilio.override_applied", {
-        build_version: BUILD_VERSION,
-        request_id: requestId,
-        override_type: "STOP",
-        inbound_message_id: inboundMessageId,
+      logEvent({
+        event: "twilio.override_applied",
+        correlation_id: inboundMessageId,
+        payload: {
+          build_version: BUILD_VERSION,
+          request_id: requestId,
+          override_type: "STOP",
+          inbound_message_id: inboundMessageId,
+        },
       });
       const optOutError = await recordOptOut(supabase, user?.id ?? null, fromE164);
       if (optOutError) {
@@ -201,11 +223,15 @@ Deno.serve(async (req) => {
     }
 
     if (command === "HELP") {
-      console.info("twilio.override_applied", {
-        build_version: BUILD_VERSION,
-        request_id: requestId,
-        override_type: "HELP",
-        inbound_message_id: inboundMessageId,
+      logEvent({
+        event: "twilio.override_applied",
+        correlation_id: inboundMessageId,
+        payload: {
+          build_version: BUILD_VERSION,
+          request_id: requestId,
+          override_type: "HELP",
+          inbound_message_id: inboundMessageId,
+        },
       });
       return twimlResponse(HELP_REPLY);
     }
@@ -222,43 +248,68 @@ Deno.serve(async (req) => {
     });
 
     if (safetyDecision.intercepted) {
-      console.info("safety.inbound_intercepted", {
-        build_version: BUILD_VERSION,
-        safety_build: SAFETY_INTERCEPT_BUILD,
-        request_id: requestId,
-        inbound_message_id: inboundMessageId,
-        inbound_message_sid: messageSid,
-        user_id: user?.id ?? null,
-        action: safetyDecision.action,
-        severity: safetyDecision.severity,
-        keyword_version: safetyDecision.keyword_version,
-        matched_term: safetyDecision.matched_term,
-        strike_count: safetyDecision.strike_count,
-        safety_hold: safetyDecision.safety_hold,
-        replay: safetyDecision.replay,
-      });
-
       if (safetyDecision.action === "rate_limit") {
-        console.info("safety.rate_limit_exceeded", {
-          build_version: BUILD_VERSION,
-          safety_build: SAFETY_INTERCEPT_BUILD,
-          request_id: requestId,
-          inbound_message_id: inboundMessageId,
-          inbound_message_sid: messageSid,
+        logEvent({
+          event: "safety.rate_limit_exceeded",
           user_id: user?.id ?? null,
+          correlation_id: inboundMessageId,
+          payload: {
+            action: safetyDecision.action,
+            window_start: new Date().toISOString(),
+            window_count: null,
+            threshold: null,
+            request_id: requestId,
+            safety_build: SAFETY_INTERCEPT_BUILD,
+            inbound_message_sid: messageSid,
+          },
         });
       }
 
       if (safetyDecision.action === "crisis") {
-        console.info("safety.crisis_intercepted", {
-          build_version: BUILD_VERSION,
-          safety_build: SAFETY_INTERCEPT_BUILD,
-          request_id: requestId,
-          inbound_message_id: inboundMessageId,
-          inbound_message_sid: messageSid,
+        logEvent({
+          event: "safety.crisis_intercepted",
           user_id: user?.id ?? null,
-          keyword_version: safetyDecision.keyword_version,
-          matched_term: safetyDecision.matched_term,
+          correlation_id: inboundMessageId,
+          payload: {
+            action: safetyDecision.action,
+            severity: safetyDecision.severity,
+            keyword_version: safetyDecision.keyword_version,
+            matched_term: safetyDecision.matched_term,
+            request_id: requestId,
+            safety_build: SAFETY_INTERCEPT_BUILD,
+            inbound_message_sid: messageSid,
+          },
+        });
+      }
+
+      if (safetyDecision.action === "keyword") {
+        logEvent({
+          event: "safety.keyword_detected",
+          user_id: user?.id ?? null,
+          correlation_id: inboundMessageId,
+          payload: {
+            action: safetyDecision.action,
+            severity: safetyDecision.severity,
+            keyword_version: safetyDecision.keyword_version,
+            matched_term: safetyDecision.matched_term,
+            strike_count: safetyDecision.strike_count,
+            safety_hold: safetyDecision.safety_hold,
+            replay: safetyDecision.replay,
+            request_id: requestId,
+          },
+        });
+        logEvent({
+          event: "safety.strike_applied",
+          user_id: user?.id ?? null,
+          correlation_id: inboundMessageId,
+          payload: {
+            action: safetyDecision.action,
+            strike_count: safetyDecision.strike_count,
+            safety_hold: safetyDecision.safety_hold,
+            escalated: safetyDecision.safety_hold,
+            severity: safetyDecision.severity,
+            keyword_version: safetyDecision.keyword_version,
+          },
         });
       }
 
@@ -275,46 +326,52 @@ Deno.serve(async (req) => {
     });
 
     if (blockReportDecision.intercepted) {
-      console.info("safety.block_report_intercepted", {
-        build_version: BUILD_VERSION,
-        block_report_build: BLOCK_REPORT_BUILD,
-        request_id: requestId,
-        inbound_message_id: inboundMessageId,
-        inbound_message_sid: messageSid,
-        user_id: user?.id ?? null,
-        action: blockReportDecision.action,
-        target_user_id: blockReportDecision.target_user_id,
-        linkup_id: blockReportDecision.linkup_id,
-        reason_category: blockReportDecision.reason_category,
-        incident_id: blockReportDecision.incident_id,
-      });
-
       if (blockReportDecision.action === "block_created") {
-        console.info("safety.block_created", {
-          request_id: requestId,
+        logEvent({
+          event: "safety.block_created",
+          user_id: user?.id ?? null,
+          linkup_id: blockReportDecision.linkup_id,
           correlation_id: inboundMessageId,
-          blocker_user_id: user?.id ?? null,
-          blocked_user_id: blockReportDecision.target_user_id,
+          payload: {
+            request_id: requestId,
+            blocker_user_id: user?.id ?? null,
+            blocked_user_id: blockReportDecision.target_user_id,
+            block_report_build: BLOCK_REPORT_BUILD,
+          },
         });
       }
 
       if (blockReportDecision.action === "report_created") {
-        console.info("safety.report_created", {
-          request_id: requestId,
+        logEvent({
+          event: "safety.report_created",
+          user_id: user?.id ?? null,
+          linkup_id: blockReportDecision.linkup_id,
           correlation_id: inboundMessageId,
-          reporter_user_id: user?.id ?? null,
-          reported_user_id: blockReportDecision.target_user_id,
-          reason_category: blockReportDecision.reason_category,
-          incident_id: blockReportDecision.incident_id,
+          payload: {
+            request_id: requestId,
+            reporter_user_id: user?.id ?? null,
+            reported_user_id: blockReportDecision.target_user_id,
+            reason_category: blockReportDecision.reason_category,
+            incident_id: blockReportDecision.incident_id,
+            report_reason_free_text: blockReportDecision.reason_category === "other"
+              ? bodyRaw
+              : null,
+            block_report_build: BLOCK_REPORT_BUILD,
+          },
         });
       }
 
       if (blockReportDecision.action === "blocked_message_attempt") {
-        console.info("safety.blocked_message_attempt", {
-          request_id: requestId,
-          correlation_id: inboundMessageId,
+        logEvent({
+          event: "safety.blocked_message_attempt",
           user_id: user?.id ?? null,
           linkup_id: blockReportDecision.linkup_id,
+          correlation_id: inboundMessageId,
+          payload: {
+            request_id: requestId,
+            linkup_id: blockReportDecision.linkup_id,
+            target_user_id: blockReportDecision.target_user_id,
+          },
         });
       }
 
@@ -337,17 +394,6 @@ Deno.serve(async (req) => {
       safetyOverrideApplied: false,
     });
 
-    console.info("twilio.router_decision", {
-      build_version: BUILD_VERSION,
-      request_id: requestId,
-      inbound_message_id: inboundMessageId,
-      user_id: routingDecision.user_id,
-      session_mode: routingDecision.state.mode,
-      session_state_token: routingDecision.state.state_token,
-      profile_is_complete_mvp: routingDecision.profile_is_complete_mvp,
-      route: routingDecision.route,
-    });
-
     phase = "dispatch";
     const dispatchResult = await dispatchConversationRoute({
       supabase,
@@ -355,28 +401,21 @@ Deno.serve(async (req) => {
       payload,
     });
 
-    console.info("twilio.router_dispatch_completed", {
-      build_version: BUILD_VERSION,
-      request_id: requestId,
-      inbound_message_id: inboundMessageId,
-      user_id: routingDecision.user_id,
-      session_mode: routingDecision.state.mode,
-      session_state_token: routingDecision.state.state_token,
-      profile_is_complete_mvp: routingDecision.profile_is_complete_mvp,
-      route: routingDecision.route,
-      engine: dispatchResult.engine,
-    });
-
     return twimlResponse(dispatchResult.reply_message ?? undefined);
   } catch (error) {
     const err = error as Error;
-    console.error("twilio.unhandled_error", {
-      build_version: BUILD_VERSION,
-      request_id: requestId,
-      phase,
-      name: err?.name ?? "Error",
-      message: err?.message ?? String(error),
-      stack: err?.stack ?? null,
+    logEvent({
+      level: "error",
+      event: "system.unhandled_error",
+      correlation_id: requestId,
+      payload: {
+        build_version: BUILD_VERSION,
+        request_id: requestId,
+        phase,
+        error_name: err?.name ?? "Error",
+        error_message: err?.message ?? String(error),
+        stack: err?.stack ?? null,
+      },
     });
     return jsonErrorResponse(error, requestId, phase);
   }

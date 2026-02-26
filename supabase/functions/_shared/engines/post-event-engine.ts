@@ -12,6 +12,8 @@ import type {
   EngineDispatchInput,
   EngineDispatchResult,
 } from "../router/conversation-router.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { logEvent } from "../../../../packages/core/src/observability/logger.ts";
 
 const POST_EVENT_CONTACT_EXCHANGE_PENDING_ACK =
   "Thanks. I recorded your choice. If others opt in too, JOSH will share contact details.";
@@ -89,12 +91,15 @@ export async function runPostEventEngine(
     }
 
     if (persisted.learning_signal_written) {
-      console.info("post_event.learning_signal_written", {
+      logEvent({
+        event: "post_event.learning_signal_written",
         user_id: input.decision.user_id,
         linkup_id: persisted.linkup_id,
-        attendance_result: persisted.attendance_result,
-        do_again: persisted.do_again,
         correlation_id: persisted.correlation_id,
+        payload: {
+          attendance_result: persisted.attendance_result,
+          do_again: persisted.do_again,
+        },
       });
     }
 
@@ -142,26 +147,30 @@ export async function runPostEventEngine(
     }
 
     if (persisted.mutual_detected) {
-      console.info("post_event.mutual_detected", {
+      logEvent({
+        event: "post_event.contact_exchange_revealed",
         user_id: input.decision.user_id,
         linkup_id: persisted.linkup_id,
         correlation_id: persisted.correlation_id,
-      });
-    }
-
-    if (persisted.reveal_sent) {
-      console.info("post_event.reveal_sent", {
-        user_id: input.decision.user_id,
-        linkup_id: persisted.linkup_id,
-        correlation_id: persisted.correlation_id,
+        payload: {
+          linkup_id: persisted.linkup_id,
+          mutual_detected: persisted.mutual_detected,
+          reveal_sent: persisted.reveal_sent,
+          exchange_choice: persisted.exchange_choice,
+        },
       });
     }
 
     if (persisted.blocked_by_safety) {
-      console.info("safety.contact_exchange_suppressed", {
+      logEvent({
+        event: "safety.blocked_message_attempt",
         user_id: input.decision.user_id,
         linkup_id: persisted.linkup_id,
         correlation_id: persisted.correlation_id,
+        payload: {
+          linkup_id: persisted.linkup_id,
+          target_user_id: null,
+        },
       });
     }
 
@@ -263,20 +272,22 @@ async function persistAttendanceResult(params: {
     throw new Error("Post-event attendance capture returned invalid state token values.");
   }
 
-  console.info("post_event.attendance_captured", {
+  const correlationId = typeof row.correlation_id === "string"
+    ? row.correlation_id
+    : params.correlationId;
+  logEvent({
+    event: "post_event.attendance_recorded",
     user_id: params.userId,
-    inbound_message_id: params.inboundMessageId,
-    inbound_message_sid: params.inboundMessageSid,
-    attendance_result: params.attendanceResult,
-    previous_state_token: previousStateToken,
-    next_state_token: nextStateToken,
-    mode: typeof row.mode === "string" ? row.mode : null,
-    reason,
-    duplicate,
     linkup_id: typeof row.linkup_id === "string" ? row.linkup_id : null,
-    correlation_id: typeof row.correlation_id === "string"
-      ? row.correlation_id
-      : params.correlationId,
+    correlation_id: correlationId,
+    payload: {
+      attendance_result: params.attendanceResult,
+      previous_state_token: previousStateToken,
+      next_state_token: nextStateToken,
+      mode: typeof row.mode === "string" ? row.mode : null,
+      reason,
+      duplicate,
+    },
   });
 
   return {
@@ -360,20 +371,21 @@ async function persistDoAgainDecision(params: {
     throw new Error("Post-event do-again capture returned invalid do_again value.");
   }
 
-  console.info("post_event.do_again_captured", {
+  logEvent({
+    event: "conversation.state_transition",
     user_id: params.userId,
-    inbound_message_id: params.inboundMessageId,
-    inbound_message_sid: params.inboundMessageSid,
-    do_again: doAgainRaw,
-    previous_state_token: previousStateToken,
-    next_state_token: nextStateToken,
-    mode: typeof row.mode === "string" ? row.mode : null,
-    reason,
-    duplicate,
-    learning_signal_written: learningSignalWritten,
-    attendance_result: attendanceResult,
     linkup_id: linkupId,
     correlation_id: correlationId,
+    payload: {
+      previous_state_token: previousStateToken,
+      next_state_token: nextStateToken,
+      reason: `post_event_do_again_${reason}`,
+      mode: typeof row.mode === "string" ? row.mode : null,
+      do_again: doAgainRaw,
+      duplicate,
+      learning_signal_written: learningSignalWritten,
+      attendance_result: attendanceResult,
+    },
   });
 
   return {
@@ -471,22 +483,27 @@ async function persistExchangeChoice(params: {
   const revealSent = row.reveal_sent === true;
   const blockedBySafety = row.blocked_by_safety === true;
 
-  console.info("post_event.contact_choice_recorded", {
+  logEvent({
+    event: "post_event.contact_exchange_opt_in",
     user_id: params.userId,
-    inbound_message_id: params.inboundMessageId,
-    inbound_message_sid: params.inboundMessageSid,
-    exchange_choice: exchangeChoiceRaw,
-    exchange_opt_in: exchangeOptIn,
-    previous_state_token: previousStateToken,
-    next_state_token: nextStateToken,
-    mode: typeof row.mode === "string" ? row.mode : null,
-    reason,
-    duplicate,
-    mutual_detected: mutualDetected,
-    reveal_sent: revealSent,
-    blocked_by_safety: blockedBySafety,
     linkup_id: linkupId,
     correlation_id: correlationId,
+    payload: {
+      exchange_choice: exchangeChoiceRaw,
+      exchange_opt_in: exchangeOptIn,
+      previous_state_token: previousStateToken,
+      next_state_token: nextStateToken,
+      mode: typeof row.mode === "string" ? row.mode : null,
+      reason,
+      duplicate,
+      mutual_detected: mutualDetected,
+      reveal_sent: revealSent,
+      blocked_by_safety: blockedBySafety,
+      contact_exchange_payload: {
+        inbound_message_id: params.inboundMessageId,
+        inbound_message_sid: params.inboundMessageSid,
+      },
+    },
   });
 
   return {
