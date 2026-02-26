@@ -46,6 +46,15 @@ describe("conversation router foundation", () => {
     expect(nextTransition).toBe("onboarding:awaiting_burst");
   });
 
+  it("routes post_event state to the post-event engine deterministically", () => {
+    const state = validateConversationState("post_event", "post_event:attendance");
+    const route = resolveRouteForState(state);
+    const nextTransition = resolveNextTransition(state, route);
+
+    expect(route).toBe("post_event_engine");
+    expect(nextTransition).toBe("post_event:attendance");
+  });
+
   it("throws explicit error when state token is missing", () => {
     expect(() => validateConversationState("idle", ""))
       .toThrow(ConversationRouterError);
@@ -86,6 +95,81 @@ describe("conversation router foundation", () => {
     expect(decision.next_transition).toBe("onboarding:awaiting_opening_response");
   });
 
+  it("transitions to post_event mode when linked linkup reaches completed", async () => {
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: {
+        id: "ses_123",
+        mode: "awaiting_invite_reply",
+        state_token: "invite:awaiting_reply",
+        linkup_id: "lnk_123",
+      },
+      profile: { is_complete_mvp: true, state: "complete_mvp" },
+      linkupStates: { lnk_123: "completed" },
+    });
+
+    const decision = await routeConversationMessage({
+      supabase,
+      payload: samplePayload(),
+    });
+
+    expect(decision.state.mode).toBe("post_event");
+    expect(decision.state.state_token).toBe("post_event:attendance");
+    expect(decision.route).toBe("post_event_engine");
+    expect(supabase.debugState().postEventTransitionWrites).toBe(1);
+  });
+
+  it("does not transition to post_event when linked linkup is not completed", async () => {
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: {
+        id: "ses_123",
+        mode: "awaiting_invite_reply",
+        state_token: "invite:awaiting_reply",
+        linkup_id: "lnk_123",
+      },
+      profile: { is_complete_mvp: true, state: "complete_mvp" },
+      linkupStates: { lnk_123: "locked" },
+    });
+
+    const decision = await routeConversationMessage({
+      supabase,
+      payload: samplePayload(),
+    });
+
+    expect(decision.state.mode).toBe("awaiting_invite_reply");
+    expect(decision.route).toBe("default_engine");
+    expect(supabase.debugState().postEventTransitionWrites).toBe(0);
+  });
+
+  it("enforces idempotent transition writes when post_event transition is evaluated twice", async () => {
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: {
+        id: "ses_123",
+        mode: "awaiting_invite_reply",
+        state_token: "invite:awaiting_reply",
+        linkup_id: "lnk_123",
+      },
+      profile: { is_complete_mvp: true, state: "complete_mvp" },
+      linkupStates: { lnk_123: "completed" },
+    });
+
+    const first = await routeConversationMessage({
+      supabase,
+      payload: samplePayload(),
+    });
+    const second = await routeConversationMessage({
+      supabase,
+      payload: samplePayload(),
+    });
+
+    expect(first.state.mode).toBe("post_event");
+    expect(second.state.mode).toBe("post_event");
+    expect(supabase.debugState().postEventTransitionWrites).toBe(1);
+    expect(supabase.debugState().postEventTransitionCalls).toBe(2);
+  });
+
   it("creates default session when conversation state is missing", async () => {
     const supabase = buildSupabaseMock({
       user: { id: "usr_123" },
@@ -113,6 +197,27 @@ describe("conversation router foundation", () => {
 
     expect(result.engine).toBe("default_engine");
     expect(result.reply_message).toContain("default engine selected");
+  });
+
+  it("dispatches deterministic post-event engine response", async () => {
+    const result = await dispatchConversationRoute({
+      supabase: buildSupabaseMock({ user: null, session: null, profile: null }),
+      decision: {
+        user_id: "usr_123",
+        state: {
+          mode: "post_event",
+          state_token: "post_event:attendance",
+        },
+        profile_is_complete_mvp: true,
+        route: "post_event_engine",
+        safety_override_applied: false,
+        next_transition: "post_event:attendance",
+      },
+      payload: samplePayload(),
+    });
+
+    expect(result.engine).toBe("post_event_engine");
+    expect(result.reply_message).toContain("Post-event follow-up is initializing");
   });
 
   it("dispatches by normalized state route when decision route is stale", async () => {
@@ -200,14 +305,28 @@ function sampleDecision(route: RoutingDecision["route"]): RoutingDecision {
 function buildSupabaseMock(
   data: {
     user: { id: string } | null;
-    session: { id: string; mode: string | null; state_token: string | null } | null;
+    session: {
+      id: string;
+      mode: string | null;
+      state_token: string | null;
+      linkup_id?: string | null;
+    } | null;
     profile: { is_complete_mvp: boolean; state: string | null } | null;
+    linkupStates?: Record<string, string>;
   },
 ) {
   const state = {
     user: data.user,
-    session: data.session,
+    session: data.session
+      ? {
+          ...data.session,
+          linkup_id: data.session.linkup_id ?? null,
+        }
+      : null,
     profile: data.profile,
+    linkupStates: data.linkupStates ?? {},
+    postEventTransitionCalls: 0,
+    postEventTransitionWrites: 0,
   };
 
   return {
@@ -259,6 +378,7 @@ function buildSupabaseMock(
                 id: sessionRow.id,
                 mode: sessionRow.mode,
                 state_token: sessionRow.state_token,
+                linkup_id: sessionRow.linkup_id ?? null,
               },
               error: null,
             };
@@ -278,6 +398,7 @@ function buildSupabaseMock(
               id: "ses_new",
               mode: payload.mode,
               state_token: payload.state_token,
+              linkup_id: null,
             };
           }
           return query;
@@ -290,6 +411,129 @@ function buildSupabaseMock(
           return query;
         },
         select: query.select,
+      };
+    },
+    async rpc(fn: string, args?: Record<string, unknown>) {
+      if (fn !== "transition_session_to_post_event_if_linkup_completed") {
+        return {
+          data: null,
+          error: new Error(`Unexpected rpc function '${fn}'.`),
+        };
+      }
+
+      state.postEventTransitionCalls += 1;
+
+      const sessionId = typeof args?.p_session_id === "string"
+        ? args.p_session_id
+        : "";
+      if (!state.session || state.session.id !== sessionId) {
+        return {
+          data: null,
+          error: new Error("Session not found for post-event transition."),
+        };
+      }
+
+      const correlationId = typeof args?.p_correlation_id === "string"
+        ? args.p_correlation_id
+        : null;
+      const linkupId = state.session.linkup_id;
+      const linkupState = linkupId ? state.linkupStates[linkupId] ?? null : null;
+      const previousMode = state.session.mode;
+      const stateToken = state.session.state_token;
+      const linkupCorrelationId = linkupId ? `corr_${linkupId}` : null;
+
+      if (!linkupId) {
+        return {
+          data: [{
+            transitioned: false,
+            reason: "no_linkup",
+            next_mode: previousMode,
+            state_token: stateToken,
+            linkup_id: null,
+            linkup_state: null,
+            correlation_id: correlationId,
+            linkup_correlation_id: null,
+          }],
+          error: null,
+        };
+      }
+
+      if (linkupState !== "completed") {
+        return {
+          data: [{
+            transitioned: false,
+            reason: "linkup_not_completed",
+            next_mode: previousMode,
+            state_token: stateToken,
+            linkup_id: linkupId,
+            linkup_state: linkupState,
+            correlation_id: correlationId,
+            linkup_correlation_id: linkupCorrelationId,
+          }],
+          error: null,
+        };
+      }
+
+      if (previousMode === "post_event") {
+        return {
+          data: [{
+            transitioned: false,
+            reason: "already_post_event",
+            next_mode: previousMode,
+            state_token: stateToken,
+            linkup_id: linkupId,
+            linkup_state: linkupState,
+            correlation_id: correlationId,
+            linkup_correlation_id: linkupCorrelationId,
+          }],
+          error: null,
+        };
+      }
+
+      if (
+        previousMode !== "idle" &&
+        previousMode !== "linkup_forming" &&
+        previousMode !== "awaiting_invite_reply"
+      ) {
+        return {
+          data: [{
+            transitioned: false,
+            reason: "mode_protected",
+            next_mode: previousMode,
+            state_token: stateToken,
+            linkup_id: linkupId,
+            linkup_state: linkupState,
+            correlation_id: correlationId,
+            linkup_correlation_id: linkupCorrelationId,
+          }],
+          error: null,
+        };
+      }
+
+      state.session = {
+        ...state.session,
+        mode: "post_event",
+        state_token: "post_event:attendance",
+      };
+      state.postEventTransitionWrites += 1;
+
+      return {
+        data: [{
+          transitioned: true,
+          reason: "transitioned",
+          next_mode: "post_event",
+          state_token: "post_event:attendance",
+          linkup_id: linkupId,
+          linkup_state: linkupState,
+          correlation_id: correlationId,
+          linkup_correlation_id: linkupCorrelationId,
+        }],
+        error: null,
+      };
+    },
+    debugState() {
+      return {
+        ...state,
       };
     },
   };
