@@ -85,6 +85,7 @@ const POST_EVENT_STATE_TOKENS = [
   "post_event:attendance",
   "post_event:reflection",
   "post_event:complete",
+  "post_event:finalized",
 ] as const;
 type OnboardingStateToken = (typeof ONBOARDING_STATE_TOKENS)[number];
 type PostEventStateToken = (typeof POST_EVENT_STATE_TOKENS)[number];

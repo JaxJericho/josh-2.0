@@ -22,10 +22,17 @@ export const POST_EVENT_ATTENDANCE_RESULTS = [
 ] as const;
 
 export type PostEventAttendanceResult = (typeof POST_EVENT_ATTENDANCE_RESULTS)[number];
+export const POST_EVENT_DO_AGAIN_DECISIONS = [
+  "yes",
+  "no",
+  "unsure",
+] as const;
+export type PostEventDoAgainDecision = (typeof POST_EVENT_DO_AGAIN_DECISIONS)[number];
 
 export type PostEventConversationResult = {
   session_state_token: PostEventStateToken;
   attendance_result: PostEventAttendanceResult | null;
+  do_again_decision: PostEventDoAgainDecision | null;
   reply_message: string | null;
 };
 
@@ -33,6 +40,8 @@ export const POST_EVENT_REFLECTION_PROMPT =
   "Thanks for confirming. Quick reflection: what stood out most?";
 export const POST_EVENT_REFLECTION_ACK =
   "Appreciate it. I’ve logged your reflection step for next time.";
+export const POST_EVENT_DO_AGAIN_PROMPT =
+  "Glad you made it. Would you want to hang out with this group again? Reply A) Yes, B) Maybe, C) Probably not.";
 export const POST_EVENT_COMPLETE_ACK =
   "Thanks again. Post-event follow-up is complete.";
 
@@ -54,6 +63,7 @@ export function handlePostEventConversation(
     return {
       session_state_token: stateToken,
       attendance_result: detectPostEventAttendanceResult(input.body_raw),
+      do_again_decision: null,
       reply_message: POST_EVENT_REFLECTION_PROMPT,
     };
   }
@@ -62,13 +72,25 @@ export function handlePostEventConversation(
     return {
       session_state_token: stateToken,
       attendance_result: null,
+      do_again_decision: null,
       reply_message: POST_EVENT_REFLECTION_ACK,
+    };
+  }
+
+  if (stateToken === "post_event:complete") {
+    const doAgainDecision = detectPostEventDoAgainDecision(input.body_raw);
+    return {
+      session_state_token: stateToken,
+      attendance_result: null,
+      do_again_decision: doAgainDecision,
+      reply_message: doAgainDecision ? POST_EVENT_COMPLETE_ACK : POST_EVENT_DO_AGAIN_PROMPT,
     };
   }
 
   return {
     session_state_token: stateToken,
     attendance_result: null,
+    do_again_decision: null,
     reply_message: POST_EVENT_COMPLETE_ACK,
   };
 }
@@ -155,6 +177,42 @@ const UNCLEAR_MATCHES = [
   "i do not know",
 ] as const;
 
+const DO_AGAIN_PHRASE_MATCHES: ReadonlyArray<{ phrase: string; value: PostEventDoAgainDecision }> = [
+  { phrase: "probably not", value: "no" },
+  { phrase: "not sure", value: "unsure" },
+  { phrase: "do not know", value: "unsure" },
+  { phrase: "dont know", value: "unsure" },
+] as const;
+
+const DO_AGAIN_EXACT_MATCHES: Record<string, PostEventDoAgainDecision> = {
+  "a": "yes",
+  "1": "yes",
+  "yes": "yes",
+  "y": "yes",
+  "yeah": "yes",
+  "yep": "yes",
+  "absolutely": "yes",
+  "definitely": "yes",
+  "b": "unsure",
+  "2": "unsure",
+  "maybe": "unsure",
+  "unsure": "unsure",
+  "idk": "unsure",
+  "c": "no",
+  "3": "no",
+  "no": "no",
+  "n": "no",
+  "nope": "no",
+  "nah": "no",
+} as const;
+
+const DO_AGAIN_TOKEN_MATCHES: Record<string, PostEventDoAgainDecision> = {
+  ...DO_AGAIN_EXACT_MATCHES,
+  "optiona": "yes",
+  "optionb": "unsure",
+  "optionc": "no",
+} as const;
+
 function scoreMatches(text: string, phrases: readonly string[]): number {
   return phrases.reduce((count, phrase) => {
     return count + (hasPhrase(text, phrase) ? 1 : 0);
@@ -165,6 +223,60 @@ function hasPhrase(text: string, phrase: string): boolean {
   const paddedText = ` ${text} `;
   const paddedPhrase = ` ${phrase} `;
   return paddedText.includes(paddedPhrase);
+}
+
+export function detectPostEventDoAgainDecision(inputText: string): PostEventDoAgainDecision | null {
+  const normalized = normalizeIntentText(inputText);
+  if (!normalized) {
+    return null;
+  }
+
+  const exactMatch = parseSingleChoice(normalized, DO_AGAIN_EXACT_MATCHES);
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const matches = new Set<PostEventDoAgainDecision>();
+  for (const token of normalized.split(" ").filter(Boolean)) {
+    const choice = parseSingleChoice(token, DO_AGAIN_TOKEN_MATCHES);
+    if (choice) {
+      matches.add(choice);
+    }
+  }
+
+  for (const phraseMatch of DO_AGAIN_PHRASE_MATCHES) {
+    if (hasPhrase(normalized, phraseMatch.phrase)) {
+      matches.add(phraseMatch.value);
+    }
+  }
+
+  if (matches.size !== 1) {
+    return null;
+  }
+
+  const [choice] = Array.from(matches);
+  return choice ?? null;
+}
+
+function parseSingleChoice(
+  raw: string,
+  options: Record<string, PostEventDoAgainDecision>,
+): PostEventDoAgainDecision | null {
+  const normalized = normalizeIntentText(raw);
+  if (!normalized) {
+    return null;
+  }
+
+  if (options[normalized]) {
+    return options[normalized];
+  }
+
+  const compact = normalized.replace(/[.\s]/g, "");
+  if (options[compact]) {
+    return options[compact];
+  }
+
+  return null;
 }
 
 function resolveScore(score: {

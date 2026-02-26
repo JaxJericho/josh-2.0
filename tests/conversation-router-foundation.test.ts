@@ -64,6 +64,15 @@ describe("conversation router foundation", () => {
     expect(nextTransition).toBe("post_event:reflection");
   });
 
+  it("accepts post_event finalized as a legal transition token", () => {
+    const state = validateConversationState("post_event", "post_event:finalized");
+    const route = resolveRouteForState(state);
+    const nextTransition = resolveNextTransition(state, route);
+
+    expect(route).toBe("post_event_engine");
+    expect(nextTransition).toBe("post_event:finalized");
+  });
+
   it("throws explicit error when state token is missing", () => {
     expect(() => validateConversationState("idle", ""))
       .toThrow(ConversationRouterError);
@@ -243,6 +252,47 @@ describe("conversation router foundation", () => {
     expect(result.reply_message).toContain("Quick reflection");
   });
 
+  it("dispatches post_event complete-state do-again capture through post-event engine", async () => {
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: {
+        id: "ses_123",
+        mode: "post_event",
+        state_token: "post_event:complete",
+        linkup_id: "lnk_123",
+      },
+      profile: { is_complete_mvp: true, state: "complete_mvp" },
+    });
+
+    const result = await dispatchConversationRoute({
+      supabase,
+      decision: {
+        user_id: "usr_123",
+        state: {
+          mode: "post_event",
+          state_token: "post_event:complete",
+        },
+        profile_is_complete_mvp: true,
+        route: "post_event_engine",
+        safety_override_applied: false,
+        next_transition: "post_event:complete",
+      },
+      payload: {
+        ...samplePayload(),
+        inbound_message_id: "00000000-0000-0000-0000-000000000123",
+        inbound_message_sid: "SM_DO_AGAIN_ROUTER_1",
+        body_raw: "A",
+        body_normalized: "A",
+      },
+    });
+
+    expect(result.engine).toBe("post_event_engine");
+    expect(result.reply_message).toContain("Post-event follow-up is complete");
+    expect(supabase.debugState().postEventDoAgainWrites).toBe(1);
+    expect(supabase.debugState().postEventLearningWrites).toBe(1);
+    expect(supabase.debugState().session?.state_token).toBe("post_event:finalized");
+  });
+
   it("dispatches by normalized state route when decision route is stale", async () => {
     const decision = sampleDecision("profile_interview_engine");
     const result = await dispatchConversationRoute({
@@ -351,7 +401,12 @@ function buildSupabaseMock(
     postEventTransitionCalls: 0,
     postEventTransitionWrites: 0,
     postEventAttendanceWrites: 0,
+    postEventDoAgainWrites: 0,
+    postEventLearningWrites: 0,
+    attendanceResult: "attended",
+    doAgainDecision: null as "yes" | "no" | "unsure" | null,
     processedAttendanceSids: new Set<string>(),
+    processedDoAgainSids: new Set<string>(),
   };
 
   return {
@@ -494,6 +549,7 @@ function buildSupabaseMock(
 
         state.postEventAttendanceWrites += 1;
         state.processedAttendanceSids.add(inboundMessageSid);
+        state.attendanceResult = attendanceResult;
         state.session = {
           ...state.session,
           state_token: "post_event:reflection",
@@ -508,6 +564,100 @@ function buildSupabaseMock(
             linkup_id: state.session.linkup_id,
             correlation_id: correlationId,
             attendance_result: attendanceResult,
+            mode: state.session.mode,
+          }],
+          error: null,
+        };
+      }
+
+      if (fn === "capture_post_event_do_again") {
+        const inboundMessageSid = typeof args?.p_inbound_message_sid === "string"
+          ? args.p_inbound_message_sid
+          : "";
+        const correlationId = typeof args?.p_correlation_id === "string"
+          ? args.p_correlation_id
+          : null;
+        const doAgainRaw = typeof args?.p_do_again === "string"
+          ? args.p_do_again
+          : "";
+        const doAgainDecision =
+          doAgainRaw === "yes" || doAgainRaw === "no" || doAgainRaw === "unsure"
+            ? doAgainRaw
+            : null;
+
+        if (!state.session) {
+          return {
+            data: null,
+            error: new Error("Session not found for post-event do-again capture."),
+          };
+        }
+        if (!inboundMessageSid) {
+          return {
+            data: null,
+            error: new Error("Missing inbound message sid."),
+          };
+        }
+        if (!doAgainDecision) {
+          return {
+            data: null,
+            error: new Error("Invalid do-again decision."),
+          };
+        }
+        if (state.processedDoAgainSids.has(inboundMessageSid)) {
+          return {
+            data: [{
+              previous_state_token: state.session.state_token,
+              next_state_token: state.session.state_token,
+              attendance_result: state.attendanceResult,
+              do_again: state.doAgainDecision ?? doAgainDecision,
+              learning_signal_written: false,
+              duplicate: true,
+              reason: "duplicate_replay",
+              correlation_id: correlationId,
+              linkup_id: state.session.linkup_id,
+              mode: state.session.mode,
+            }],
+            error: null,
+          };
+        }
+        if (state.session.state_token !== "post_event:complete") {
+          return {
+            data: [{
+              previous_state_token: state.session.state_token,
+              next_state_token: state.session.state_token,
+              attendance_result: state.attendanceResult,
+              do_again: doAgainDecision,
+              learning_signal_written: false,
+              duplicate: false,
+              reason: "state_not_complete",
+              correlation_id: correlationId,
+              linkup_id: state.session.linkup_id,
+              mode: state.session.mode,
+            }],
+            error: null,
+          };
+        }
+
+        state.postEventDoAgainWrites += 1;
+        state.postEventLearningWrites += 1;
+        state.doAgainDecision = doAgainDecision;
+        state.processedDoAgainSids.add(inboundMessageSid);
+        state.session = {
+          ...state.session,
+          state_token: "post_event:finalized",
+        };
+
+        return {
+          data: [{
+            previous_state_token: "post_event:complete",
+            next_state_token: "post_event:finalized",
+            attendance_result: state.attendanceResult,
+            do_again: doAgainDecision,
+            learning_signal_written: true,
+            duplicate: false,
+            reason: "captured",
+            correlation_id: correlationId,
+            linkup_id: state.session.linkup_id,
             mode: state.session.mode,
           }],
           error: null,

@@ -2453,6 +2453,28 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      capture_post_event_do_again: {
+        Args: {
+          p_correlation_id?: string
+          p_do_again: string
+          p_inbound_message_id: string
+          p_inbound_message_sid: string
+          p_user_id: string
+        }
+        Returns: {
+          attendance_result: string
+          correlation_id: string
+          do_again: string
+          duplicate: boolean
+          learning_signal_written: boolean
+          linkup_id: string
+          mode: Database["public"]["Enums"]["conversation_mode"]
+          next_state_token: string
+          previous_state_token: string
+          reason: string
+          session_id: string
+        }[]
+      }
       capture_post_event_attendance: {
         Args: {
           p_attendance_result: string
@@ -2539,6 +2561,7 @@ export type Database = {
         | "linkup_attendance_unsure"
         | "linkup_do_again_yes"
         | "linkup_do_again_no"
+        | "linkup_do_again_unsure"
         | "linkup_feedback_text"
         | "contact_exchange_mutual_yes"
         | "contact_exchange_declined"
@@ -2748,6 +2771,7 @@ export const Constants = {
         "linkup_attendance_unsure",
         "linkup_do_again_yes",
         "linkup_do_again_no",
+        "linkup_do_again_unsure",
         "linkup_feedback_text",
         "contact_exchange_mutual_yes",
         "contact_exchange_declined",
