@@ -20,6 +20,12 @@ import {
 } from "../_shared/router/conversation-router.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { logEvent } from "../../../packages/core/src/observability/logger.ts";
+import {
+  elapsedMetricMs,
+  emitMetricBestEffort,
+  emitRpcFailureMetric,
+  nowMetricMs,
+} from "../../../packages/core/src/observability/metrics.ts";
 
 type Command = "STOP" | "HELP" | "NONE";
 
@@ -36,6 +42,8 @@ const encoder = new TextEncoder();
 
 Deno.serve(async (req) => {
   const requestId = crypto.randomUUID();
+  const startedAt = nowMetricMs();
+  let outcome: "success" | "error" = "success";
   let phase = "start";
   try {
     phase = "method";
@@ -403,6 +411,18 @@ Deno.serve(async (req) => {
 
     return twimlResponse(dispatchResult.reply_message ?? undefined);
   } catch (error) {
+    outcome = "error";
+    if (
+      phase === "encrypt_rpc" ||
+      phase === "safety_intercept" ||
+      phase === "block_report_intercept"
+    ) {
+      emitRpcFailureMetric({
+        correlation_id: requestId,
+        component: "twilio_inbound",
+        rpc_name: phase,
+      });
+    }
     const err = error as Error;
     logEvent({
       level: "error",
@@ -418,6 +438,17 @@ Deno.serve(async (req) => {
       },
     });
     return jsonErrorResponse(error, requestId, phase);
+  } finally {
+    emitMetricBestEffort({
+      metric: "system.request.latency",
+      value: elapsedMetricMs(startedAt),
+      correlation_id: requestId,
+      tags: {
+        component: "twilio_inbound",
+        operation: "pipeline",
+        outcome,
+      },
+    });
   }
 });
 

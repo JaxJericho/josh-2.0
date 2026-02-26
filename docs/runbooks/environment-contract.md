@@ -122,6 +122,13 @@ Canonical scheduler path is Vercel Cron -> protected Next.js route -> Supabase r
 | `NEXT_PUBLIC_SENTRY_DSN` | Yes (staging/prod client observability), No (local) | `sentry.client.config.ts` | Valid public DSN URL | Local: optional `.env.local`. Staging: Vercel staging env. Production: Vercel production env. | Public DSN; still keep environment-specific. |
 | `SENTRY_ENVIRONMENT` | Yes | Observability labels and staging-only test gating | Enum: `local` / `staging` / `production` | Local: `.env.local` optional (`local`). Staging: Vercel staging env (`staging`). Production: Vercel production env (`production`). | Non-secret. Must match deployment environment. |
 | `SENTRY_AUTH_TOKEN` | No (build-time optional) | Planned source map upload and CI release integration | Sentry auth token | Local optional for manual release tooling. Staging/Production CI env if source-map upload enabled. | Secret. Restrict to CI context. |
+| `METRICS_ALERT_ERROR_RATE_THRESHOLD_RATIO` | No | `packages/core/src/observability/alert-thresholds.ts` | Positive decimal ratio (e.g. `0.05`) | Local: optional `.env.local`. Staging: optional Vercel staging env / Supabase staging function secret. Production: optional Vercel production env / Supabase production function secret. | Non-secret. Defaults to `0.05` when unset. |
+| `METRICS_ALERT_ERROR_RATE_WINDOW_MINUTES` | No | `packages/core/src/observability/alert-thresholds.ts` | Positive integer minutes | Local optional. Staging optional. Production optional. | Non-secret. Defaults to `5`. |
+| `METRICS_ALERT_CRISIS_INTERCEPT_SPIKE_COUNT` | No | `packages/core/src/observability/alert-thresholds.ts` | Positive integer count threshold | Local optional. Staging optional. Production optional. | Non-secret. Defaults to `5`. |
+| `METRICS_ALERT_CRISIS_INTERCEPT_SPIKE_WINDOW_MINUTES` | No | `packages/core/src/observability/alert-thresholds.ts` | Positive integer minutes | Local optional. Staging optional. Production optional. | Non-secret. Defaults to `15`. |
+| `METRICS_ALERT_LLM_COST_HOURLY_USD` | No | `packages/core/src/observability/alert-thresholds.ts` | Positive decimal USD value | Local optional. Staging optional. Production optional. | Non-secret. Defaults to `25`. |
+| `METRICS_ALERT_RPC_FAILURE_COUNT` | No | `packages/core/src/observability/alert-thresholds.ts` | Positive integer count threshold | Local optional. Staging optional. Production optional. | Non-secret. Defaults to `20`. |
+| `METRICS_ALERT_RPC_FAILURE_WINDOW_MINUTES` | No | `packages/core/src/observability/alert-thresholds.ts` | Positive integer minutes | Local optional. Staging optional. Production optional. | Non-secret. Defaults to `5`. |
 
 ### Verification Script Inputs (local tooling)
 

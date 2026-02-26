@@ -4,6 +4,11 @@ import { logAdminAction } from "../../../../lib/admin-audit";
 import { AdminAuthError, requireAdminRole } from "../../../../lib/admin-auth";
 import { logEvent } from "../../../../lib/observability";
 import { getSupabaseServiceRoleClient } from "../../../../lib/supabase-service-role";
+import {
+  elapsedMetricMs,
+  emitMetricBestEffort,
+  nowMetricMs,
+} from "../../../../../packages/core/src/observability/metrics";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ALLOWED_STATUSES = new Set(["open", "reviewed", "resolved"]);
@@ -13,6 +18,8 @@ type DynamicClient = {
 };
 
 export async function POST(request: Request): Promise<Response> {
+  const startedAt = nowMetricMs();
+  let outcome: "success" | "error" = "success";
   try {
     const admin = await requireAdminRole(["super_admin", "moderator"], { request });
     const payload = await parseRequestPayload(request);
@@ -95,6 +102,7 @@ export async function POST(request: Request): Promise<Response> {
       { status: 200 },
     );
   } catch (error) {
+    outcome = "error";
     if (error instanceof AdminAuthError) {
       return NextResponse.json({ code: error.code, message: error.message }, { status: error.status });
     }
@@ -110,6 +118,16 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
     return NextResponse.json({ code: "INTERNAL_ERROR", message }, { status: 500 });
+  } finally {
+    emitMetricBestEffort({
+      metric: "system.request.latency",
+      value: elapsedMetricMs(startedAt),
+      tags: {
+        component: "admin_api",
+        operation: "moderation_status_post",
+        outcome,
+      },
+    });
   }
 }
 

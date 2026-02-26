@@ -4,8 +4,15 @@ import { logAdminAction } from "../../../../lib/admin-audit";
 import { AdminAuthError, createAdminScopedClient, requireAdminRole } from "../../../../lib/admin-auth";
 import { isAdminRole } from "../../../../lib/admin-session";
 import { logEvent } from "../../../../lib/observability";
+import {
+  elapsedMetricMs,
+  emitMetricBestEffort,
+  nowMetricMs,
+} from "../../../../../packages/core/src/observability/metrics";
 
 export async function POST(request: Request): Promise<Response> {
+  const startedAt = nowMetricMs();
+  let outcome: "success" | "error" = "success";
   try {
     const admin = await requireAdminRole("super_admin", { request });
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
@@ -68,6 +75,7 @@ export async function POST(request: Request): Promise<Response> {
       { status: 200 },
     );
   } catch (error) {
+    outcome = "error";
     if (error instanceof AdminAuthError) {
       return NextResponse.json({ code: error.code, message: error.message }, { status: error.status });
     }
@@ -83,6 +91,16 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
     return NextResponse.json({ code: "INTERNAL_ERROR", message }, { status: 500 });
+  } finally {
+    emitMetricBestEffort({
+      metric: "system.request.latency",
+      value: elapsedMetricMs(startedAt),
+      tags: {
+        component: "admin_api",
+        operation: "users_role_post",
+        outcome,
+      },
+    });
   }
 }
 

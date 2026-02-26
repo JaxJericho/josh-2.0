@@ -9,6 +9,10 @@ export type LlmProviderResponse = {
   text: string;
   model: string;
   provider: "anthropic";
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+  };
 };
 
 export interface LlmProvider {
@@ -86,6 +90,30 @@ function extractAnthropicText(value: unknown): string {
   return text;
 }
 
+function extractAnthropicUsage(value: unknown): { input_tokens: number; output_tokens: number } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { input_tokens: 0, output_tokens: 0 };
+  }
+
+  const usage = (value as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+    return { input_tokens: 0, output_tokens: 0 };
+  }
+
+  const usageRecord = usage as Record<string, unknown>;
+  const inputTokens = Number(usageRecord.input_tokens ?? 0);
+  const outputTokens = Number(usageRecord.output_tokens ?? 0);
+
+  return {
+    input_tokens: Number.isFinite(inputTokens) && inputTokens > 0
+      ? Math.floor(inputTokens)
+      : 0,
+    output_tokens: Number.isFinite(outputTokens) && outputTokens > 0
+      ? Math.floor(outputTokens)
+      : 0,
+  };
+}
+
 export function createAnthropicProvider(params?: {
   apiKey?: string | null;
   model?: string;
@@ -158,11 +186,13 @@ export function createAnthropicProvider(params?: {
       }
 
       const extractedText = extractAnthropicText(parsedBody);
+      const usage = extractAnthropicUsage(parsedBody);
 
       return {
         text: extractedText,
         model,
         provider: "anthropic",
+        usage,
       };
     },
   };

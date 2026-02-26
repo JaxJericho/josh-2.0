@@ -14,6 +14,12 @@ import {
 } from "./provider.ts";
 import { validateModelOutput } from "./output-validator.ts";
 import { logEvent as emitStructuredEvent } from "../../core/src/observability/logger.ts";
+import {
+  elapsedMetricMs,
+  emitMetricBestEffort,
+  nowMetricMs,
+} from "../../core/src/observability/metrics.ts";
+import { estimateLlmCostUsd } from "../../core/src/observability/llm-pricing.ts";
 
 export type InterviewExtractInput = {
   userId: string;
@@ -225,6 +231,10 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
       });
 
       const timeout = withTimeoutSignal(timeoutMs);
+      const llmCallStartedAt = nowMetricMs();
+      let llmCallOutcome: "success" | "error" = "success";
+      let llmProvider = "anthropic";
+      let llmModel = "unknown";
       try {
         const providerResponse = await provider.generateText({
           systemPrompt: INTERVIEW_EXTRACTION_SYSTEM_PROMPT,
@@ -232,6 +242,49 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           timeoutMs,
           signal: timeout.signal,
         });
+        llmProvider = providerResponse.provider;
+        llmModel = providerResponse.model;
+
+        const inputTokens = providerResponse.usage?.input_tokens ?? 0;
+        const outputTokens = providerResponse.usage?.output_tokens ?? 0;
+        const costEstimate = estimateLlmCostUsd({
+          model: providerResponse.model,
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+        });
+
+        emitMetricBestEffort({
+          metric: "llm.token.input",
+          value: costEstimate.input_tokens,
+          correlation_id: correlationId,
+          tags: {
+            component: "interview_extractor",
+            provider: providerResponse.provider,
+            model: providerResponse.model,
+          },
+        });
+        emitMetricBestEffort({
+          metric: "llm.token.output",
+          value: costEstimate.output_tokens,
+          correlation_id: correlationId,
+          tags: {
+            component: "interview_extractor",
+            provider: providerResponse.provider,
+            model: providerResponse.model,
+          },
+        });
+        emitMetricBestEffort({
+          metric: "llm.cost.estimated_usd",
+          value: costEstimate.estimated_cost_usd,
+          correlation_id: correlationId,
+          tags: {
+            component: "interview_extractor",
+            provider: providerResponse.provider,
+            model: costEstimate.pricing_model,
+            pricing_version: costEstimate.pricing_version,
+          },
+        });
+
         const validation = validateModelOutput({
           rawText: providerResponse.text,
           requireJson: true,
@@ -281,6 +334,7 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
         } satisfies InterviewExtractOutput;
       } catch (error) {
         lastError = error;
+        llmCallOutcome = "error";
 
         const isAbort = error instanceof DOMException && error.name === "AbortError";
         const normalized = normalizeErrorShape(error);
@@ -320,6 +374,28 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
         );
       } finally {
         timeout.clear();
+        emitMetricBestEffort({
+          metric: "llm.request.count",
+          value: 1,
+          correlation_id: correlationId,
+          tags: {
+            component: "interview_extractor",
+            provider: llmProvider,
+            model: llmModel,
+            attempt,
+            outcome: llmCallOutcome,
+          },
+        });
+        emitMetricBestEffort({
+          metric: "system.request.latency",
+          value: elapsedMetricMs(llmCallStartedAt),
+          correlation_id: correlationId,
+          tags: {
+            component: "llm_call",
+            operation: "interview_extractor",
+            outcome: llmCallOutcome,
+          },
+        });
       }
     }
 

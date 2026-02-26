@@ -8,6 +8,12 @@ import { runOnboardingEngine } from "../engines/onboarding-engine.ts";
 import { runPostEventEngine } from "../engines/post-event-engine.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { logEvent } from "../../../../packages/core/src/observability/logger.ts";
+import {
+  elapsedMetricMs,
+  emitMetricBestEffort,
+  emitRpcFailureMetric,
+  nowMetricMs,
+} from "../../../../packages/core/src/observability/metrics.ts";
 
 export type ConversationMode =
   | "idle"
@@ -177,79 +183,97 @@ export async function routeConversationMessage(
     safetyOverrideApplied?: boolean;
   },
 ): Promise<RoutingDecision> {
-  const user = await fetchUserByPhone(params.supabase, params.payload.from_e164);
-  if (!user) {
-    throw new ConversationRouterError(
-      "MISSING_USER_STATE",
-      "No user record found for inbound message."
-    );
-  }
-
-  const session = await fetchOrCreateConversationSession(params.supabase, user.id);
-  const transitionEvaluatedSession = await transitionConversationSessionForCompletedLinkup({
-    supabase: params.supabase,
-    session,
-    inboundMessageId: params.payload.inbound_message_id,
-  });
-  let state = validateConversationState(
-    transitionEvaluatedSession.mode,
-    transitionEvaluatedSession.state_token,
-  );
-  const profile = await fetchProfileSummary(params.supabase, user.id);
-  const shouldForceInterview = shouldRouteIdleUserToInterview(state, profile);
-
-  if (shouldForceInterview) {
-    const promotedSession = await promoteConversationSessionForOnboarding(
-      params.supabase,
-      transitionEvaluatedSession.id,
-    );
-    state = validateConversationState(
-      promotedSession.mode,
-      promotedSession.state_token,
-    );
-    if (
-      state.mode !== ONBOARDING_MODE ||
-      state.state_token !== ONBOARDING_STATE_TOKEN
-    ) {
+  const startedAt = nowMetricMs();
+  let outcome: "success" | "error" = "success";
+  try {
+    const user = await fetchUserByPhone(params.supabase, params.payload.from_e164);
+    if (!user) {
       throw new ConversationRouterError(
-        "INVALID_STATE",
-        "Session promotion failed to persist deterministic onboarding state."
+        "MISSING_USER_STATE",
+        "No user record found for inbound message."
       );
     }
+
+    const session = await fetchOrCreateConversationSession(params.supabase, user.id);
+    const transitionEvaluatedSession = await transitionConversationSessionForCompletedLinkup({
+      supabase: params.supabase,
+      session,
+      inboundMessageId: params.payload.inbound_message_id,
+    });
+    let state = validateConversationState(
+      transitionEvaluatedSession.mode,
+      transitionEvaluatedSession.state_token,
+    );
+    const profile = await fetchProfileSummary(params.supabase, user.id);
+    const shouldForceInterview = shouldRouteIdleUserToInterview(state, profile);
+
+    if (shouldForceInterview) {
+      const promotedSession = await promoteConversationSessionForOnboarding(
+        params.supabase,
+        transitionEvaluatedSession.id,
+      );
+      state = validateConversationState(
+        promotedSession.mode,
+        promotedSession.state_token,
+      );
+      if (
+        state.mode !== ONBOARDING_MODE ||
+        state.state_token !== ONBOARDING_STATE_TOKEN
+      ) {
+        throw new ConversationRouterError(
+          "INVALID_STATE",
+          "Session promotion failed to persist deterministic onboarding state."
+        );
+      }
+    }
+
+    const route = shouldForceInterview
+      ? "onboarding_engine"
+      : resolveRouteForState(state);
+    const nextTransition = shouldForceInterview
+      ? ONBOARDING_STATE_TOKEN
+      : resolveNextTransition(state, route);
+
+    const decision: RoutingDecision = {
+      user_id: user.id,
+      state,
+      profile_is_complete_mvp: profile?.is_complete_mvp ?? null,
+      route,
+      safety_override_applied: params.safetyOverrideApplied ?? false,
+      next_transition: nextTransition,
+    };
+
+    logEvent({
+      event: "conversation.router_decision",
+      user_id: decision.user_id,
+      correlation_id: params.payload.inbound_message_id,
+      payload: {
+        inbound_message_id: params.payload.inbound_message_id,
+        route: decision.route,
+        session_mode: decision.state.mode,
+        session_state_token: decision.state.state_token,
+        profile_is_complete_mvp: decision.profile_is_complete_mvp,
+        next_transition: decision.next_transition,
+        override_applied: decision.safety_override_applied,
+      },
+    });
+
+    return decision;
+  } catch (error) {
+    outcome = "error";
+    throw error;
+  } finally {
+    emitMetricBestEffort({
+      metric: "system.request.latency",
+      value: elapsedMetricMs(startedAt),
+      correlation_id: params.payload.inbound_message_id,
+      tags: {
+        component: "conversation_router",
+        operation: "route_conversation_message",
+        outcome,
+      },
+    });
   }
-
-  const route = shouldForceInterview
-    ? "onboarding_engine"
-    : resolveRouteForState(state);
-  const nextTransition = shouldForceInterview
-    ? ONBOARDING_STATE_TOKEN
-    : resolveNextTransition(state, route);
-
-  const decision: RoutingDecision = {
-    user_id: user.id,
-    state,
-    profile_is_complete_mvp: profile?.is_complete_mvp ?? null,
-    route,
-    safety_override_applied: params.safetyOverrideApplied ?? false,
-    next_transition: nextTransition,
-  };
-
-  logEvent({
-    event: "conversation.router_decision",
-    user_id: decision.user_id,
-    correlation_id: params.payload.inbound_message_id,
-    payload: {
-      inbound_message_id: params.payload.inbound_message_id,
-      route: decision.route,
-      session_mode: decision.state.mode,
-      session_state_token: decision.state.state_token,
-      profile_is_complete_mvp: decision.profile_is_complete_mvp,
-      next_transition: decision.next_transition,
-      override_applied: decision.safety_override_applied,
-    },
-  });
-
-  return decision;
 }
 
 export function validateConversationState(
@@ -610,6 +634,15 @@ async function fetchOrCreateConversationSession(
     );
   }
 
+  emitMetricBestEffort({
+    metric: "conversation.session.started",
+    value: 1,
+    tags: {
+      component: "conversation_router",
+      route: "session_create",
+    },
+  });
+
   return {
     id: data.id,
     mode: data.mode ?? null,
@@ -645,6 +678,11 @@ async function transitionConversationSessionForCompletedLinkup(
   );
 
   if (error) {
+    emitRpcFailureMetric({
+      correlation_id: params.inboundMessageId,
+      component: "conversation_router",
+      rpc_name: "transition_session_to_post_event_if_linkup_completed",
+    });
     throw new ConversationRouterError(
       "STATE_TRANSITION_FAILED",
       "Unable to evaluate post-event session transition.",
