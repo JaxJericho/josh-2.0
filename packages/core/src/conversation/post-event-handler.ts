@@ -28,11 +28,18 @@ export const POST_EVENT_DO_AGAIN_DECISIONS = [
   "unsure",
 ] as const;
 export type PostEventDoAgainDecision = (typeof POST_EVENT_DO_AGAIN_DECISIONS)[number];
+export const POST_EVENT_EXCHANGE_CHOICES = [
+  "yes",
+  "no",
+  "later",
+] as const;
+export type PostEventExchangeChoice = (typeof POST_EVENT_EXCHANGE_CHOICES)[number];
 
 export type PostEventConversationResult = {
   session_state_token: PostEventStateToken;
   attendance_result: PostEventAttendanceResult | null;
   do_again_decision: PostEventDoAgainDecision | null;
+  exchange_choice: PostEventExchangeChoice | null;
   reply_message: string | null;
 };
 
@@ -44,6 +51,10 @@ export const POST_EVENT_DO_AGAIN_PROMPT =
   "Glad you made it. Would you want to hang out with this group again? Reply A) Yes, B) Maybe, C) Probably not.";
 export const POST_EVENT_COMPLETE_ACK =
   "Thanks again. Post-event follow-up is complete.";
+export const POST_EVENT_CONTACT_EXCHANGE_PROMPT =
+  "Want to stay in touch with anyone from that LinkUp? You can share your number with anyone who shares theirs back. Reply YES, NO, or LATER.";
+export const POST_EVENT_CONTACT_EXCHANGE_CAPTURE_ACK =
+  "Thanks. I recorded your contact exchange choice.";
 
 export function handlePostEventConversation(
   input: PostEventConversationInput,
@@ -64,6 +75,7 @@ export function handlePostEventConversation(
       session_state_token: stateToken,
       attendance_result: detectPostEventAttendanceResult(input.body_raw),
       do_again_decision: null,
+      exchange_choice: null,
       reply_message: POST_EVENT_REFLECTION_PROMPT,
     };
   }
@@ -73,6 +85,7 @@ export function handlePostEventConversation(
       session_state_token: stateToken,
       attendance_result: null,
       do_again_decision: null,
+      exchange_choice: null,
       reply_message: POST_EVENT_REFLECTION_ACK,
     };
   }
@@ -83,7 +96,21 @@ export function handlePostEventConversation(
       session_state_token: stateToken,
       attendance_result: null,
       do_again_decision: doAgainDecision,
-      reply_message: doAgainDecision ? POST_EVENT_COMPLETE_ACK : POST_EVENT_DO_AGAIN_PROMPT,
+      exchange_choice: null,
+      reply_message: doAgainDecision ? POST_EVENT_CONTACT_EXCHANGE_PROMPT : POST_EVENT_DO_AGAIN_PROMPT,
+    };
+  }
+
+  if (stateToken === "post_event:contact_exchange") {
+    const exchangeChoice = detectPostEventExchangeChoice(input.body_raw);
+    return {
+      session_state_token: stateToken,
+      attendance_result: null,
+      do_again_decision: null,
+      exchange_choice: exchangeChoice,
+      reply_message: exchangeChoice
+        ? POST_EVENT_CONTACT_EXCHANGE_CAPTURE_ACK
+        : POST_EVENT_CONTACT_EXCHANGE_PROMPT,
     };
   }
 
@@ -91,10 +118,196 @@ export function handlePostEventConversation(
     session_state_token: stateToken,
     attendance_result: null,
     do_again_decision: null,
+    exchange_choice: null,
     reply_message: POST_EVENT_COMPLETE_ACK,
   };
 }
 
+const EXCHANGE_EXACT_MATCHES: Record<string, PostEventExchangeChoice> = {
+  "yes": "yes",
+  "y": "yes",
+  "1": "yes",
+  "a": "yes",
+  "all": "yes",
+  "no": "no",
+  "n": "no",
+  "2": "no",
+  "b": "no",
+  "none": "no",
+  "later": "later",
+  "l": "later",
+  "3": "later",
+  "c": "later",
+  "maybe": "later",
+  "not now": "later",
+} as const;
+
+const EXCHANGE_TOKEN_MATCHES: Record<string, PostEventExchangeChoice> = {
+  ...EXCHANGE_EXACT_MATCHES,
+  "optiona": "yes",
+  "optionb": "no",
+  "optionc": "later",
+} as const;
+
+const EXCHANGE_PHRASE_MATCHES: ReadonlyArray<{ phrase: string; value: PostEventExchangeChoice }> = [
+  { phrase: "for now no", value: "no" },
+  { phrase: "not now", value: "later" },
+  { phrase: "maybe later", value: "later" },
+] as const;
+
+export function detectPostEventExchangeChoice(inputText: string): PostEventExchangeChoice | null {
+  const normalized = normalizeIntentText(inputText);
+  if (!normalized) {
+    return null;
+  }
+
+  const exact = parseSingleExchangeChoice(normalized, EXCHANGE_EXACT_MATCHES);
+  if (exact) {
+    return exact;
+  }
+
+  const matches = new Set<PostEventExchangeChoice>();
+  for (const token of normalized.split(" ").filter(Boolean)) {
+    const tokenChoice = parseSingleExchangeChoice(token, EXCHANGE_TOKEN_MATCHES);
+    if (tokenChoice) {
+      matches.add(tokenChoice);
+    }
+  }
+
+  for (const phraseMatch of EXCHANGE_PHRASE_MATCHES) {
+    if (hasPhrase(normalized, phraseMatch.phrase)) {
+      matches.add(phraseMatch.value);
+    }
+  }
+
+  if (matches.size !== 1) {
+    return null;
+  }
+
+  const [choice] = Array.from(matches);
+  return choice ?? null;
+}
+
+function parseSingleExchangeChoice(
+  raw: string,
+  options: Record<string, PostEventExchangeChoice>,
+): PostEventExchangeChoice | null {
+  const normalized = normalizeIntentText(raw);
+  if (!normalized) {
+    return null;
+  }
+
+  if (options[normalized]) {
+    return options[normalized];
+  }
+
+  const compact = normalized.replace(/[.\s]/g, "");
+  if (options[compact]) {
+    return options[compact];
+  }
+
+  return null;
+}
+
+function scoreMatches(text: string, phrases: readonly string[]): number {
+  return phrases.reduce((count, phrase) => {
+    return count + (hasPhrase(text, phrase) ? 1 : 0);
+  }, 0);
+}
+
+function hasPhrase(text: string, phrase: string): boolean {
+  const paddedText = ` ${text} `;
+  const paddedPhrase = ` ${phrase} `;
+  return paddedText.includes(paddedPhrase);
+}
+
+export function detectPostEventDoAgainDecision(inputText: string): PostEventDoAgainDecision | null {
+  const normalized = normalizeIntentText(inputText);
+  if (!normalized) {
+    return null;
+  }
+
+  const exactMatch = parseSingleChoice(normalized, DO_AGAIN_EXACT_MATCHES);
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const matches = new Set<PostEventDoAgainDecision>();
+  for (const token of normalized.split(" ").filter(Boolean)) {
+    const choice = parseSingleChoice(token, DO_AGAIN_TOKEN_MATCHES);
+    if (choice) {
+      matches.add(choice);
+    }
+  }
+
+  for (const phraseMatch of DO_AGAIN_PHRASE_MATCHES) {
+    if (hasPhrase(normalized, phraseMatch.phrase)) {
+      matches.add(phraseMatch.value);
+    }
+  }
+
+  if (matches.size !== 1) {
+    return null;
+  }
+
+  const [choice] = Array.from(matches);
+  return choice ?? null;
+}
+
+function parseSingleChoice(
+  raw: string,
+  options: Record<string, PostEventDoAgainDecision>,
+): PostEventDoAgainDecision | null {
+  const normalized = normalizeIntentText(raw);
+  if (!normalized) {
+    return null;
+  }
+
+  if (options[normalized]) {
+    return options[normalized];
+  }
+
+  const compact = normalized.replace(/[.\s]/g, "");
+  if (options[compact]) {
+    return options[compact];
+  }
+
+  return null;
+}
+
+function resolveScore(score: {
+  attended: number;
+  no_show: number;
+  cancelled: number;
+  unclear: number;
+}): PostEventAttendanceResult {
+  const ranked = Object.entries(score)
+    .sort((a, b) => b[1] - a[1]);
+  const top = ranked[0];
+  const next = ranked[1];
+  if (!top || top[1] === 0) {
+    return "unclear";
+  }
+  if (next && next[1] === top[1]) {
+    return "unclear";
+  }
+  return top[0] as PostEventAttendanceResult;
+}
+
+function normalizeIntentText(inputText: string): string {
+  return inputText
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function assertPostEventStateToken(token: string): PostEventStateToken {
+  if (!isPostEventStateToken(token)) {
+    throw new Error(`Unsupported post-event state token '${token}'.`);
+  }
+  return token;
+}
 export function detectPostEventAttendanceResult(inputText: string): PostEventAttendanceResult {
   const normalized = normalizeIntentText(inputText);
   if (!normalized) {
@@ -212,103 +425,3 @@ const DO_AGAIN_TOKEN_MATCHES: Record<string, PostEventDoAgainDecision> = {
   "optionb": "unsure",
   "optionc": "no",
 } as const;
-
-function scoreMatches(text: string, phrases: readonly string[]): number {
-  return phrases.reduce((count, phrase) => {
-    return count + (hasPhrase(text, phrase) ? 1 : 0);
-  }, 0);
-}
-
-function hasPhrase(text: string, phrase: string): boolean {
-  const paddedText = ` ${text} `;
-  const paddedPhrase = ` ${phrase} `;
-  return paddedText.includes(paddedPhrase);
-}
-
-export function detectPostEventDoAgainDecision(inputText: string): PostEventDoAgainDecision | null {
-  const normalized = normalizeIntentText(inputText);
-  if (!normalized) {
-    return null;
-  }
-
-  const exactMatch = parseSingleChoice(normalized, DO_AGAIN_EXACT_MATCHES);
-  if (exactMatch) {
-    return exactMatch;
-  }
-
-  const matches = new Set<PostEventDoAgainDecision>();
-  for (const token of normalized.split(" ").filter(Boolean)) {
-    const choice = parseSingleChoice(token, DO_AGAIN_TOKEN_MATCHES);
-    if (choice) {
-      matches.add(choice);
-    }
-  }
-
-  for (const phraseMatch of DO_AGAIN_PHRASE_MATCHES) {
-    if (hasPhrase(normalized, phraseMatch.phrase)) {
-      matches.add(phraseMatch.value);
-    }
-  }
-
-  if (matches.size !== 1) {
-    return null;
-  }
-
-  const [choice] = Array.from(matches);
-  return choice ?? null;
-}
-
-function parseSingleChoice(
-  raw: string,
-  options: Record<string, PostEventDoAgainDecision>,
-): PostEventDoAgainDecision | null {
-  const normalized = normalizeIntentText(raw);
-  if (!normalized) {
-    return null;
-  }
-
-  if (options[normalized]) {
-    return options[normalized];
-  }
-
-  const compact = normalized.replace(/[.\s]/g, "");
-  if (options[compact]) {
-    return options[compact];
-  }
-
-  return null;
-}
-
-function resolveScore(score: {
-  attended: number;
-  no_show: number;
-  cancelled: number;
-  unclear: number;
-}): PostEventAttendanceResult {
-  const ranked = Object.entries(score)
-    .sort((a, b) => b[1] - a[1]);
-  const top = ranked[0];
-  const next = ranked[1];
-  if (!top || top[1] === 0) {
-    return "unclear";
-  }
-  if (next && next[1] === top[1]) {
-    return "unclear";
-  }
-  return top[0] as PostEventAttendanceResult;
-}
-
-function normalizeIntentText(inputText: string): string {
-  return inputText
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ");
-}
-
-function assertPostEventStateToken(token: string): PostEventStateToken {
-  if (!isPostEventStateToken(token)) {
-    throw new Error(`Unsupported post-event state token '${token}'.`);
-  }
-  return token;
-}
