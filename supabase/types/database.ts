@@ -898,6 +898,7 @@ export type Database = {
       }
       linkup_outcomes: {
         Row: {
+          attendance_result: string | null
           attendance_response: string | null
           created_at: string
           do_again: boolean | null
@@ -908,6 +909,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          attendance_result?: string | null
           attendance_response?: string | null
           created_at?: string
           do_again?: boolean | null
@@ -918,6 +920,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          attendance_result?: string | null
           attendance_response?: string | null
           created_at?: string
           do_again?: boolean | null
@@ -2450,6 +2453,26 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      capture_post_event_attendance: {
+        Args: {
+          p_attendance_result: string
+          p_correlation_id?: string
+          p_inbound_message_id: string
+          p_inbound_message_sid: string
+          p_user_id: string
+        }
+        Returns: {
+          attendance_result: string
+          correlation_id: string
+          duplicate: boolean
+          linkup_id: string
+          mode: Database["public"]["Enums"]["conversation_mode"]
+          next_state_token: string
+          previous_state_token: string
+          reason: string
+          session_id: string
+        }[]
+      }
       claim_sms_outbound_jobs: {
         Args: { lease_seconds?: number; max_jobs: number; now_ts?: string }
         Returns: {
