@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { logAdminAction } from "../../../../lib/admin-audit";
 import { AdminAuthError, requireAdminRole } from "../../../../lib/admin-auth";
 import { logEvent } from "../../../../lib/observability";
+import { attachSentryScopeContext, traceApiRoute } from "../../../../lib/sentry";
 import { getSupabaseServiceRoleClient } from "../../../../lib/supabase-service-role";
 import {
   elapsedMetricMs,
@@ -22,6 +23,12 @@ export async function POST(request: Request): Promise<Response> {
   let outcome: "success" | "error" = "success";
   try {
     const admin = await requireAdminRole(["super_admin", "moderator"], { request });
+    attachSentryScopeContext({
+      category: "admin_action",
+      correlation_id: admin.userId,
+      user_id: admin.userId,
+      tags: { handler },
+    });
     const payload = await parseRequestPayload(request);
 
     if (!UUID_PATTERN.test(payload.incident_id) || !ALLOWED_STATUSES.has(payload.status)) {
@@ -129,6 +136,7 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
   }
+  });
 }
 
 async function parseRequestPayload(request: Request): Promise<{

@@ -69,6 +69,7 @@ describe("structured logger contract", () => {
             email: "alex@example.com",
             phone: "+14155551212",
           },
+          sms_body: "This is raw SMS text with no phone or email.",
           notes: "Reach out at +1 650 555 9000 or email sam@example.com",
         },
       });
@@ -83,6 +84,7 @@ describe("structured logger contract", () => {
 
       expect(parsed.payload.report_reason_free_text).toBe("[REDACTED_REPORT_REASON]");
       expect(parsed.payload.contact_exchange_payload).toBe("[REDACTED_CONTACT_EXCHANGE]");
+      expect(parsed.payload.sms_body).toBe("[REDACTED_SMS_BODY]");
       expect(serialized).not.toContain("alex@example.com");
       expect(serialized).not.toContain("4155551212");
       expect(serialized).toContain("[REDACTED_EMAIL]");

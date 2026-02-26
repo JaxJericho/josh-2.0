@@ -8,6 +8,9 @@ import { SendSmsError, sendSms } from "../../../packages/messaging/src/sender.ts
 import { INTERVIEW_DROPOUT_NUDGE } from "../../../packages/core/src/interview/messages.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { logEvent } from "../../../packages/core/src/observability/logger.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { setSentryContext } from "../../../packages/core/src/observability/sentry.ts";
+import { initializeEdgeSentry } from "../_shared/sentry.ts";
 
 type SmsOutboundJob = {
   id: string;
@@ -38,8 +41,14 @@ const MAX_ATTEMPTS = 5;
 const BACKOFF_BASE_SECONDS = 30;
 const BACKOFF_MAX_SECONDS = 480;
 
+initializeEdgeSentry("twilio-outbound-runner");
+
 Deno.serve(async (req) => {
   const requestId = crypto.randomUUID();
+  setSentryContext({
+    category: "sms_outbound",
+    correlation_id: requestId,
+  });
   let phase = "start";
 
   try {

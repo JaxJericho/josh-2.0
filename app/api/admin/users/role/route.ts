@@ -15,6 +15,12 @@ export async function POST(request: Request): Promise<Response> {
   let outcome: "success" | "error" = "success";
   try {
     const admin = await requireAdminRole("super_admin", { request });
+    attachSentryScopeContext({
+      category: "admin_action",
+      correlation_id: admin.userId,
+      user_id: admin.userId,
+      tags: { handler },
+    });
     const body = await request.json().catch(() => null) as Record<string, unknown> | null;
 
     const userId = typeof body?.user_id === "string" ? body.user_id.trim() : "";
@@ -102,6 +108,7 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
   }
+  });
 }
 
 function isValidUuid(value: string): boolean {

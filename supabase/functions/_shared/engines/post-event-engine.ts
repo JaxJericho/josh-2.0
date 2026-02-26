@@ -449,15 +449,27 @@ async function persistExchangeChoice(params: {
       "Post-event contact exchange capture requires Supabase RPC support.",
     );
   }
+  const rpc = params.supabase.rpc;
 
-  const { data, error } = await params.supabase.rpc("capture_post_event_exchange_choice", {
-    p_user_id: params.userId,
-    p_inbound_message_id: params.inboundMessageId,
-    p_inbound_message_sid: params.inboundMessageSid,
-    p_exchange_choice: params.exchangeChoice,
-    p_sms_encryption_key: params.smsEncryptionKey,
-    p_correlation_id: params.correlationId,
-  });
+  const { data, error } = await startSentrySpan(
+    {
+      name: "contact_exchange.reveal",
+      op: "contact_exchange.reveal",
+      attributes: {
+        correlation_id: params.correlationId,
+        inbound_message_id: params.inboundMessageId,
+      },
+    },
+    () =>
+      rpc("capture_post_event_exchange_choice", {
+        p_user_id: params.userId,
+        p_inbound_message_id: params.inboundMessageId,
+        p_inbound_message_sid: params.inboundMessageSid,
+        p_exchange_choice: params.exchangeChoice,
+        p_sms_encryption_key: params.smsEncryptionKey,
+        p_correlation_id: params.correlationId,
+      }),
+  );
 
   if (error) {
     emitRpcFailureMetric({

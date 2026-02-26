@@ -210,6 +210,18 @@ function withTimeoutSignal(timeoutMs: number): { signal: AbortSignal; clear: () 
   };
 }
 
+async function buildPromptFingerprint(input: string): Promise<string> {
+  if (typeof crypto === "undefined" || !crypto.subtle) {
+    return `len_${input.length}`;
+  }
+
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest))
+    .slice(0, 8)
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export function createInterviewSignalExtractor(options: CreateExtractorOptions = {}) {
   const provider = options.provider ?? getDefaultLlmProvider();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -221,6 +233,16 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
     const correlationId = input.correlationId ?? correlationFactory();
     const attempts = retryCount + 1;
     const userPrompt = buildInterviewExtractionUserPrompt(input);
+    const promptHash = await buildPromptFingerprint(userPrompt);
+    setSentryContext({
+      category: "llm_extraction",
+      correlation_id: correlationId,
+      user_id: input.userId,
+      tags: {
+        prompt_hash: promptHash,
+        step_id: input.stepId,
+      },
+    });
     let lastError: unknown = null;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -357,6 +379,29 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           error_code: code,
           transient,
         });
+
+        if (code === "invalid_json") {
+          captureSentryException(error, {
+            level: "error",
+            event: "llm.intent.invalid_json",
+            context: {
+              category: "llm_extraction",
+              correlation_id: correlationId,
+              user_id: input.userId,
+              tags: {
+                prompt_hash: promptHash,
+                step_id: input.stepId,
+                attempt,
+              },
+            },
+            payload: {
+              prompt_version: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+              prompt_hash: promptHash,
+              error_code: code,
+              transient,
+            },
+          });
+        }
 
         if (attempt < attempts && transient) {
           continue;
