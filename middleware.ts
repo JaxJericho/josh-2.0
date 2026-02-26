@@ -9,8 +9,11 @@ import {
 
 const ROLE_GATES: Array<{ prefix: string; roles: AdminRole[] }> = [
   { prefix: "/api/admin/users/role", roles: ["super_admin"] },
+  { prefix: "/api/admin/users/safety-hold", roles: ["super_admin", "moderator"] },
+  { prefix: "/api/admin/moderation/status", roles: ["super_admin", "moderator"] },
   { prefix: "/admin/super-admin", roles: ["super_admin"] },
   { prefix: "/admin/moderation", roles: ["super_admin", "moderator"] },
+  { prefix: "/admin/safety", roles: ["super_admin", "moderator"] },
   { prefix: "/admin/ops", roles: ["super_admin", "ops"] },
 ];
 
