@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectPostEventAttendanceResult,
+  detectPostEventDoAgainDecision,
   handlePostEventConversation,
 } from "../../packages/core/src/conversation/post-event-handler";
 
@@ -26,7 +27,31 @@ describe("post-event handler", () => {
     });
 
     expect(result.attendance_result).toBe("attended");
+    expect(result.do_again_decision).toBeNull();
     expect(result.reply_message).toContain("Quick reflection");
+  });
+
+  it("parses do-again intent deterministically", () => {
+    expect(detectPostEventDoAgainDecision("A")).toBe("yes");
+    expect(detectPostEventDoAgainDecision("B) maybe")).toBe("unsure");
+    expect(detectPostEventDoAgainDecision("C probably not")).toBe("no");
+    expect(detectPostEventDoAgainDecision("I am not sure")).toBe("unsure");
+  });
+
+  it("prompts for do-again when complete-state message is ambiguous", () => {
+    const result = handlePostEventConversation({
+      user_id: "usr_123",
+      session_mode: "post_event",
+      session_state_token: "post_event:complete",
+      inbound_message_id: "msg_123",
+      inbound_message_sid: "SM123",
+      body_raw: "that was interesting",
+      body_normalized: "THAT WAS INTERESTING",
+      correlation_id: "msg_123",
+    });
+
+    expect(result.do_again_decision).toBeNull();
+    expect(result.reply_message).toContain("Would you want to hang out with this group again?");
   });
 
   it("rejects invalid post-event state tokens", () => {
