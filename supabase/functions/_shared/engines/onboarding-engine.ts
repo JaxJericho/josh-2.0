@@ -26,6 +26,8 @@ import { runProfileInterviewEngine } from "./profile-interview-engine.ts";
 import { resolveTwilioRuntimeFromEnv, type TwilioEnvClient } from "../../../../packages/messaging/src/client.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { sendSms } from "../../../../packages/messaging/src/sender.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { logEvent } from "../../../../packages/core/src/observability/logger.ts";
 
 type ConversationSessionRow = {
   id: string;
@@ -412,11 +414,16 @@ export function resolveOnboardingStateForInbound(params: {
     persistedStateTokenRaw.length > 0 &&
     persistedStateTokenRaw !== routedStateToken
   ) {
-    console.warn("onboarding_engine.state_token_drift", {
+    logEvent({
+      level: "warn",
+      event: "onboarding.state_token_drift",
       user_id: params.userId,
-      inbound_message_sid: params.inboundMessageSid,
-      routed_state_token: routedStateToken,
-      persisted_state_token: persistedStateTokenRaw,
+      correlation_id: params.inboundMessageSid,
+      payload: {
+        inbound_message_sid: params.inboundMessageSid,
+        routed_state_token: routedStateToken,
+        persisted_state_token: persistedStateTokenRaw,
+      },
     });
   }
 

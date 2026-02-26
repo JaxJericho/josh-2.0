@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import { logAdminAction } from "../../../../lib/admin-audit";
 import { AdminAuthError, requireAdminRole } from "../../../../lib/admin-auth";
+import { logEvent } from "../../../../lib/observability";
 import { getSupabaseServiceRoleClient } from "../../../../lib/supabase-service-role";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -70,6 +71,19 @@ export async function POST(request: Request): Promise<Response> {
       { client: serviceClient },
     );
 
+    logEvent({
+      level: "info",
+      event: "admin.incident_status_updated",
+      user_id: admin.userId,
+      correlation_id: updated.id,
+      payload: {
+        actor_admin_user_id: admin.userId,
+        incident_id: updated.id,
+        before_status: before.status,
+        after_status: updated.status,
+      },
+    });
+
     return NextResponse.json(
       {
         ok: true,
@@ -86,6 +100,15 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const message = error instanceof Error ? error.message : "Internal server error.";
+    logEvent({
+      level: "error",
+      event: "system.unhandled_error",
+      payload: {
+        phase: "admin_moderation_status_route",
+        error_name: error instanceof Error ? error.name : "Error",
+        error_message: message,
+      },
+    });
     return NextResponse.json({ code: "INTERNAL_ERROR", message }, { status: 500 });
   }
 }

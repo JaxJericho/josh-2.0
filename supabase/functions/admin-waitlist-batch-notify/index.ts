@@ -16,6 +16,8 @@ import {
 } from "../_shared/waitlist/admin-waitlist-batch-notify.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { startOnboardingForActivatedUser } from "../_shared/engines/onboarding-engine.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { logEvent } from "../../../packages/core/src/observability/logger.ts";
 
 const textEncoder = new TextEncoder();
 
@@ -65,27 +67,38 @@ Deno.serve(async (req) => {
       repository,
     });
 
-    console.info("admin.waitlist_batch_notify.completed", {
-      request_id: requestId,
-      region_slug: summary.region_slug,
-      dry_run: summary.dry_run,
-      selected_count: summary.selected_count,
-      claimed_count: summary.claimed_count,
-      attempted_send_count: summary.attempted_send_count,
-      sent_count: summary.sent_count,
-      skipped_already_notified_count: summary.skipped_already_notified_count,
-      error_count: summary.errors.length,
+    logEvent({
+      event: "admin.action_performed",
+      correlation_id: requestId,
+      payload: {
+        action: "admin_waitlist_batch_notify",
+        target_type: "waitlist_region",
+        target_id: summary.region_slug,
+        request_id: requestId,
+        dry_run: summary.dry_run,
+        selected_count: summary.selected_count,
+        claimed_count: summary.claimed_count,
+        attempted_send_count: summary.attempted_send_count,
+        sent_count: summary.sent_count,
+        skipped_already_notified_count: summary.skipped_already_notified_count,
+        error_count: summary.errors.length,
+      },
     });
 
     return jsonResponse(summary, 200, requestId);
   } catch (error) {
     const handled = toHandledError(error);
-    console.error("admin.waitlist_batch_notify.failed", {
-      request_id: requestId,
-      phase,
-      code: handled.code,
-      message: handled.message,
-      status: handled.status,
+    logEvent({
+      level: "error",
+      event: "system.unhandled_error",
+      correlation_id: requestId,
+      payload: {
+        request_id: requestId,
+        phase,
+        error_name: handled.code,
+        error_message: handled.message,
+        status_code: handled.status,
+      },
     });
 
     return jsonResponse(

@@ -13,6 +13,8 @@ import {
 } from "../_shared/entitlements/admin-set-entitlements.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { resolveAdminAuthContext } from "../_shared/entitlements/admin-auth.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { logEvent } from "../../../packages/core/src/observability/logger.ts";
 
 Deno.serve(async (req) => {
   const requestId = crypto.randomUUID();
@@ -75,15 +77,21 @@ Deno.serve(async (req) => {
       repository,
     });
 
-    console.info("admin.profile_entitlements.updated", {
-      request_id: requestId,
-      admin_user_id: actor.admin_user_id,
-      admin_profile_id: actor.admin_profile_id,
-      auth_mode: authContext.mode,
-      profile_id: command.profile_id,
-      fields: Object.keys(command.fields).sort(),
-      has_reason: Boolean(command.reason),
-      audit_log: result.audit_log,
+    logEvent({
+      event: "admin.action_performed",
+      user_id: actor.admin_user_id,
+      correlation_id: requestId,
+      payload: {
+        action: "admin_set_entitlements",
+        target_type: "profile_entitlements",
+        target_id: command.profile_id,
+        request_id: requestId,
+        admin_profile_id: actor.admin_profile_id,
+        auth_mode: authContext.mode,
+        fields: Object.keys(command.fields).sort(),
+        has_reason: Boolean(command.reason),
+        audit_log: result.audit_log,
+      },
     });
 
     return jsonResponse(
@@ -98,12 +106,17 @@ Deno.serve(async (req) => {
     );
   } catch (error) {
     const handled = toHandledError(error);
-    console.error("admin.profile_entitlements.failed", {
-      request_id: requestId,
-      phase,
-      code: handled.code,
-      message: handled.message,
-      status: handled.status,
+    logEvent({
+      level: "error",
+      event: "system.unhandled_error",
+      correlation_id: requestId,
+      payload: {
+        request_id: requestId,
+        phase,
+        error_name: handled.code,
+        error_message: handled.message,
+        status_code: handled.status,
+      },
     });
 
     return jsonResponse(

@@ -156,6 +156,7 @@ export async function POST(request: Request): Promise<Response> {
       handler,
       request_id: requestId,
       message_sid: payload.messageSid,
+      message_status: payload.messageStatus,
       status_code: 200,
       duration_ms: Date.now() - startedAt,
     });
@@ -168,6 +169,8 @@ export async function POST(request: Request): Promise<Response> {
       event: "twilio.status_callback.unhandled_error",
       handler,
       request_id: requestId,
+      phase: "api_webhooks_twilio_status",
+      error_name: err?.name ?? "Error",
       error_message: err?.message ?? "unknown",
       duration_ms: Date.now() - startedAt,
     });

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { logAdminAction } from "../../../../lib/admin-audit";
 import { AdminAuthError, createAdminScopedClient, requireAdminRole } from "../../../../lib/admin-auth";
 import { isAdminRole } from "../../../../lib/admin-session";
+import { logEvent } from "../../../../lib/observability";
 
 export async function POST(request: Request): Promise<Response> {
   try {
@@ -44,6 +45,18 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
 
+    logEvent({
+      level: "info",
+      event: "admin.role_updated",
+      user_id: admin.userId,
+      correlation_id: admin.userId,
+      payload: {
+        actor_admin_user_id: admin.userId,
+        target_user_id: data.user_id,
+        assigned_role: data.role,
+      },
+    });
+
     return NextResponse.json(
       {
         ok: true,
@@ -60,6 +73,15 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const message = error instanceof Error ? error.message : "Internal server error.";
+    logEvent({
+      level: "error",
+      event: "system.unhandled_error",
+      payload: {
+        phase: "admin_users_role_route",
+        error_name: error instanceof Error ? error.name : "Error",
+        error_message: message,
+      },
+    });
     return NextResponse.json({ code: "INTERNAL_ERROR", message }, { status: 500 });
   }
 }

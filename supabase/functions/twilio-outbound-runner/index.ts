@@ -6,6 +6,8 @@ import { resolveTwilioRuntimeFromEnv } from "../../../packages/messaging/src/cli
 import { SendSmsError, sendSms } from "../../../packages/messaging/src/sender.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { INTERVIEW_DROPOUT_NUDGE } from "../../../packages/core/src/interview/messages.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { logEvent } from "../../../packages/core/src/observability/logger.ts";
 
 type SmsOutboundJob = {
   id: string;
@@ -84,9 +86,14 @@ Deno.serve(async (req) => {
       }
     );
     if (dropoutError) {
-      console.error("interview_dropout.enqueue_failed", {
-        request_id: requestId,
-        error: dropoutError.message,
+      logEvent({
+        level: "error",
+        event: "interview_dropout.enqueue_failed",
+        correlation_id: requestId,
+        payload: {
+          request_id: requestId,
+          error_message: dropoutError.message,
+        },
       });
     } else {
       const result = (dropoutResult ?? {}) as Record<string, unknown>;
@@ -94,11 +101,15 @@ Deno.serve(async (req) => {
       if (typeof enqueuedRaw === "number" && Number.isFinite(enqueuedRaw)) {
         dropoutNudgeEnqueued = Math.max(0, Math.trunc(enqueuedRaw));
       }
-      console.info("interview_dropout.enqueue_summary", {
-        request_id: requestId,
-        candidate_count: result.candidate_count ?? 0,
-        marked_count: result.marked_count ?? 0,
-        enqueued_count: dropoutNudgeEnqueued,
+      logEvent({
+        event: "interview_dropout.enqueue_summary",
+        correlation_id: requestId,
+        payload: {
+          request_id: requestId,
+          candidate_count: result.candidate_count ?? 0,
+          marked_count: result.marked_count ?? 0,
+          enqueued_count: dropoutNudgeEnqueued,
+        },
       });
     }
 
@@ -112,9 +123,14 @@ Deno.serve(async (req) => {
     );
 
     if (claimError) {
-      console.error("sms_outbound.claim_failed", {
-        request_id: requestId,
-        error: claimError.message,
+      logEvent({
+        level: "error",
+        event: "sms_outbound.claim_failed",
+        correlation_id: requestId,
+        payload: {
+          request_id: requestId,
+          error_message: claimError.message,
+        },
       });
       return jsonResponse({ error: "Failed to claim jobs" }, 500);
     }
@@ -273,12 +289,17 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     const err = error as Error;
-    console.error("sms_outbound.unhandled_error", {
-      request_id: requestId,
-      phase,
-      name: err?.name ?? "Error",
-      message: err?.message ?? String(error),
-      stack: err?.stack ?? null,
+    logEvent({
+      level: "error",
+      event: "system.unhandled_error",
+      correlation_id: requestId,
+      payload: {
+        request_id: requestId,
+        phase,
+        error_name: err?.name ?? "Error",
+        error_message: err?.message ?? String(error),
+        stack: err?.stack ?? null,
+      },
     });
     return jsonErrorResponse(error, requestId, phase);
   }
@@ -342,10 +363,16 @@ async function markJobSent(
   const { error } = await updateQuery;
 
   if (error) {
-    console.error("sms_outbound.job_update_failed", {
-      job_id: job.id,
-      error: error.message,
-      status,
+    logEvent({
+      level: "error",
+      event: "sms_outbound.job_update_failed",
+      correlation_id: job.correlation_id ?? job.idempotency_key,
+      user_id: job.user_id,
+      payload: {
+        job_id: job.id,
+        error_message: error.message,
+        status,
+      },
     });
   }
 }
@@ -365,10 +392,15 @@ async function releaseFutureJob(
   supabase: ReturnType<typeof createServiceRoleDbClient>,
   job: SmsOutboundJob
 ): Promise<void> {
-  console.info("sms_outbound.future_job_released", {
-    job_id: job.id,
-    run_at: job.run_at,
-    purpose: job.purpose,
+  logEvent({
+    event: "sms_outbound.future_job_released",
+    correlation_id: job.correlation_id ?? job.idempotency_key,
+    user_id: job.user_id,
+    payload: {
+      job_id: job.id,
+      run_at: job.run_at,
+      purpose: job.purpose,
+    },
   });
 
   const { error } = await supabase
@@ -382,9 +414,15 @@ async function releaseFutureJob(
     .eq("status", "sending");
 
   if (error) {
-    console.error("sms_outbound.future_job_release_failed", {
-      job_id: job.id,
-      error: error.message,
+    logEvent({
+      level: "error",
+      event: "sms_outbound.future_job_release_failed",
+      correlation_id: job.correlation_id ?? job.idempotency_key,
+      user_id: job.user_id,
+      payload: {
+        job_id: job.id,
+        error_message: error.message,
+      },
     });
   }
 }
@@ -414,9 +452,15 @@ async function markJobFailure(
     .eq("status", "sending");
 
   if (error) {
-    console.error("sms_outbound.job_failure_update_failed", {
-      job_id: job.id,
-      error: error.message,
+    logEvent({
+      level: "error",
+      event: "sms_outbound.job_failure_update_failed",
+      correlation_id: job.correlation_id ?? job.idempotency_key,
+      user_id: job.user_id,
+      payload: {
+        job_id: job.id,
+        error_message: error.message,
+      },
     });
   }
 }
@@ -429,7 +473,13 @@ async function ensureSmsMessage(
   status: string
 ): Promise<void> {
   if (!fromE164) {
-    console.error("sms_outbound.missing_from_for_message", { job_id: job.id });
+    logEvent({
+      level: "error",
+      event: "sms_outbound.missing_from_for_message",
+      correlation_id: job.correlation_id ?? job.idempotency_key,
+      user_id: job.user_id,
+      payload: { job_id: job.id },
+    });
     return;
   }
   const { error } = await supabase
@@ -454,10 +504,16 @@ async function ensureSmsMessage(
     );
 
   if (error) {
-    console.error("sms_outbound.sms_message_insert_failed", {
-      job_id: job.id,
-      error: error.message,
-      twilio_sid: sid,
+    logEvent({
+      level: "error",
+      event: "sms_outbound.sms_message_insert_failed",
+      correlation_id: job.correlation_id ?? job.idempotency_key,
+      user_id: job.user_id,
+      payload: {
+        job_id: job.id,
+        error_message: error.message,
+        twilio_sid: sid,
+      },
     });
   }
 }
