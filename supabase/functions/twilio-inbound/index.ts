@@ -20,6 +20,13 @@ import {
 } from "../_shared/router/conversation-router.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { logEvent } from "../../../packages/core/src/observability/logger.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  setSentryContext,
+  startSentrySpan,
+  withSentryContext,
+} from "../../../packages/core/src/observability/sentry.ts";
+import { initializeEdgeSentry } from "../_shared/sentry.ts";
 
 type Command = "STOP" | "HELP" | "NONE";
 
@@ -34,10 +41,25 @@ const BUILD_VERSION = "4.1B-DETERMINISTIC-ROUTING-01";
 
 const encoder = new TextEncoder();
 
+initializeEdgeSentry("twilio-inbound");
+
 Deno.serve(async (req) => {
   const requestId = crypto.randomUUID();
+  setSentryContext({
+    category: "sms_inbound",
+    correlation_id: requestId,
+  });
   let phase = "start";
-  try {
+  return withSentryContext(
+    {
+      category: "sms_inbound",
+      correlation_id: requestId,
+      tags: {
+        handler: "supabase/functions/twilio-inbound",
+      },
+    },
+    async () => {
+      try {
     phase = "method";
     if (req.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
@@ -101,6 +123,11 @@ Deno.serve(async (req) => {
     if (!fromRaw || !toRaw || !bodyRaw || !messageSid) {
       return new Response("Bad Request", { status: 400 });
     }
+
+    setSentryContext({
+      category: "sms_inbound",
+      correlation_id: messageSid,
+    });
 
     const fromE164 = normalizeE164(fromRaw);
     const toE164 = normalizeE164(toRaw);
@@ -237,15 +264,26 @@ Deno.serve(async (req) => {
     }
 
     phase = "safety_intercept";
-    const safetyDecision = await runSafetyIntercept({
-      repository: createSupabaseSafetyInterceptRepository(supabase),
-      inbound_message_id: inboundMessageId,
-      inbound_message_sid: messageSid,
-      user_id: user?.id ?? null,
-      from_e164: fromE164,
-      body_raw: bodyRaw,
-      config: readSafetyInterceptConfig(),
-    });
+    const safetyDecision = await startSentrySpan(
+      {
+        name: "safety.intercept",
+        op: "safety.intercept",
+        attributes: {
+          correlation_id: inboundMessageId,
+          inbound_message_sid: messageSid,
+        },
+      },
+      () =>
+        runSafetyIntercept({
+          repository: createSupabaseSafetyInterceptRepository(supabase),
+          inbound_message_id: inboundMessageId,
+          inbound_message_sid: messageSid,
+          user_id: user?.id ?? null,
+          from_e164: fromE164,
+          body_raw: bodyRaw,
+          config: readSafetyInterceptConfig(),
+        }),
+    );
 
     if (safetyDecision.intercepted) {
       if (safetyDecision.action === "rate_limit") {
@@ -388,11 +426,22 @@ Deno.serve(async (req) => {
       body_normalized: bodyNormalized,
     };
 
-    const routingDecision = await routeConversationMessage({
-      supabase,
-      payload,
-      safetyOverrideApplied: false,
-    });
+    const routingDecision = await startSentrySpan(
+      {
+        name: "conversation.router",
+        op: "conversation.router",
+        attributes: {
+          correlation_id: inboundMessageId,
+          inbound_message_sid: messageSid,
+        },
+      },
+      () =>
+        routeConversationMessage({
+          supabase,
+          payload,
+          safetyOverrideApplied: false,
+        }),
+    );
 
     phase = "dispatch";
     const dispatchResult = await dispatchConversationRoute({
@@ -419,6 +468,8 @@ Deno.serve(async (req) => {
     });
     return jsonErrorResponse(error, requestId, phase);
   }
+    },
+  );
 });
 
 function jsonErrorResponse(

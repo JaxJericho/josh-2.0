@@ -4,6 +4,7 @@ import {
   type LogLevel,
   type StructuredLogEventInput,
 } from "../../packages/core/src/observability/logger";
+import { setSentryContext } from "../../packages/core/src/observability/sentry";
 
 type LegacyLogPayload = {
   level: LogLevel;
@@ -42,6 +43,12 @@ export function logEvent(payload: LogPayload): void {
     payload: _ignoredPayload,
     ...legacyTopLevelFields
   } = normalizedPayload;
+
+  setSentryContext({
+    correlation_id: typeof correlation_id === "string" ? correlation_id : null,
+    user_id: typeof user_id === "string" ? user_id : null,
+    linkup_id: typeof linkup_id === "string" ? linkup_id : null,
+  });
 
   logStructuredEvent(
     {
