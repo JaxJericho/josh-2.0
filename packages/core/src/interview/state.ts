@@ -97,10 +97,18 @@ export const ONBOARDING_STATE_TOKENS = [
   "onboarding:awaiting_interview_start",
 ] as const;
 
+export const POST_EVENT_STATE_TOKENS = [
+  "post_event:attendance",
+  "post_event:reflection",
+  "post_event:complete",
+] as const;
+
 export type OnboardingStateToken = (typeof ONBOARDING_STATE_TOKENS)[number];
+export type PostEventStateToken = (typeof POST_EVENT_STATE_TOKENS)[number];
 export type InterviewOrOnboardingStateToken = InterviewQuestionStepId | OnboardingStateToken;
 
 const ONBOARDING_STATE_TOKEN_SET: ReadonlySet<OnboardingStateToken> = new Set(ONBOARDING_STATE_TOKENS);
+const POST_EVENT_STATE_TOKEN_SET: ReadonlySet<PostEventStateToken> = new Set(POST_EVENT_STATE_TOKENS);
 
 export function toInterviewStateToken(stepId: InterviewQuestionStepId): string {
   return `interview:${stepId}`;
@@ -108,6 +116,10 @@ export function toInterviewStateToken(stepId: InterviewQuestionStepId): string {
 
 export function isOnboardingStateToken(token: string): token is OnboardingStateToken {
   return ONBOARDING_STATE_TOKEN_SET.has(token as OnboardingStateToken);
+}
+
+export function isPostEventStateToken(token: string): token is PostEventStateToken {
+  return POST_EVENT_STATE_TOKEN_SET.has(token as PostEventStateToken);
 }
 
 function normalizeDeprecatedInterviewStepId(stepId: InterviewQuestionStepId): InterviewQuestionStepId {

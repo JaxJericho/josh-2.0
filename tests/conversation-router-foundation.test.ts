@@ -55,6 +55,15 @@ describe("conversation router foundation", () => {
     expect(nextTransition).toBe("post_event:attendance");
   });
 
+  it("accepts post_event reflection as a legal transition token", () => {
+    const state = validateConversationState("post_event", "post_event:reflection");
+    const route = resolveRouteForState(state);
+    const nextTransition = resolveNextTransition(state, route);
+
+    expect(route).toBe("post_event_engine");
+    expect(nextTransition).toBe("post_event:reflection");
+  });
+
   it("throws explicit error when state token is missing", () => {
     expect(() => validateConversationState("idle", ""))
       .toThrow(ConversationRouterError);
@@ -67,6 +76,11 @@ describe("conversation router foundation", () => {
 
   it("throws explicit error for unknown onboarding state tokens", () => {
     expect(() => validateConversationState("interviewing", "onboarding:foo"))
+      .toThrow(ConversationRouterError);
+  });
+
+  it("throws explicit error for unknown post-event state tokens", () => {
+    expect(() => validateConversationState("post_event", "post_event:do_again"))
       .toThrow(ConversationRouterError);
   });
 
@@ -201,7 +215,16 @@ describe("conversation router foundation", () => {
 
   it("dispatches deterministic post-event engine response", async () => {
     const result = await dispatchConversationRoute({
-      supabase: buildSupabaseMock({ user: null, session: null, profile: null }),
+      supabase: buildSupabaseMock({
+        user: { id: "usr_123" },
+        session: {
+          id: "ses_123",
+          mode: "post_event",
+          state_token: "post_event:attendance",
+          linkup_id: "lnk_123",
+        },
+        profile: { is_complete_mvp: true, state: "complete_mvp" },
+      }),
       decision: {
         user_id: "usr_123",
         state: {
@@ -217,7 +240,7 @@ describe("conversation router foundation", () => {
     });
 
     expect(result.engine).toBe("post_event_engine");
-    expect(result.reply_message).toContain("Post-event follow-up is initializing");
+    expect(result.reply_message).toContain("Quick reflection");
   });
 
   it("dispatches by normalized state route when decision route is stale", async () => {
@@ -327,6 +350,8 @@ function buildSupabaseMock(
     linkupStates: data.linkupStates ?? {},
     postEventTransitionCalls: 0,
     postEventTransitionWrites: 0,
+    postEventAttendanceWrites: 0,
+    processedAttendanceSids: new Set<string>(),
   };
 
   return {
@@ -414,6 +439,81 @@ function buildSupabaseMock(
       };
     },
     async rpc(fn: string, args?: Record<string, unknown>) {
+      if (fn === "capture_post_event_attendance") {
+        const inboundMessageSid = typeof args?.p_inbound_message_sid === "string"
+          ? args.p_inbound_message_sid
+          : "";
+        const correlationId = typeof args?.p_correlation_id === "string"
+          ? args.p_correlation_id
+          : null;
+        const attendanceResult = typeof args?.p_attendance_result === "string"
+          ? args.p_attendance_result
+          : "unclear";
+        if (!state.session) {
+          return {
+            data: null,
+            error: new Error("Session not found for post-event attendance capture."),
+          };
+        }
+        if (!inboundMessageSid) {
+          return {
+            data: null,
+            error: new Error("Missing inbound message sid."),
+          };
+        }
+        if (state.processedAttendanceSids.has(inboundMessageSid)) {
+          return {
+            data: [{
+              previous_state_token: state.session.state_token,
+              next_state_token: state.session.state_token,
+              reason: "duplicate_replay",
+              duplicate: true,
+              linkup_id: state.session.linkup_id,
+              correlation_id: correlationId,
+              attendance_result: attendanceResult,
+              mode: state.session.mode,
+            }],
+            error: null,
+          };
+        }
+        if (state.session.state_token !== "post_event:attendance") {
+          return {
+            data: [{
+              previous_state_token: state.session.state_token,
+              next_state_token: state.session.state_token,
+              reason: "state_not_attendance",
+              duplicate: false,
+              linkup_id: state.session.linkup_id,
+              correlation_id: correlationId,
+              attendance_result: attendanceResult,
+              mode: state.session.mode,
+            }],
+            error: null,
+          };
+        }
+
+        state.postEventAttendanceWrites += 1;
+        state.processedAttendanceSids.add(inboundMessageSid);
+        state.session = {
+          ...state.session,
+          state_token: "post_event:reflection",
+        };
+
+        return {
+          data: [{
+            previous_state_token: "post_event:attendance",
+            next_state_token: "post_event:reflection",
+            reason: "captured",
+            duplicate: false,
+            linkup_id: state.session.linkup_id,
+            correlation_id: correlationId,
+            attendance_result: attendanceResult,
+            mode: state.session.mode,
+          }],
+          error: null,
+        };
+      }
+
       if (fn !== "transition_session_to_post_event_if_linkup_completed") {
         return {
           data: null,
