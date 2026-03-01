@@ -21,6 +21,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.35",
+    "tsx": "^4.7.1",
     "typescript": "^5.4.5",
     "vitest": "^4.0.18"
   },
@@ -45,6 +46,7 @@
     "verify:coordination:seed": "node scripts/verify/seed-coordination-e2e.mjs",
     "verify:coordination:e2e": "node scripts/verify/run-coordination-e2e.mjs",
     "staging:onboarding:e2e": "node scripts/staging-onboarding-e2e.mjs",
+    "seed:activity-catalog": "tsx scripts/seed-activity-catalog.ts",
     "build": "next build",
     "start": "next start"
   },
