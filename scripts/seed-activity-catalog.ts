@@ -4,7 +4,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { activityCatalogSeed } from "../docs/seed/activity_catalog_seed";
+import { ACTIVITY_CATALOG } from "../docs/seed/activity_catalog_seed";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -18,7 +18,7 @@ const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
 async function run() {
   console.log("Seeding activity_catalog...");
 
-  for (const activity of activityCatalogSeed) {
+  for (const activity of ACTIVITY_CATALOG) {
     const { error } = await supabase.from("activity_catalog").upsert(activity, {
       onConflict: "activity_key",
     });
