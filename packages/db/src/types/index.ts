@@ -5,5 +5,4 @@ export * from "./coordination-dimensions";
 export * from "./coordination-signals";
 export * from "./dimension-coverage-summary";
 export * from "./holistic-extraction";
-export * from "./interview-extraction";
 export * from "./plan-brief";

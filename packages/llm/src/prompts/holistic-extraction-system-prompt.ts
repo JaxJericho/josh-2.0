@@ -39,8 +39,13 @@ You must output an object that matches this contract exactly:
 }
 
 Rules:
+- Read the full conversation history before deciding updates.
 - Be conservative. Do not guess when confidence is low.
 - Leave fields absent instead of inventing data.
 - Never emit values outside 0..1 for confidence.
-- Read the full conversation history and update any supported key with clear evidence.
+- Never include legacy factor keys from older models.
+- coverageSummary must include all 6 dimensions and all 3 signals every time.
+- Set needsFollowUp=true only when one or more required dimensions cannot be inferred from the conversation history.
+- If all required dimensions are inferable with confidence, set needsFollowUp=false.
+- Update any supported key when there is clear multi-turn evidence.
 `.trim();

@@ -1,5 +1,4 @@
 import {
-  applyInterviewExtractOutputToProfilePatch,
   buildProfilePatchForInterviewAnswer,
   buildProfilePatchForInterviewPause,
   buildProfilePatchForInterviewStart,
@@ -25,11 +24,15 @@ import {
   type NextQuestionSelection,
 } from "./signal-coverage.ts";
 import {
-  extractInterviewSignals,
-  InterviewExtractorError,
-  type InterviewExtractInput,
-} from "../../../llm/src/interview-extractor.ts";
-import type { InterviewExtractOutput } from "../../../llm/src/schemas/interview-extract-output.schema.ts";
+  extractCoordinationSignals,
+  HolisticExtractorError,
+} from "../../../llm/src/holistic-extractor.ts";
+import type {
+  CoordinationDimensionKey,
+  CoordinationDimensions,
+  HolisticExtractInput,
+  HolisticExtractOutput,
+} from "../../../db/src/types/index.ts";
 
 export type ConversationMode =
   | "idle"
@@ -80,7 +83,7 @@ export type BuildInterviewTransitionInput = {
   now_iso: string;
   session: InterviewSessionSnapshot;
   profile: ProfileRowForInterview;
-  llm_extractor?: (input: InterviewExtractInput) => Promise<InterviewExtractOutput>;
+  llm_extractor?: (input: HolisticExtractInput) => Promise<HolisticExtractOutput>;
   llm_request_guard?: Set<string>;
 };
 
@@ -111,6 +114,14 @@ export type InterviewOrOnboardingStateToken = InterviewQuestionStepId | Onboardi
 
 const ONBOARDING_STATE_TOKEN_SET: ReadonlySet<OnboardingStateToken> = new Set(ONBOARDING_STATE_TOKENS);
 const POST_EVENT_STATE_TOKEN_SET: ReadonlySet<PostEventStateToken> = new Set(POST_EVENT_STATE_TOKENS);
+const COORDINATION_DIMENSION_KEYS: readonly CoordinationDimensionKey[] = [
+  "social_energy",
+  "social_pace",
+  "conversation_depth",
+  "adventure_orientation",
+  "group_dynamic",
+  "values_proximity",
+];
 
 export function toInterviewStateToken(stepId: InterviewQuestionStepId): string {
   return `interview:${stepId}`;
@@ -171,6 +182,21 @@ function collectHistoryFragments(value: unknown): string[] {
   }
 
   return [];
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toUnitInterval(value: number): number {
+  return Math.min(1, Math.max(0, value));
 }
 
 function buildConversationHistory(
@@ -263,70 +289,84 @@ function applyProfilePatch(
   };
 }
 
-function toQuestionTarget(stepId: InterviewQuestionStepId): string {
-  switch (stepId) {
-    case "activity_01":
-      return "activity_patterns";
-    case "activity_02":
-      return "top_activity_intent";
-    case "motive_01":
-      return "connection_depth";
-    case "motive_02":
-      return "novelty_seeking";
-    case "style_01":
-      return "social_energy";
-    case "style_02":
-      return "conversation_style";
-    case "pace_01":
-      return "social_pace";
-    case "group_01":
-      return "group_size_pref";
-    case "values_01":
-      return "values_alignment_importance";
-    case "boundaries_01":
-      return "boundaries_asked";
-    case "constraints_01":
-      return "time_preferences";
-    case "location_01":
-      return "location_capture";
-    case "intro_01":
-      return "onboarding_consent";
-    default:
-      return stepId;
+function readCurrentCoordinationProfile(
+  profile: ProfileRowForInterview,
+): Partial<CoordinationDimensions> {
+  const dimensionsFromProfile = asObject(
+    (profile as Record<string, unknown>).coordination_dimensions,
+  );
+  const parsed: Partial<CoordinationDimensions> = {};
+
+  for (const key of COORDINATION_DIMENSION_KEYS) {
+    const node = asObject(dimensionsFromProfile[key]);
+    const value = asNumber(node.value);
+    const confidence = asNumber(node.confidence);
+    if (value == null || confidence == null) {
+      continue;
+    }
+
+    parsed[key] = {
+      value: toUnitInterval(value),
+      confidence: toUnitInterval(confidence),
+    };
   }
+
+  return parsed;
 }
 
-function normalizeActivityKeysFromExtraction(
-  extraction: InterviewExtractOutput,
-): string[] {
-  const keys = (extraction.extracted.activityPatternsAdd ?? [])
-    .map((entry) => entry.activity_key.trim())
-    .filter(Boolean);
-  return Array.from(new Set(keys)).slice(0, 3);
+function mapPaceFromDimension(value: number): "slow" | "medium" | "fast" {
+  if (value >= 0.67) {
+    return "fast";
+  }
+  if (value <= 0.33) {
+    return "slow";
+  }
+  return "medium";
+}
+
+function mapGroupSizeFromDimension(value: number): "2-3" | "4-6" | "7-10" {
+  if (value <= 0.33) {
+    return "2-3";
+  }
+  if (value >= 0.67) {
+    return "7-10";
+  }
+  return "4-6";
 }
 
 function deriveStoredAnswerFromExtraction(
   stepId: InterviewQuestionStepId,
-  extraction: InterviewExtractOutput,
+  extraction: HolisticExtractOutput,
 ): InterviewNormalizedAnswer {
-  const activityKeys = normalizeActivityKeysFromExtraction(extraction);
+  const dimensions = extraction.coordinationDimensionUpdates;
+  const adventureOrientation = dimensions.adventure_orientation?.value ?? 0.5;
+  const valuesProximity = dimensions.values_proximity?.value ?? 0.5;
+  const socialEnergy = dimensions.social_energy?.value ?? 0.5;
+  const socialPace = dimensions.social_pace?.value ?? 0.5;
+  const groupDynamic = dimensions.group_dynamic?.value ?? 0.5;
+
   switch (stepId) {
     case "activity_01":
-      return { activity_keys: activityKeys };
+      return { activity_keys: [] };
     case "activity_02":
-      return { activity_key: activityKeys[0] ?? "coffee" };
+      return { activity_key: "coffee" };
     case "motive_01":
-    case "motive_02": {
-      const motiveWeights = extraction.extracted.activityPatternsAdd?.[0]?.motive_weights ?? {};
-      return { motive_weights: motiveWeights };
-    }
+    case "motive_02":
+      return {
+        motive_weights: {
+          connection: toUnitInterval(valuesProximity),
+          adventure: toUnitInterval(adventureOrientation),
+          restorative: toUnitInterval(1 - socialEnergy),
+          comfort: toUnitInterval(groupDynamic),
+        },
+      };
     case "style_01":
     case "style_02":
       return { style_keys: [] };
     case "pace_01":
-      return { social_pace: "medium" };
+      return { social_pace: mapPaceFromDimension(socialPace) };
     case "group_01":
-      return { group_size_pref: "4-6" };
+      return { group_size_pref: mapGroupSizeFromDimension(groupDynamic) };
     case "values_01":
       return { values_alignment_importance: "somewhat" };
     case "boundaries_01":
@@ -342,6 +382,65 @@ function deriveStoredAnswerFromExtraction(
   }
 }
 
+function mergeCoordinationDimensionUpdates(params: {
+  existing: Record<string, unknown>;
+  updates: HolisticExtractOutput["coordinationDimensionUpdates"];
+}): Record<string, unknown> {
+  const merged = { ...params.existing };
+
+  for (const [key, update] of Object.entries(params.updates)) {
+    if (!update) {
+      continue;
+    }
+
+    const typedKey = key as CoordinationDimensionKey;
+    const existingNode = asObject(merged[typedKey]);
+    const existingConfidence = asNumber(existingNode.confidence) ?? 0;
+    const nextConfidence = Math.max(existingConfidence, toUnitInterval(update.confidence));
+
+    merged[typedKey] = {
+      value: toUnitInterval(update.value),
+      confidence: nextConfidence,
+      source: "llm_holistic",
+    };
+  }
+
+  return merged;
+}
+
+function applyHolisticExtractOutputToProfilePatch(params: {
+  profilePatch: ProfileUpdatePatch;
+  extractionOutput: HolisticExtractOutput;
+}): ProfileUpdatePatch {
+  const patch = { ...params.profilePatch } as ProfileUpdatePatch & Record<string, unknown>;
+  const fingerprint = asObject(patch.fingerprint);
+  const coordinationDimensions = mergeCoordinationDimensionUpdates({
+    existing: asObject(patch.coordination_dimensions),
+    updates: params.extractionOutput.coordinationDimensionUpdates,
+  });
+
+  const mirroredFingerprint = mergeCoordinationDimensionUpdates({
+    existing: fingerprint,
+    updates: params.extractionOutput.coordinationDimensionUpdates,
+  });
+
+  patch.fingerprint = mirroredFingerprint;
+  patch.coordination_dimensions = coordinationDimensions;
+
+  if ("scheduling_availability" in params.extractionOutput.coordinationSignalUpdates) {
+    patch.scheduling_availability =
+      params.extractionOutput.coordinationSignalUpdates.scheduling_availability ?? null;
+  }
+  if ("notice_preference" in params.extractionOutput.coordinationSignalUpdates) {
+    patch.notice_preference = params.extractionOutput.coordinationSignalUpdates.notice_preference ?? null;
+  }
+  if ("coordination_style" in params.extractionOutput.coordinationSignalUpdates) {
+    patch.coordination_style = params.extractionOutput.coordinationSignalUpdates.coordination_style ?? null;
+  }
+
+  return patch;
+}
+
 function canAttemptLlmExtraction(input: BuildInterviewTransitionInput): boolean {
   const guard = input.llm_request_guard ?? new Set<string>();
   const key = `${input.profile.user_id}:${input.inbound_message_sid}`;
@@ -354,10 +453,8 @@ function canAttemptLlmExtraction(input: BuildInterviewTransitionInput): boolean 
 
 async function maybeExtractWithLlm(params: {
   input: BuildInterviewTransitionInput;
-  currentStepId: InterviewQuestionStepId;
-  currentStepPrompt: string;
 }): Promise<{
-  extractionOutput: InterviewExtractOutput | null;
+  extractionOutput: HolisticExtractOutput | null;
   extractionErrorCode: string | null;
 }> {
   if (!canAttemptLlmExtraction(params.input)) {
@@ -367,24 +464,17 @@ async function maybeExtractWithLlm(params: {
     };
   }
 
-  const extractor = params.input.llm_extractor ?? extractInterviewSignals;
+  const extractor = params.input.llm_extractor ?? extractCoordinationSignals;
   try {
+    const conversationHistory = buildConversationHistory(
+      params.input.profile,
+      params.input.inbound_message_text,
+    ).map((text) => ({ role: "user" as const, text }));
+
     const extractionOutput = await extractor({
-      userId: params.input.profile.user_id,
-      inboundMessageSid: params.input.inbound_message_sid,
-      stepId: params.currentStepId,
-      questionTarget: toQuestionTarget(params.currentStepId),
-      questionText: params.currentStepPrompt,
-      userAnswerText: params.input.inbound_message_text,
-      recentConversationTurns: buildConversationHistory(params.input.profile)
-        .slice(-6)
-        .map((text) => ({ role: "user" as const, text })),
-      currentProfile: {
-        fingerprint: (params.input.profile.fingerprint as Record<string, unknown>) ?? {},
-        activityPatterns: (params.input.profile.activity_patterns as Array<Record<string, unknown>>) ?? [],
-        boundaries: (params.input.profile.boundaries as Record<string, unknown>) ?? {},
-        preferences: (params.input.profile.preferences as Record<string, unknown>) ?? {},
-      },
+      conversationHistory,
+      currentProfile: readCurrentCoordinationProfile(params.input.profile),
+      sessionId: params.input.profile.id,
     });
 
     return {
@@ -392,7 +482,7 @@ async function maybeExtractWithLlm(params: {
       extractionErrorCode: null,
     };
   } catch (error) {
-    if (error instanceof InterviewExtractorError) {
+    if (error instanceof HolisticExtractorError) {
       return {
         extractionOutput: null,
         extractionErrorCode: error.code,
@@ -533,8 +623,6 @@ export async function buildInterviewTransitionPlan(
 
   const llmExtraction = await maybeExtractWithLlm({
     input,
-    currentStepId,
-    currentStepPrompt: currentStep.prompt,
   });
 
   const extractionOutput = llmExtraction.extractionOutput;
@@ -563,7 +651,7 @@ export async function buildInterviewTransitionPlan(
 
   const normalizedAnswer = deterministicParsed.ok
     ? (deterministicParsed.value as InterviewNormalizedAnswer)
-    : deriveStoredAnswerFromExtraction(currentStepId, extractionOutput as InterviewExtractOutput);
+    : deriveStoredAnswerFromExtraction(currentStepId, extractionOutput as HolisticExtractOutput);
 
   if (currentStepId === "intro_01" && (normalizedAnswer as { consent?: string }).consent === "later") {
     return {
@@ -598,10 +686,9 @@ export async function buildInterviewTransitionPlan(
   });
 
   if (extractionOutput) {
-    provisionalPatch = applyInterviewExtractOutputToProfilePatch({
+    provisionalPatch = applyHolisticExtractOutputToProfilePatch({
       profilePatch: provisionalPatch,
       extractionOutput,
-      nowIso: input.now_iso,
     });
   }
 
@@ -624,10 +711,9 @@ export async function buildInterviewTransitionPlan(
   });
 
   if (extractionOutput) {
-    profilePatch = applyInterviewExtractOutputToProfilePatch({
+    profilePatch = applyHolisticExtractOutputToProfilePatch({
       profilePatch,
       extractionOutput,
-      nowIso: input.now_iso,
     });
   }
 

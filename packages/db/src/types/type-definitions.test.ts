@@ -9,8 +9,6 @@ import type {
   DimensionCoverageSummary,
   HolisticExtractInput,
   HolisticExtractOutput,
-  InterviewExtractInput,
-  InterviewExtractOutput,
   PlanBrief,
 } from "../index";
 
@@ -131,16 +129,13 @@ describe("3.0 db type definitions", () => {
       needsFollowUp: false,
     };
 
-    const legacyInput: InterviewExtractInput = holisticInput;
-    const legacyOutput: InterviewExtractOutput = holisticOutput;
-
     expect(invitation.status).toBe("pending");
     expect(planBrief.status).toBe("draft");
     expect(contactCircleEntry.contact_name).toBe("Taylor");
     expect(activityCatalogEntry.activity_key).toBe("coffee_walk");
     expect(coverageSummary.dimensions.social_energy.covered).toBe(true);
-    expect(legacyInput.sessionId).toBe("session_123");
-    expect(legacyOutput.needsFollowUp).toBe(false);
+    expect(holisticInput.sessionId).toBe("session_123");
+    expect(holisticOutput.needsFollowUp).toBe(false);
   });
 
   it("enforces exact dimension keys and rejects stepId on holistic extraction input", () => {
