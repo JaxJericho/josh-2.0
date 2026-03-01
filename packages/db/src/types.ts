@@ -14,3 +14,4 @@ export type DbUpdate<T extends DbTableName> = DbTables[T]["Update"];
 export type ConversationMode = DbEnums["conversation_mode"];
 
 export type { Database };
+export * from "./types/index";
