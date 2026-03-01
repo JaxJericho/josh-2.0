@@ -114,7 +114,6 @@ function createCorrelationId(): string {
 
 function buildHolisticExtractionUserPrompt(input: HolisticExtractInput): string {
   const recentTurns = input.conversationHistory
-    .slice(-12)
     .map((turn, index) => `${index + 1}. ${turn.role}: ${turn.text}`)
     .join("\n");
 

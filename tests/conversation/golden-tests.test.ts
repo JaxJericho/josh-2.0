@@ -16,8 +16,7 @@ import {
   type InterviewSessionSnapshot,
 } from "../../packages/core/src/interview/state";
 import type { ProfileRowForInterview, ProfileUpdatePatch } from "../../packages/core/src/profile/profile-writer";
-import type { InterviewExtractInput } from "../../packages/llm/src/interview-extractor";
-import type { InterviewExtractOutput } from "../../packages/llm/src/schemas/interview-extract-output.schema";
+import type { HolisticExtractInput, HolisticExtractOutput } from "../../packages/db/src/types";
 import { CONVERSATION_PROHIBITED_PATTERNS } from "../../packages/llm/src/output-validator";
 
 type InterviewHarnessState = {
@@ -114,7 +113,7 @@ function createInterviewHarnessState(): InterviewHarnessState {
 }
 
 async function runInterviewSimulation(params: {
-  llmExtractor: (input: InterviewExtractInput) => Promise<InterviewExtractOutput>;
+  llmExtractor: (input: HolisticExtractInput) => Promise<HolisticExtractOutput>;
   maxTurns?: number;
 }): Promise<{ exchanges: number; outboundMessages: string[]; completed: boolean }> {
   const state = createInterviewHarnessState();
@@ -151,6 +150,43 @@ function countQuestions(text: string): number {
   return (text.match(/\?/g) ?? []).length;
 }
 
+function validHolisticOutput(
+  overrides: Partial<HolisticExtractOutput> = {},
+): HolisticExtractOutput {
+  return {
+    coordinationDimensionUpdates: {
+      social_energy: { value: 0.7, confidence: 0.7 },
+      social_pace: { value: 0.7, confidence: 0.7 },
+      conversation_depth: { value: 0.66, confidence: 0.7 },
+      adventure_orientation: { value: 0.74, confidence: 0.7 },
+      group_dynamic: { value: 0.5, confidence: 0.7 },
+      values_proximity: { value: 0.7, confidence: 0.7 },
+    },
+    coordinationSignalUpdates: {
+      scheduling_availability: { windows: ["evenings"] },
+      notice_preference: "24_hours",
+      coordination_style: "direct",
+    },
+    coverageSummary: {
+      dimensions: {
+        social_energy: { covered: true, confidence: 0.7 },
+        social_pace: { covered: true, confidence: 0.7 },
+        conversation_depth: { covered: true, confidence: 0.7 },
+        adventure_orientation: { covered: true, confidence: 0.7 },
+        group_dynamic: { covered: true, confidence: 0.7 },
+        values_proximity: { covered: true, confidence: 0.7 },
+      },
+      signals: {
+        scheduling_availability: { covered: true, confidence: 0.7 },
+        notice_preference: { covered: true, confidence: 0.7 },
+        coordination_style: { covered: true, confidence: 0.7 },
+      },
+    },
+    needsFollowUp: false,
+    ...overrides,
+  };
+}
+
 describe("conversation golden tests", () => {
   it("explanation affirmative transitions to awaiting_burst with no direct burst send plan", async () => {
     const transitionPlan = handleOnboardingInbound({
@@ -170,64 +206,7 @@ describe("conversation golden tests", () => {
     });
 
     const rich = await runInterviewSimulation({
-      llmExtractor: async (input) => ({
-        stepId: input.stepId,
-        extracted: {
-          fingerprintPatches: [
-            { key: "connection_depth", range_value: 0.72, confidence: 0.7 },
-            { key: "social_energy", range_value: 0.7, confidence: 0.7 },
-            { key: "social_pace", range_value: 0.7, confidence: 0.7 },
-            { key: "novelty_seeking", range_value: 0.69, confidence: 0.7 },
-            { key: "structure_preference", range_value: 0.68, confidence: 0.7 },
-            { key: "humor_style", range_value: 0.66, confidence: 0.7 },
-            { key: "conversation_style", range_value: 0.74, confidence: 0.7 },
-            { key: "values_alignment_importance", range_value: 0.7, confidence: 0.7 },
-          ],
-          activityPatternsAdd: [
-            {
-              activity_key: "coffee",
-              motive_weights: {
-                comfort: 0.7,
-                connection: 0.6,
-                restorative: 0.4,
-                growth: 0.3,
-              },
-              confidence: 0.72,
-            },
-            {
-              activity_key: "walk",
-              motive_weights: {
-                comfort: 0.4,
-                connection: 0.58,
-                restorative: 0.68,
-                growth: 0.3,
-              },
-              confidence: 0.71,
-            },
-            {
-              activity_key: "museum",
-              motive_weights: {
-                comfort: 0.35,
-                connection: 0.6,
-                restorative: 0.3,
-                growth: 0.64,
-              },
-              confidence: 0.7,
-            },
-          ],
-          boundariesPatch: {
-            no_thanks: ["late nights"],
-            skipped: false,
-          },
-          preferencesPatch: {
-            group_size_pref: "4-6",
-            time_preferences: ["evenings"],
-          },
-        },
-        notes: {
-          needsFollowUp: false,
-        },
-      }),
+      llmExtractor: async () => validHolisticOutput(),
     });
 
     expect(sparse.completed).toBe(true);
@@ -288,34 +267,52 @@ describe("conversation golden tests", () => {
           { activity_key: "coffee", confidence: 0.65, source: "interview" },
         ],
       }),
-      llm_extractor: async () => ({
-        stepId: "motive_01",
-        extracted: {
-          fingerprintPatches: [
-            { key: "adventure_comfort", range_value: 0.78, confidence: 0.67 },
-            { key: "novelty_seeking", range_value: 0.74, confidence: 0.66 },
-          ],
-          activityPatternsAdd: [
-            {
-              activity_key: "climbing",
-              motive_weights: { adventure: 0.84, growth: 0.61 },
-              confidence: 0.73,
-            },
-          ],
-        },
-        notes: {
-          needsFollowUp: false,
-        },
-      }),
+      llm_extractor: async () =>
+        validHolisticOutput({
+          coordinationDimensionUpdates: {
+            social_energy: { value: 0.55, confidence: 0.67 },
+            social_pace: { value: 0.62, confidence: 0.66 },
+            conversation_depth: { value: 0.64, confidence: 0.66 },
+            adventure_orientation: { value: 0.78, confidence: 0.67 },
+            group_dynamic: { value: 0.42, confidence: 0.65 },
+            values_proximity: { value: 0.68, confidence: 0.64 },
+          },
+        }),
     });
 
     expect(transition.profile_event_payload?.extraction_source).toBe("llm");
     const fingerprint = transition.profile_patch?.fingerprint as Record<string, unknown>;
-    const adventureComfort = fingerprint.adventure_comfort as Record<string, unknown>;
-    expect((adventureComfort.confidence as number) >= 0.66).toBe(true);
+    const adventureOrientation = fingerprint.adventure_orientation as Record<string, unknown>;
+    expect((adventureOrientation.confidence as number) >= 0.66).toBe(true);
+  });
 
-    const activityPatterns = transition.profile_patch?.activity_patterns as Array<Record<string, unknown>>;
-    expect(activityPatterns.some((entry) => entry.activity_key === "climbing")).toBe(true);
+  it("five-turn outdoor conversation yields high adventure orientation update", async () => {
+    const conversationHistory = [
+      { role: "assistant" as const, text: "What do you enjoy?" },
+      { role: "user" as const, text: "I like climbing and trail runs." },
+      { role: "assistant" as const, text: "Do you prefer low-key plans?" },
+      { role: "user" as const, text: "I like active and adventurous plans." },
+      { role: "assistant" as const, text: "How about trying new experiences?" },
+      { role: "user" as const, text: "Definitely, I love novelty outdoors." },
+      { role: "assistant" as const, text: "How much notice do you need?" },
+      { role: "user" as const, text: "A day is enough." },
+      { role: "assistant" as const, text: "Good for groups?" },
+      { role: "user" as const, text: "Small groups are ideal." },
+    ];
+
+    const output = validHolisticOutput({
+      coordinationDimensionUpdates: {
+        social_energy: { value: 0.61, confidence: 0.71 },
+        social_pace: { value: 0.67, confidence: 0.72 },
+        conversation_depth: { value: 0.58, confidence: 0.68 },
+        adventure_orientation: { value: 0.79, confidence: 0.75 },
+        group_dynamic: { value: 0.42, confidence: 0.66 },
+        values_proximity: { value: 0.63, confidence: 0.69 },
+      },
+    });
+
+    expect(conversationHistory).toHaveLength(10);
+    expect(output.coordinationDimensionUpdates.adventure_orientation?.value).toBeGreaterThanOrEqual(0.65);
   });
 
   it("ambiguous answers produce at most one clarifier per reply", async () => {

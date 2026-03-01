@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { buildInterviewTransitionPlan } from "../../packages/core/src/interview/state";
 import type { ProfileRowForInterview } from "../../packages/core/src/profile/profile-writer";
-import { createInterviewSignalExtractor } from "../../packages/llm/src/interview-extractor";
+import { createHolisticSignalExtractor } from "../../packages/llm/src/holistic-extractor";
 import { LlmProviderError, type LlmProvider } from "../../packages/llm/src/provider";
+import type { HolisticExtractOutput } from "../../packages/db/src/types";
 
 function createProfile(overrides: Partial<ProfileRowForInterview> = {}): ProfileRowForInterview {
   return {
@@ -45,8 +46,43 @@ function createProfile(overrides: Partial<ProfileRowForInterview> = {}): Profile
   };
 }
 
+function validHolisticOutput(overrides: Partial<HolisticExtractOutput> = {}): HolisticExtractOutput {
+  return {
+    coordinationDimensionUpdates: {
+      social_energy: { value: 0.55, confidence: 0.62 },
+      social_pace: { value: 0.58, confidence: 0.64 },
+      conversation_depth: { value: 0.63, confidence: 0.66 },
+      adventure_orientation: { value: 0.78, confidence: 0.67 },
+      group_dynamic: { value: 0.46, confidence: 0.61 },
+      values_proximity: { value: 0.71, confidence: 0.68 },
+    },
+    coordinationSignalUpdates: {
+      scheduling_availability: { windows: ["weekends_only"] },
+      notice_preference: "24_hours",
+      coordination_style: "direct",
+    },
+    coverageSummary: {
+      dimensions: {
+        social_energy: { covered: true, confidence: 0.62 },
+        social_pace: { covered: true, confidence: 0.64 },
+        conversation_depth: { covered: true, confidence: 0.66 },
+        adventure_orientation: { covered: true, confidence: 0.67 },
+        group_dynamic: { covered: true, confidence: 0.61 },
+        values_proximity: { covered: true, confidence: 0.68 },
+      },
+      signals: {
+        scheduling_availability: { covered: true, confidence: 0.61 },
+        notice_preference: { covered: true, confidence: 0.65 },
+        coordination_style: { covered: true, confidence: 0.63 },
+      },
+    },
+    needsFollowUp: false,
+    ...overrides,
+  };
+}
+
 describe("interview state llm extraction wiring", () => {
-  it("valid LLM extraction path applies extracted patches", async () => {
+  it("valid holistic extraction path applies 6-dimension updates", async () => {
     let callCount = 0;
     const transition = await buildInterviewTransitionPlan({
       inbound_message_sid: "SM_LLM_WIRE_0001",
@@ -62,25 +98,7 @@ describe("interview state llm extraction wiring", () => {
       profile: createProfile(),
       llm_extractor: async () => {
         callCount += 1;
-        return {
-          stepId: "motive_01",
-          extracted: {
-            fingerprintPatches: [
-              { key: "adventure_comfort", range_value: 0.78, confidence: 0.66 },
-              { key: "novelty_seeking", range_value: 0.72, confidence: 0.64 },
-            ],
-            activityPatternsAdd: [
-              {
-                activity_key: "skydiving",
-                motive_weights: { adventure: 0.82, growth: 0.62 },
-                confidence: 0.7,
-              },
-            ],
-          },
-          notes: {
-            needsFollowUp: false,
-          },
-        };
+        return validHolisticOutput();
       },
     });
 
@@ -88,15 +106,13 @@ describe("interview state llm extraction wiring", () => {
     expect(transition.action).toBe("advance");
     expect(transition.profile_event_payload?.extraction_source).toBe("llm");
 
-    const adventureNode = (transition.profile_patch?.fingerprint as Record<string, unknown>)
-      .adventure_comfort as Record<string, unknown>;
-    const noveltyNode = (transition.profile_patch?.fingerprint as Record<string, unknown>)
-      .novelty_seeking as Record<string, unknown>;
-
+    const patch = transition.profile_patch as Record<string, unknown>;
+    const coordinationDimensions = patch.coordination_dimensions as Record<string, unknown>;
+    const adventureNode = coordinationDimensions.adventure_orientation as Record<string, unknown>;
     expect((adventureNode.value as number) >= 0.75).toBe(true);
-    expect((noveltyNode.value as number) >= 0.7).toBe(true);
-    expect((adventureNode.confidence as number) >= 0.6).toBe(true);
-    expect((noveltyNode.confidence as number) >= 0.6).toBe(true);
+    expect((adventureNode.confidence as number) >= 0.66).toBe(true);
+    expect(patch.notice_preference).toBe("24_hours");
+    expect(patch.coordination_style).toBe("direct");
   });
 
   it("invalid JSON extractor output falls back to deterministic parser", async () => {
@@ -105,7 +121,7 @@ describe("interview state llm extraction wiring", () => {
         return { provider: "anthropic", model: "test", text: "not-json" };
       },
     };
-    const llmExtractor = createInterviewSignalExtractor({
+    const llmExtractor = createHolisticSignalExtractor({
       provider,
       logger: { info() {}, warn() {} },
     });
@@ -142,18 +158,32 @@ describe("interview state llm extraction wiring", () => {
           provider: "anthropic",
           model: "test",
           text: JSON.stringify({
-            stepId: "activity_01",
-            extracted: {
-              fingerprintPatches: [
-                { key: "adventure_comfort", range_value: 2, confidence: 0.5 },
-              ],
+            coordinationDimensionUpdates: {
+              legacy_factor_key: { value: 0.5, confidence: 0.7 },
             },
+            coordinationSignalUpdates: {},
+            coverageSummary: {
+              dimensions: {
+                social_energy: { covered: false, confidence: 0 },
+                social_pace: { covered: false, confidence: 0 },
+                conversation_depth: { covered: false, confidence: 0 },
+                adventure_orientation: { covered: false, confidence: 0 },
+                group_dynamic: { covered: false, confidence: 0 },
+                values_proximity: { covered: false, confidence: 0 },
+              },
+              signals: {
+                scheduling_availability: { covered: false, confidence: 0 },
+                notice_preference: { covered: false, confidence: 0 },
+                coordination_style: { covered: false, confidence: 0 },
+              },
+            },
+            needsFollowUp: false,
           }),
         };
       },
     };
 
-    const llmExtractor = createInterviewSignalExtractor({
+    const llmExtractor = createHolisticSignalExtractor({
       provider,
       logger: { info() {}, warn() {} },
     });
@@ -191,7 +221,7 @@ describe("interview state llm extraction wiring", () => {
         throw new DOMException("timeout", "AbortError");
       },
     };
-    const llmExtractor = createInterviewSignalExtractor({
+    const llmExtractor = createHolisticSignalExtractor({
       provider,
       logger: { info() {}, warn() {} },
     });
@@ -234,23 +264,12 @@ describe("interview state llm extraction wiring", () => {
         return {
           provider: "anthropic",
           model: "test",
-          text: JSON.stringify({
-            stepId: "activity_01",
-            extracted: {
-              activityPatternsAdd: [
-                {
-                  activity_key: "coffee",
-                  motive_weights: { comfort: 0.7 },
-                  confidence: 0.7,
-                },
-              ],
-            },
-          }),
+          text: JSON.stringify(validHolisticOutput()),
         };
       },
     };
 
-    const llmExtractor = createInterviewSignalExtractor({
+    const llmExtractor = createHolisticSignalExtractor({
       provider,
       logger: { info() {}, warn() {} },
     });

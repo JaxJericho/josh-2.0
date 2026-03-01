@@ -9,7 +9,7 @@ import {
   type InterviewSignalTarget,
   type SignalCoverageStatus,
 } from "../interview/signal-coverage.ts";
-import type { InterviewExtractOutput } from "../../../llm/src/schemas/interview-extract-output.schema.ts";
+import type { HolisticExtractOutput } from "../../../db/src/types/index.ts";
 
 export type ProfileState =
   | "empty"
@@ -58,6 +58,10 @@ export type ProfileUpdatePatch = {
   activity_patterns: Array<Record<string, unknown>>;
   boundaries: Record<string, unknown>;
   active_intent: Record<string, unknown> | null;
+  coordination_dimensions?: Record<string, unknown>;
+  scheduling_availability?: unknown;
+  notice_preference?: string | null;
+  coordination_style?: string | null;
   completeness_percent: number;
   completed_at: string | null;
   status_reason: string | null;
@@ -814,125 +818,81 @@ export function buildProfilePatchForInterviewAnswer(params: {
   };
 }
 
-function mergeActivityPatternsFromExtraction(
-  activityPatterns: Array<Record<string, unknown>>,
-  extractionOutput: InterviewExtractOutput,
-): Array<Record<string, unknown>> {
-  const additions = extractionOutput.extracted.activityPatternsAdd ?? [];
-  if (additions.length === 0) {
-    return activityPatterns;
-  }
-
-  const nextPatterns = [...activityPatterns];
-
-  for (const addition of additions) {
-    const existingIndex = nextPatterns.findIndex((entry) =>
-      String(entry.activity_key ?? "").toLowerCase() === addition.activity_key.toLowerCase()
-    );
-
-    const merged = {
-      ...(existingIndex >= 0 ? nextPatterns[existingIndex] : {}),
-      activity_key: addition.activity_key,
-      motive_weights: { ...addition.motive_weights },
-      constraints: addition.constraints ? { ...addition.constraints } : undefined,
-      preferred_windows: addition.preferred_windows ? [...addition.preferred_windows] : undefined,
-      confidence: addition.confidence,
-      source: "interview_llm",
-    } satisfies Record<string, unknown>;
-
-    if (existingIndex >= 0) {
-      nextPatterns[existingIndex] = merged;
-    } else {
-      nextPatterns.push(merged);
-    }
-  }
-
-  return nextPatterns;
-}
-
-function mergeActiveIntentFromExtraction(
-  activeIntentRaw: Record<string, unknown>,
-  extractionOutput: InterviewExtractOutput,
-): Record<string, unknown> {
-  const additions = extractionOutput.extracted.activityPatternsAdd ?? [];
-  if (additions.length === 0) {
-    return activeIntentRaw;
-  }
-
-  const existingMotiveWeights = asObject(activeIntentRaw.motive_weights) as Record<string, number>;
-  const nextMotiveWeights: Record<string, number> = { ...existingMotiveWeights };
-
-  for (const addition of additions) {
-    for (const [motive, weight] of Object.entries(addition.motive_weights)) {
-      const previous = typeof nextMotiveWeights[motive] === "number" ? nextMotiveWeights[motive] : 0;
-      nextMotiveWeights[motive] = Math.max(previous, weight);
-    }
-  }
-
-  return {
-    ...activeIntentRaw,
-    motive_weights: nextMotiveWeights,
-  };
-}
-
 function mergeFingerprintFromExtraction(
   fingerprint: Record<string, unknown>,
-  extractionOutput: InterviewExtractOutput,
+  extractionOutput: HolisticExtractOutput,
 ): Record<string, unknown> {
   const nextFingerprint = { ...fingerprint };
-  for (const patch of extractionOutput.extracted.fingerprintPatches ?? []) {
+  for (const [key, patch] of Object.entries(extractionOutput.coordinationDimensionUpdates)) {
+    if (!patch) {
+      continue;
+    }
     setFingerprintValue(
       nextFingerprint,
-      patch.key,
-      patch.range_value,
+      key,
+      patch.value,
       patch.confidence,
     );
   }
   return nextFingerprint;
 }
 
-function mergeObjectPatch(
-  current: Record<string, unknown>,
-  patch: Record<string, unknown> | undefined,
+function mergeCoordinationDimensionsFromExtraction(
+  coordinationDimensionsRaw: Record<string, unknown>,
+  extractionOutput: HolisticExtractOutput,
 ): Record<string, unknown> {
-  if (!patch) {
-    return current;
+  const nextDimensions = { ...coordinationDimensionsRaw };
+  for (const [key, patch] of Object.entries(extractionOutput.coordinationDimensionUpdates)) {
+    if (!patch) {
+      continue;
+    }
+    const existing = asObject(nextDimensions[key]);
+    const existingConfidence = typeof existing.confidence === "number" ? existing.confidence : 0;
+    nextDimensions[key] = {
+      value: patch.value,
+      confidence: Math.max(existingConfidence, patch.confidence),
+      source: "interview_llm",
+    };
   }
-  return {
-    ...current,
-    ...patch,
-  };
+  return nextDimensions;
 }
 
-export function applyInterviewExtractOutputToProfilePatch(params: {
+export function applyHolisticExtractOutputToProfilePatch(params: {
   profilePatch: ProfileUpdatePatch;
-  extractionOutput: InterviewExtractOutput;
+  extractionOutput: HolisticExtractOutput;
   nowIso: string;
 }): ProfileUpdatePatch {
+  const nextPatch = {
+    ...params.profilePatch,
+  } as ProfileUpdatePatch & Record<string, unknown>;
+
   const fingerprint = mergeFingerprintFromExtraction(
-    asObject(params.profilePatch.fingerprint),
+    asObject(nextPatch.fingerprint),
     params.extractionOutput,
   );
-  const activityPatterns = mergeActivityPatternsFromExtraction(
-    asObjectArray(params.profilePatch.activity_patterns),
+  const coordinationDimensions = mergeCoordinationDimensionsFromExtraction(
+    asObject(nextPatch.coordination_dimensions),
     params.extractionOutput,
   );
-  const boundaries = mergeObjectPatch(
-    asObject(params.profilePatch.boundaries),
-    params.extractionOutput.extracted.boundariesPatch,
-  );
-  const preferences = mergeObjectPatch(
-    asObject(params.profilePatch.preferences),
-    params.extractionOutput.extracted.preferencesPatch,
-  );
-  const activeIntent = mergeActiveIntentFromExtraction(
-    asObject(params.profilePatch.active_intent),
-    params.extractionOutput,
-  );
+  const activityPatterns = asObjectArray(nextPatch.activity_patterns);
+  const boundaries = asObject(nextPatch.boundaries);
+  const preferences = asObject(nextPatch.preferences);
+  const activeIntent = asObject(nextPatch.active_intent);
+
+  if ("scheduling_availability" in params.extractionOutput.coordinationSignalUpdates) {
+    nextPatch.scheduling_availability =
+      params.extractionOutput.coordinationSignalUpdates.scheduling_availability ?? null;
+  }
+  if ("notice_preference" in params.extractionOutput.coordinationSignalUpdates) {
+    nextPatch.notice_preference = params.extractionOutput.coordinationSignalUpdates.notice_preference ?? null;
+  }
+  if ("coordination_style" in params.extractionOutput.coordinationSignalUpdates) {
+    nextPatch.coordination_style = params.extractionOutput.coordinationSignalUpdates.coordination_style ?? null;
+  }
 
   const coverageStatus = getSignalCoverageStatus({
-    country_code: params.profilePatch.country_code,
-    last_interview_step: params.profilePatch.last_interview_step,
+    country_code: nextPatch.country_code,
+    last_interview_step: nextPatch.last_interview_step,
     fingerprint,
     activity_patterns: activityPatterns,
     boundaries,
@@ -944,10 +904,11 @@ export function applyInterviewExtractOutputToProfilePatch(params: {
   const nextState: ProfileState = isComplete ? "complete_mvp" : "partial";
 
   return {
-    ...params.profilePatch,
+    ...nextPatch,
     state: nextState,
     is_complete_mvp: isComplete,
     fingerprint,
+    coordination_dimensions: coordinationDimensions,
     activity_patterns: activityPatterns,
     boundaries,
     preferences,
