@@ -19,6 +19,9 @@ export type InterviewExtractedSignals = {
   preferencesPatch?: Record<string, unknown>;
 };
 
+/**
+ * @deprecated Use HolisticExtractOutput and `parseHolisticExtractOutput()` from `holistic-extract-output.schema.ts`.
+ */
 export type InterviewExtractOutput = {
   stepId: string;
   extracted: InterviewExtractedSignals;
@@ -38,6 +41,9 @@ const EXTRACTED_KEYS = new Set([
 ]);
 const NOTES_KEYS = new Set(["needsFollowUp", "followUpQuestion", "followUpOptions"]);
 
+/**
+ * @deprecated Use HolisticExtractOutputSchemaError from `holistic-extract-output.schema.ts`.
+ */
 export class InterviewExtractOutputSchemaError extends Error {
   constructor(message: string) {
     super(message);
@@ -222,6 +228,9 @@ function parseNotes(value: unknown): InterviewExtractOutput["notes"] {
   return parsed;
 }
 
+/**
+ * @deprecated Use `parseHolisticExtractOutput()` from `holistic-extract-output.schema.ts`.
+ */
 export function parseInterviewExtractOutput(value: unknown): InterviewExtractOutput {
   const output = assertPlainObject(value, "output");
   assertNoUnknownKeys(output, TOP_LEVEL_KEYS, "output");

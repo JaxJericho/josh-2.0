@@ -1,12 +1,9 @@
+import type { HolisticExtractInput, HolisticExtractOutput } from "../../db/src/types";
 import {
-  INTERVIEW_EXTRACTION_PROMPT_VERSION,
-  INTERVIEW_EXTRACTION_SYSTEM_PROMPT,
-} from "./prompts/interview-extraction-system-prompt.ts";
-import {
-  parseInterviewExtractOutput,
-  type InterviewExtractOutput,
-  type InterviewExtractedSignals,
-} from "./schemas/interview-extract-output.schema.ts";
+  HOLISTIC_EXTRACTION_PROMPT_VERSION,
+  HOLISTIC_EXTRACTION_SYSTEM_PROMPT,
+} from "./prompts/holistic-extraction-system-prompt.ts";
+import { parseHolisticExtractOutput } from "./schemas/holistic-extract-output.schema.ts";
 import {
   getDefaultLlmProvider,
   LlmProviderError,
@@ -25,40 +22,16 @@ import {
   setSentryContext,
 } from "../../core/src/observability/sentry.ts";
 
-/**
- * @deprecated Use HolisticExtractInput with `extractCoordinationSignals()` from `holistic-extractor.ts`.
- */
-export type InterviewExtractInput = {
-  userId: string;
-  inboundMessageSid: string;
-  stepId: string;
-  questionTarget: string;
-  questionText: string;
-  userAnswerText: string;
-  recentConversationTurns: Array<{ role: "user" | "assistant"; text: string }>;
-  currentProfile: {
-    fingerprint: Record<string, unknown>;
-    activityPatterns: Array<Record<string, unknown>>;
-    boundaries: Record<string, unknown>;
-    preferences: Record<string, unknown>;
-  };
-  correlationId?: string;
-};
-
-export type InterviewExtractorFailureCode =
+export type HolisticExtractorFailureCode =
   | "provider_transient"
   | "provider_non_transient"
   | "timeout"
   | "invalid_json"
   | "schema_invalid"
-  | "guardrail_violation"
-  | "step_mismatch";
+  | "guardrail_violation";
 
-/**
- * @deprecated Use HolisticExtractorError from `holistic-extractor.ts`.
- */
-export class InterviewExtractorError extends Error {
-  readonly code: InterviewExtractorFailureCode;
+export class HolisticExtractorError extends Error {
+  readonly code: HolisticExtractorFailureCode;
   readonly shouldFallback: true;
   readonly transient: boolean;
   readonly correlationId: string;
@@ -67,7 +40,7 @@ export class InterviewExtractorError extends Error {
   constructor(
     message: string,
     options: {
-      code: InterviewExtractorFailureCode;
+      code: HolisticExtractorFailureCode;
       correlationId: string;
       promptVersion: string;
       transient: boolean;
@@ -75,7 +48,7 @@ export class InterviewExtractorError extends Error {
     },
   ) {
     super(message);
-    this.name = "InterviewExtractorError";
+    this.name = "HolisticExtractorError";
     this.code = options.code;
     this.shouldFallback = true;
     this.transient = options.transient;
@@ -88,7 +61,7 @@ export class InterviewExtractorError extends Error {
   }
 }
 
-type InterviewExtractorLogger = {
+type HolisticExtractorLogger = {
   info(event: string, data: Record<string, unknown>): void;
   warn(event: string, data: Record<string, unknown>): void;
 };
@@ -97,14 +70,14 @@ type CreateExtractorOptions = {
   provider?: LlmProvider;
   timeoutMs?: number;
   retryCount?: number;
-  logger?: InterviewExtractorLogger;
+  logger?: HolisticExtractorLogger;
   createCorrelationId?: () => string;
 };
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_RETRY_COUNT = 1;
 
-function createDefaultLogger(): InterviewExtractorLogger {
+function createDefaultLogger(): HolisticExtractorLogger {
   return {
     info(event, data) {
       emitStructuredEvent({
@@ -139,21 +112,16 @@ function createCorrelationId(): string {
   return `corr_${Date.now().toString(36)}`;
 }
 
-function buildInterviewExtractionUserPrompt(input: InterviewExtractInput): string {
-  const recentTurns = input.recentConversationTurns
-    .slice(-8)
+function buildHolisticExtractionUserPrompt(input: HolisticExtractInput): string {
+  const recentTurns = input.conversationHistory
+    .slice(-12)
     .map((turn, index) => `${index + 1}. ${turn.role}: ${turn.text}`)
     .join("\n");
 
   return [
-    `PromptVersion: ${INTERVIEW_EXTRACTION_PROMPT_VERSION}`,
-    `UserId: ${input.userId}`,
-    `InboundMessageSid: ${input.inboundMessageSid}`,
-    `CurrentStepId: ${input.stepId}`,
-    `CurrentQuestionTarget: ${input.questionTarget}`,
-    `CurrentQuestionText: ${input.questionText}`,
-    `UserAnswerText: ${input.userAnswerText}`,
-    "RecentConversationTurns:",
+    `PromptVersion: ${HOLISTIC_EXTRACTION_PROMPT_VERSION}`,
+    `SessionId: ${input.sessionId}`,
+    "ConversationHistory:",
     recentTurns || "(none)",
     "CurrentProfileJSON:",
     JSON.stringify(input.currentProfile),
@@ -162,53 +130,6 @@ function buildInterviewExtractionUserPrompt(input: InterviewExtractInput): strin
 
 function parseJsonPayload(raw: string): unknown {
   return JSON.parse(raw);
-}
-
-function hasStrongMotiveWeight(output: InterviewExtractOutput): boolean {
-  const entries = output.extracted.activityPatternsAdd ?? [];
-  for (const entry of entries) {
-    for (const weight of Object.values(entry.motive_weights)) {
-      if (weight >= 0.55) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function enforceNeedsFollowUpRule(output: InterviewExtractOutput): InterviewExtractOutput {
-  if (!output.notes?.needsFollowUp) {
-    return output;
-  }
-
-  const followUpQuestion = output.notes.followUpQuestion?.toLowerCase() ?? "";
-  const mismatchSignal = /\b(mismatch|conflict|incompatible|risk)\b/.test(followUpQuestion);
-  const motiveFlat = !hasStrongMotiveWeight(output);
-  if (motiveFlat || mismatchSignal) {
-    return output;
-  }
-
-  return {
-    ...output,
-    notes: {
-      ...output.notes,
-      needsFollowUp: false,
-    },
-  };
-}
-
-function mergeExtractedSignals(extracted: InterviewExtractedSignals): InterviewExtractedSignals {
-  return {
-    fingerprintPatches: extracted.fingerprintPatches?.map((entry) => ({ ...entry })),
-    activityPatternsAdd: extracted.activityPatternsAdd?.map((entry) => ({
-      ...entry,
-      motive_weights: { ...entry.motive_weights },
-      constraints: entry.constraints ? { ...entry.constraints } : undefined,
-      preferred_windows: entry.preferred_windows ? [...entry.preferred_windows] : undefined,
-    })),
-    boundariesPatch: extracted.boundariesPatch ? { ...extracted.boundariesPatch } : undefined,
-    preferencesPatch: extracted.preferencesPatch ? { ...extracted.preferencesPatch } : undefined,
-  };
 }
 
 function withTimeoutSignal(timeoutMs: number): { signal: AbortSignal; clear: () => void } {
@@ -232,36 +153,35 @@ async function buildPromptFingerprint(input: string): Promise<string> {
     .join("");
 }
 
-/**
- * @deprecated Use `createHolisticSignalExtractor()` from `holistic-extractor.ts`.
- */
-export function createInterviewSignalExtractor(options: CreateExtractorOptions = {}) {
+export function createHolisticSignalExtractor(options: CreateExtractorOptions = {}) {
   const provider = options.provider ?? getDefaultLlmProvider();
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retryCount = options.retryCount ?? DEFAULT_RETRY_COUNT;
   const logger = options.logger ?? createDefaultLogger();
   const correlationFactory = options.createCorrelationId ?? createCorrelationId;
 
-  return async function extractInterviewSignals(input: InterviewExtractInput): Promise<InterviewExtractOutput> {
-    const correlationId = input.correlationId ?? correlationFactory();
+  return async function extractCoordinationSignals(
+    input: HolisticExtractInput,
+  ): Promise<HolisticExtractOutput> {
+    const correlationId = correlationFactory();
     const attempts = retryCount + 1;
-    const userPrompt = buildInterviewExtractionUserPrompt(input);
+    const userPrompt = buildHolisticExtractionUserPrompt(input);
     const promptHash = await buildPromptFingerprint(userPrompt);
     setSentryContext({
       category: "llm_extraction",
       correlation_id: correlationId,
-      user_id: input.userId,
+      user_id: null,
       tags: {
         prompt_hash: promptHash,
-        step_id: input.stepId,
+        session_id: input.sessionId,
       },
     });
     let lastError: unknown = null;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      logger.info("interview_extractor.call", {
+      logger.info("holistic_extractor.call", {
         correlation_id: correlationId,
-        prompt_version: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+        prompt_version: HOLISTIC_EXTRACTION_PROMPT_VERSION,
         attempt,
       });
 
@@ -272,7 +192,7 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
       let llmModel = "unknown";
       try {
         const providerResponse = await provider.generateText({
-          systemPrompt: INTERVIEW_EXTRACTION_SYSTEM_PROMPT,
+          systemPrompt: HOLISTIC_EXTRACTION_SYSTEM_PROMPT,
           userPrompt,
           timeoutMs,
           signal: timeout.signal,
@@ -293,7 +213,7 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           value: costEstimate.input_tokens,
           correlation_id: correlationId,
           tags: {
-            component: "interview_extractor",
+            component: "holistic_extractor",
             provider: providerResponse.provider,
             model: providerResponse.model,
           },
@@ -303,7 +223,7 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           value: costEstimate.output_tokens,
           correlation_id: correlationId,
           tags: {
-            component: "interview_extractor",
+            component: "holistic_extractor",
             provider: providerResponse.provider,
             model: providerResponse.model,
           },
@@ -313,7 +233,7 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           value: costEstimate.estimated_cost_usd,
           correlation_id: correlationId,
           tags: {
-            component: "interview_extractor",
+            component: "holistic_extractor",
             provider: providerResponse.provider,
             model: costEstimate.pricing_model,
             pricing_version: costEstimate.pricing_version,
@@ -325,9 +245,9 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           requireJson: true,
         });
         if (!validation.ok) {
-          logger.warn("interview_extractor.output_rejected", {
+          logger.warn("holistic_extractor.output_rejected", {
             correlation_id: correlationId,
-            prompt_version: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+            prompt_version: HOLISTIC_EXTRACTION_PROMPT_VERSION,
             attempt,
             violation_codes: validation.violations.map((entry) => entry.code),
           });
@@ -336,37 +256,19 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
             entry.code === "invalid_json" || entry.code === "output_wrapper_detected"
           );
 
-          throw new InterviewExtractorError(
+          throw new HolisticExtractorError(
             "Model output rejected by output validator.",
             {
               code: hasWrapperOrJsonViolation ? "invalid_json" : "guardrail_violation",
               correlationId,
-              promptVersion: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+              promptVersion: HOLISTIC_EXTRACTION_PROMPT_VERSION,
               transient: false,
             },
           );
         }
 
         const parsedJson = parseJsonPayload(validation.sanitizedText);
-        const parsedOutput = enforceNeedsFollowUpRule(parseInterviewExtractOutput(parsedJson));
-
-        if (parsedOutput.stepId !== input.stepId) {
-          throw new InterviewExtractorError(
-            `Extractor returned stepId '${parsedOutput.stepId}' instead of '${input.stepId}'.`,
-            {
-              code: "step_mismatch",
-              correlationId,
-              promptVersion: INTERVIEW_EXTRACTION_PROMPT_VERSION,
-              transient: false,
-            },
-          );
-        }
-
-        return {
-          ...parsedOutput,
-          extracted: mergeExtractedSignals(parsedOutput.extracted),
-          notes: parsedOutput.notes ? { ...parsedOutput.notes } : undefined,
-        } satisfies InterviewExtractOutput;
+        return parseHolisticExtractOutput(parsedJson);
       } catch (error) {
         lastError = error;
         llmCallOutcome = "error";
@@ -375,7 +277,7 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
         const normalized = normalizeErrorShape(error);
         const providerTransient = error instanceof LlmProviderError && error.transient;
         const transient = isAbort || providerTransient;
-        const code: InterviewExtractorFailureCode = error instanceof InterviewExtractorError
+        const code: HolisticExtractorFailureCode = error instanceof HolisticExtractorError
           ? error.code
           : isAbort
           ? "timeout"
@@ -385,9 +287,9 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           ? "invalid_json"
           : "schema_invalid";
 
-        logger.warn("interview_extractor.failure", {
+        logger.warn("holistic_extractor.failure", {
           correlation_id: correlationId,
-          prompt_version: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+          prompt_version: HOLISTIC_EXTRACTION_PROMPT_VERSION,
           attempt,
           error_code: code,
           transient,
@@ -400,15 +302,15 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
             context: {
               category: "llm_extraction",
               correlation_id: correlationId,
-              user_id: input.userId,
+              user_id: null,
               tags: {
                 prompt_hash: promptHash,
-                step_id: input.stepId,
+                session_id: input.sessionId,
                 attempt,
               },
             },
             payload: {
-              prompt_version: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+              prompt_version: HOLISTIC_EXTRACTION_PROMPT_VERSION,
               prompt_hash: promptHash,
               error_code: code,
               transient,
@@ -420,12 +322,12 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           continue;
         }
 
-        throw new InterviewExtractorError(
-          `Interview extraction failed: ${normalized.message}`,
+        throw new HolisticExtractorError(
+          `Holistic extraction failed: ${normalized.message}`,
           {
             code,
             correlationId,
-            promptVersion: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+            promptVersion: HOLISTIC_EXTRACTION_PROMPT_VERSION,
             transient,
             cause: error,
           },
@@ -437,7 +339,7 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           value: 1,
           correlation_id: correlationId,
           tags: {
-            component: "interview_extractor",
+            component: "holistic_extractor",
             provider: llmProvider,
             model: llmModel,
             attempt,
@@ -450,19 +352,19 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
           correlation_id: correlationId,
           tags: {
             component: "llm_call",
-            operation: "interview_extractor",
+            operation: "holistic_extractor",
             outcome: llmCallOutcome,
           },
         });
       }
     }
 
-    throw new InterviewExtractorError(
-      "Interview extraction failed after retry.",
+    throw new HolisticExtractorError(
+      "Holistic extraction failed after retry.",
       {
         code: "provider_transient",
         correlationId,
-        promptVersion: INTERVIEW_EXTRACTION_PROMPT_VERSION,
+        promptVersion: HOLISTIC_EXTRACTION_PROMPT_VERSION,
         transient: true,
         cause: lastError,
       },
@@ -470,7 +372,4 @@ export function createInterviewSignalExtractor(options: CreateExtractorOptions =
   };
 }
 
-/**
- * @deprecated Use `extractCoordinationSignals` from `holistic-extractor.ts`.
- */
-export const extractInterviewSignals = createInterviewSignalExtractor();
+export const extractCoordinationSignals = createHolisticSignalExtractor();

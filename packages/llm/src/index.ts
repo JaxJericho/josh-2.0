@@ -1,9 +1,18 @@
 export {
+  extractCoordinationSignals,
+  createHolisticSignalExtractor,
+  HolisticExtractorError,
+} from "./holistic-extractor.ts";
+export {
   extractInterviewSignals,
   createInterviewSignalExtractor,
   InterviewExtractorError,
   type InterviewExtractInput,
 } from "./interview-extractor.ts";
+export {
+  HOLISTIC_EXTRACTION_PROMPT_VERSION,
+  HOLISTIC_EXTRACTION_SYSTEM_PROMPT,
+} from "./prompts/holistic-extraction-system-prompt.ts";
 export {
   PROMPT_VERSION,
   INTERVIEW_EXTRACTION_PROMPT_VERSION,
@@ -17,6 +26,10 @@ export {
   type OutputViolation,
   type ValidateModelOutputResult,
 } from "./output-validator.ts";
+export {
+  parseHolisticExtractOutput,
+  HolisticExtractOutputSchemaError,
+} from "./schemas/holistic-extract-output.schema.ts";
 export {
   parseInterviewExtractOutput,
   type InterviewExtractOutput,
