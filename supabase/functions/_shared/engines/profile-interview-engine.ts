@@ -3,8 +3,6 @@ import { buildInterviewTransitionPlan, type ConversationMode, type InterviewSess
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import type { ProfileRowForInterview, ProfileState } from "../../../../packages/core/src/profile/profile-writer.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import { recomputeProfileSignals } from "../../../../packages/core/src/compatibility/compatibility-signal-writer.ts";
-// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { resolveRegionAssignment } from "../../../../packages/core/src/regions/assignment.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { createSupabaseEntitlementsRepository, evaluateEntitlements } from "../../../../packages/core/src/entitlements/evaluate-entitlements.ts";
@@ -354,12 +352,6 @@ async function persistInterviewTransition(params: {
       replyMessageOverride = waitlistGate.reply_message;
     }
 
-    if (params.transition.profile_patch.is_complete_mvp) {
-      await recomputeProfileSignals({
-        supabase: params.supabase,
-        user_id: params.userId,
-      });
-    }
   }
 
   if (params.transition.profile_event_type && params.transition.profile_event_step_id && params.transition.profile_event_payload) {

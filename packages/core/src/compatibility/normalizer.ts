@@ -12,25 +12,35 @@ const ACTIVITY_ORDER = [
   "music",
 ] as const;
 
-const INTERACTION_STYLE_ORDER = ["curious", "funny", "thoughtful", "energetic"] as const;
-const CONVERSATION_STYLE_ORDER = ["ideas", "feelings", "stories", "plans"] as const;
+const COORDINATION_DIMENSION_ORDER = [
+  "social_energy",
+  "social_pace",
+  "conversation_depth",
+  "adventure_orientation",
+  "group_dynamic",
+  "values_proximity",
+] as const;
 const MOTIVE_ORDER = ["connection", "fun", "restorative", "adventure", "comfort"] as const;
 const GROUP_SIZE_ORDER = ["2-3", "4-6", "7-10"] as const;
 const TIME_WINDOW_ORDER = ["mornings", "afternoons", "evenings", "weekends_only"] as const;
 
 type ActivityKey = (typeof ACTIVITY_ORDER)[number];
-type InteractionStyle = (typeof INTERACTION_STYLE_ORDER)[number];
-type ConversationStyle = (typeof CONVERSATION_STYLE_ORDER)[number];
+type CoordinationDimensionKey = (typeof COORDINATION_DIMENSION_ORDER)[number];
 type MotiveKey = (typeof MOTIVE_ORDER)[number];
 type GroupSize = (typeof GROUP_SIZE_ORDER)[number];
 type TimeWindow = (typeof TIME_WINDOW_ORDER)[number];
+
+type CoordinationDimensionSnapshot = {
+  value: number | null;
+  confidence: number | null;
+};
 
 export type StructuredProfileForCompatibility = {
   profile_id: string;
   user_id: string;
   state: string;
   is_complete_mvp: boolean;
-  fingerprint: unknown;
+  coordination_dimensions: unknown;
   activity_patterns: unknown;
   boundaries: unknown;
   preferences: unknown;
@@ -50,6 +60,8 @@ export type NormalizedSignalVectors = {
     trait_order: readonly string[];
     intent_order: readonly string[];
     availability_order: readonly string[];
+    coordination_dimensions: Record<CoordinationDimensionKey, CoordinationDimensionSnapshot>;
+    trait_vector_source: Array<number | null>;
     defaults_applied: string[];
     ignored_activity_keys: string[];
   };
@@ -83,6 +95,13 @@ function assertString(value: unknown, label: string): string {
   return value;
 }
 
+function asOptionalRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
 function assertUnitInterval(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw new Error(`${label} must be a finite number.`);
@@ -105,20 +124,6 @@ function buildOneHotVector<T extends string>(
   return order.map((entry) => (selectedSet.has(entry) ? 1 : 0));
 }
 
-function asFingerprintNode(
-  fingerprint: Record<string, unknown>,
-  key: string,
-): Record<string, unknown> | null {
-  const raw = fingerprint[key];
-  if (raw == null) {
-    return null;
-  }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error(`fingerprint.${key} must be an object when present.`);
-  }
-  return raw as Record<string, unknown>;
-}
-
 function readEnumValue<T extends string>(params: {
   value: unknown;
   allowed: readonly T[];
@@ -131,30 +136,42 @@ function readEnumValue<T extends string>(params: {
   return raw as T;
 }
 
-function mapValuesAlignmentToScalar(value: "very" | "somewhat" | "not_a_big_deal"): number {
-  switch (value) {
-    case "very":
-      return 1;
-    case "somewhat":
-      return 0.6;
-    case "not_a_big_deal":
-      return 0.25;
-    default:
-      return 0.6;
+function readNullableUnitInterval(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
   }
+  if (value < 0 || value > 1) {
+    return null;
+  }
+  return round(value);
 }
 
-function mapSocialPaceToScalar(value: "slow" | "medium" | "fast"): number {
-  switch (value) {
-    case "slow":
-      return 0.2;
-    case "medium":
-      return 0.5;
-    case "fast":
-      return 0.8;
-    default:
-      return 0.5;
+function readCoordinationDimension(params: {
+  coordinationDimensions: Record<string, unknown>;
+  key: CoordinationDimensionKey;
+  defaultsApplied: string[];
+}): CoordinationDimensionSnapshot {
+  const rawNode = params.coordinationDimensions[params.key];
+  if (!rawNode || typeof rawNode !== "object" || Array.isArray(rawNode)) {
+    params.defaultsApplied.push(
+      `coordination_dimensions.${params.key}.value`,
+      `coordination_dimensions.${params.key}.confidence`,
+    );
+    return { value: null, confidence: null };
   }
+
+  const node = rawNode as Record<string, unknown>;
+  const value = readNullableUnitInterval(node.value);
+  const confidence = readNullableUnitInterval(node.confidence);
+
+  if (value == null) {
+    params.defaultsApplied.push(`coordination_dimensions.${params.key}.value`);
+  }
+  if (confidence == null) {
+    params.defaultsApplied.push(`coordination_dimensions.${params.key}.confidence`);
+  }
+
+  return { value, confidence };
 }
 
 function containsKeyword(items: string[], keywords: RegExp): number {
@@ -173,7 +190,7 @@ export function normalizeProfileSignals(
   assertString(profile.user_id, "profile.user_id");
   assertBoolean(profile.is_complete_mvp, "profile.is_complete_mvp");
 
-  const fingerprint = assertRecord(profile.fingerprint, "profile.fingerprint");
+  const coordinationDimensions = asOptionalRecord(profile.coordination_dimensions);
   const preferences = assertRecord(profile.preferences, "profile.preferences");
   const boundaries = assertRecord(profile.boundaries, "profile.boundaries");
   const activityPatterns = assertArray(profile.activity_patterns, "profile.activity_patterns");
@@ -183,6 +200,15 @@ export function normalizeProfileSignals(
 
   const defaultsApplied: string[] = [];
   const ignoredActivityKeys: string[] = [];
+
+  const dimensionSnapshots = COORDINATION_DIMENSION_ORDER.reduce((accumulator, key) => {
+    accumulator[key] = readCoordinationDimension({
+      coordinationDimensions,
+      key,
+      defaultsApplied,
+    });
+    return accumulator;
+  }, {} as Record<CoordinationDimensionKey, CoordinationDimensionSnapshot>);
 
   const interestByActivity: Record<ActivityKey, number> = {
     coffee: 0,
@@ -227,56 +253,6 @@ export function normalizeProfileSignals(
 
     const key = activityKey as ActivityKey;
     interestByActivity[key] = Math.max(interestByActivity[key], confidence);
-  }
-
-  const socialPaceNode = asFingerprintNode(fingerprint, "social_pace");
-  const socialPace = socialPaceNode?.value == null
-    ? "medium"
-    : readEnumValue({
-      value: socialPaceNode.value,
-      allowed: ["slow", "medium", "fast"],
-      label: "fingerprint.social_pace.value",
-    });
-  if (socialPaceNode?.value == null) {
-    defaultsApplied.push("fingerprint.social_pace.value");
-  }
-
-  const interactionStyleNode = asFingerprintNode(fingerprint, "interaction_style");
-  const interactionStyle = interactionStyleNode?.value == null
-    ? "thoughtful"
-    : readEnumValue({
-      value: interactionStyleNode.value,
-      allowed: INTERACTION_STYLE_ORDER,
-      label: "fingerprint.interaction_style.value",
-    });
-  if (interactionStyleNode?.value == null) {
-    defaultsApplied.push("fingerprint.interaction_style.value");
-  }
-
-  const conversationStyleNode = asFingerprintNode(fingerprint, "conversation_style");
-  const conversationStyles = conversationStyleNode?.value == null
-    ? []
-    : assertArray(
-      conversationStyleNode.value,
-      "fingerprint.conversation_style.value",
-    ).map((value, index) => readEnumValue({
-      value,
-      allowed: CONVERSATION_STYLE_ORDER,
-      label: `fingerprint.conversation_style.value[${index}]`,
-    }));
-  if (conversationStyleNode?.value == null) {
-    defaultsApplied.push("fingerprint.conversation_style.value");
-  }
-
-  const valuesAlignment = preferences.values_alignment_importance == null
-    ? "somewhat"
-    : readEnumValue({
-      value: preferences.values_alignment_importance,
-      allowed: ["very", "somewhat", "not_a_big_deal"],
-      label: "preferences.values_alignment_importance",
-    });
-  if (preferences.values_alignment_importance == null) {
-    defaultsApplied.push("preferences.values_alignment_importance");
   }
 
   const groupSizePreference = preferences.group_size_pref == null
@@ -337,12 +313,10 @@ export function normalizeProfileSignals(
 
   const interestVector = ACTIVITY_ORDER.map((activity) => round(interestByActivity[activity]));
 
-  const traitVector = [
-    round(mapSocialPaceToScalar(socialPace)),
-    ...buildOneHotVector(INTERACTION_STYLE_ORDER, [interactionStyle]),
-    ...buildOneHotVector(CONVERSATION_STYLE_ORDER, conversationStyles),
-    round(mapValuesAlignmentToScalar(valuesAlignment)),
-  ];
+  const traitVectorSource = COORDINATION_DIMENSION_ORDER.map(
+    (key) => dimensionSnapshots[key].value,
+  );
+  const traitVector = traitVectorSource.map((value) => round(value ?? 0.5));
 
   const intentVector = [
     ...MOTIVE_ORDER.map((motive) => round(motiveWeights[motive])),
@@ -364,12 +338,7 @@ export function normalizeProfileSignals(
     metadata: {
       normalizer_version: NORMALIZER_VERSION,
       activity_order: ACTIVITY_ORDER,
-      trait_order: [
-        "social_pace_scalar",
-        ...INTERACTION_STYLE_ORDER.map((key) => `interaction_style:${key}`),
-        ...CONVERSATION_STYLE_ORDER.map((key) => `conversation_style:${key}`),
-        "values_alignment_importance",
-      ],
+      trait_order: COORDINATION_DIMENSION_ORDER.map((key) => `coordination_dimension:${key}`),
       intent_order: [
         ...MOTIVE_ORDER.map((key) => `motive:${key}`),
         ...GROUP_SIZE_ORDER.map((key) => `group_size:${key}`),
@@ -380,6 +349,8 @@ export function normalizeProfileSignals(
         "boundary:no_late_nights",
         "boundary:no_loud_spaces",
       ],
+      coordination_dimensions: dimensionSnapshots,
+      trait_vector_source: traitVectorSource,
       defaults_applied: defaultsApplied,
       ignored_activity_keys: ignoredActivityKeys,
     },

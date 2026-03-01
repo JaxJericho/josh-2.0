@@ -5,6 +5,10 @@ import {
   type StructuredProfileForCompatibility,
 } from "./normalizer.ts";
 
+/**
+ * @deprecated Legacy 2.0 compatibility signal persistence.
+ * Removed from active runtime pipeline in Ticket 18.3 and retained temporarily for tests/scripts.
+ */
 export const COMPATIBILITY_SIGNAL_TABLE = "profile_compatibility_signals";
 
 export type CompatibilitySignalRow = {
@@ -38,7 +42,7 @@ type ProfileRow = {
   user_id: string;
   state: string;
   is_complete_mvp: boolean;
-  fingerprint: unknown;
+  coordination_dimensions: unknown;
   activity_patterns: unknown;
   boundaries: unknown;
   preferences: unknown;
@@ -108,7 +112,7 @@ export async function recomputeProfileSignals(params: {
     user_id: profile.user_id,
     state: profile.state,
     is_complete_mvp: profile.is_complete_mvp,
-    fingerprint: profile.fingerprint,
+    coordination_dimensions: profile.coordination_dimensions,
     activity_patterns: profile.activity_patterns,
     boundaries: profile.boundaries,
     preferences: profile.preferences,
@@ -154,7 +158,7 @@ async function fetchProfileForRecompute(
   const { data, error } = await supabase
     .from("profiles")
     .select(
-      "id,user_id,state,is_complete_mvp,fingerprint,activity_patterns,boundaries,preferences,active_intent,completed_at,updated_at",
+      "id,user_id,state,is_complete_mvp,coordination_dimensions,activity_patterns,boundaries,preferences,active_intent,completed_at,updated_at",
     )
     .eq("user_id", userId)
     .maybeSingle();
@@ -172,7 +176,7 @@ async function fetchProfileForRecompute(
     user_id: data.user_id,
     state: data.state,
     is_complete_mvp: data.is_complete_mvp,
-    fingerprint: data.fingerprint,
+    coordination_dimensions: data.coordination_dimensions,
     activity_patterns: data.activity_patterns,
     boundaries: data.boundaries,
     preferences: data.preferences,

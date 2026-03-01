@@ -50,10 +50,13 @@ function createMockSupabase() {
         user_id: "usr_123",
         state: "complete_mvp",
         is_complete_mvp: true,
-        fingerprint: {
-          social_pace: { value: "medium", confidence: 0.8, source: "interview" },
-          interaction_style: { value: "thoughtful", confidence: 0.72, source: "interview" },
-          conversation_style: { value: ["ideas", "plans"], confidence: 0.7, source: "interview" },
+        coordination_dimensions: {
+          social_energy: { value: 0.74, confidence: 0.8, source: "interview" },
+          social_pace: { value: 0.52, confidence: 0.72, source: "interview" },
+          conversation_depth: { value: 0.69, confidence: 0.7, source: "interview" },
+          adventure_orientation: { value: 0.38, confidence: 0.77, source: "interview" },
+          group_dynamic: { value: 0.44, confidence: 0.61, source: "interview" },
+          values_proximity: { value: 0.81, confidence: 0.8, source: "interview" },
         },
         activity_patterns: [
           { activity_key: "coffee", confidence: 0.7, source: "interview" },

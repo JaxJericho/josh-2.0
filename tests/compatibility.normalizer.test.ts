@@ -15,10 +15,15 @@ describe("compatibility signal normalizer", () => {
     expect(second).toEqual(first);
     expect(JSON.stringify(profile)).toBe(before);
     expect(first.interest_vector).toEqual([0.8, 0.5, 0, 0, 0, 0, 0, 0, 0]);
-    expect(first.trait_vector).toEqual([0.8, 0, 1, 0, 0, 1, 0, 1, 0, 1]);
+    expect(first.trait_vector).toEqual([0.82, 0.8, 0.74, 0.35, 0.4, 0.88]);
     expect(first.intent_vector).toEqual([0.7, 0.2, 0.6, 0, 0, 1, 0, 0]);
     expect(first.availability_vector).toEqual([1, 0, 1, 0, 1, 0, 1]);
     expect(first.metadata.ignored_activity_keys).toEqual(["pickleball"]);
+    expect(first.metadata.coordination_dimensions.social_pace).toEqual({
+      value: 0.8,
+      confidence: 0.8,
+    });
+    expect(first.metadata.trait_vector_source).toEqual([0.82, 0.8, 0.74, 0.35, 0.4, 0.88]);
   });
 
   it("fails fast on implicit coercion attempts", () => {
@@ -34,6 +39,31 @@ describe("compatibility signal normalizer", () => {
       "profile.activity_patterns[0].confidence must be a finite number.",
     );
   });
+
+  it("returns null defaults when coordination dimensions are missing", () => {
+    const profile = sampleProfile();
+    profile.coordination_dimensions = null;
+
+    const normalized = normalizeProfileSignals(profile);
+
+    expect(normalized.trait_vector).toEqual([0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
+    expect(normalized.metadata.trait_vector_source).toEqual([
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(normalized.metadata.coordination_dimensions).toEqual({
+      social_energy: { value: null, confidence: null },
+      social_pace: { value: null, confidence: null },
+      conversation_depth: { value: null, confidence: null },
+      adventure_orientation: { value: null, confidence: null },
+      group_dynamic: { value: null, confidence: null },
+      values_proximity: { value: null, confidence: null },
+    });
+  });
 });
 
 function sampleProfile(): StructuredProfileForCompatibility {
@@ -42,10 +72,13 @@ function sampleProfile(): StructuredProfileForCompatibility {
     user_id: "usr_123",
     state: "complete_mvp",
     is_complete_mvp: true,
-    fingerprint: {
-      social_pace: { value: "fast", confidence: 0.8, source: "interview" },
-      interaction_style: { value: "funny", confidence: 0.72, source: "interview" },
-      conversation_style: { value: ["ideas", "stories"], confidence: 0.7, source: "interview" },
+    coordination_dimensions: {
+      social_energy: { value: 0.82, confidence: 0.7, source: "interview" },
+      social_pace: { value: 0.8, confidence: 0.8, source: "interview" },
+      conversation_depth: { value: 0.74, confidence: 0.66, source: "interview" },
+      adventure_orientation: { value: 0.35, confidence: 0.69, source: "interview" },
+      group_dynamic: { value: 0.4, confidence: 0.6, source: "interview" },
+      values_proximity: { value: 0.88, confidence: 0.72, source: "interview" },
     },
     activity_patterns: [
       { activity_key: "coffee", confidence: 0.8, source: "interview" },
