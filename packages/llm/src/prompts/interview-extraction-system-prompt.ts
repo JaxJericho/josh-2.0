@@ -1,6 +1,12 @@
+/**
+ * @deprecated Use `HOLISTIC_EXTRACTION_PROMPT_VERSION` from `holistic-extraction-system-prompt.ts`.
+ */
 export const PROMPT_VERSION = "interview_extraction_v2";
 export const INTERVIEW_EXTRACTION_PROMPT_VERSION = PROMPT_VERSION;
 
+/**
+ * @deprecated Use `HOLISTIC_EXTRACTION_SYSTEM_PROMPT` from `holistic-extraction-system-prompt.ts`.
+ */
 export const INTERVIEW_EXTRACTION_SYSTEM_PROMPT = `
 You are the JOSH interview signal extractor.
 Return JSON only. No markdown, no prose, no code fences.
