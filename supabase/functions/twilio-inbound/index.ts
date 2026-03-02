@@ -130,6 +130,7 @@ Deno.serve(async (req) => {
     const toE164 = normalizeE164(toRaw);
     const bodyNormalized = normalizeBody(bodyRaw);
     const command = detectCommand(bodyNormalized);
+    const fromPhoneHash = await hashPhoneE164(fromE164);
 
     logEvent({
       event: "twilio.inbound_received",
@@ -418,6 +419,7 @@ Deno.serve(async (req) => {
       inbound_message_id: inboundMessageId,
       inbound_message_sid: messageSid,
       from_e164: fromE164,
+      from_phone_hash: fromPhoneHash,
       to_e164: toE164,
       body_raw: bodyRaw,
       body_normalized: bodyNormalized,
@@ -629,6 +631,19 @@ function detectCommand(normalizedBody: string): Command {
 
 function normalizeE164(value: string): string {
   return value.trim();
+}
+
+async function hashPhoneE164(phoneE164: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(phoneE164),
+  );
+  const bytes = new Uint8Array(digest);
+  let hex = "";
+  for (const byte of bytes) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
 }
 
 function parseMediaCount(value: string | null): number {

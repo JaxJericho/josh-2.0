@@ -8,6 +8,13 @@ import { runOnboardingEngine } from "../engines/onboarding-engine.ts";
 import { runPostEventEngine } from "../engines/post-event-engine.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { logEvent } from "../../../../packages/core/src/observability/logger.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { classifyIntent } from "../../../../packages/messaging/src/intents/intent-classifier.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import type {
+  ConversationSession as IntentClassifierSession,
+  IntentClassification,
+} from "../../../../packages/messaging/src/intents/intent-types.ts";
 import {
   elapsedMetricMs,
   emitMetricBestEffort,
@@ -27,7 +34,14 @@ export type RouterRoute =
   | "profile_interview_engine"
   | "default_engine"
   | "onboarding_engine"
-  | "post_event_engine";
+  | "post_event_engine"
+  | "contact_invite_response_handler"
+  | "post_activity_checkin_handler"
+  | "open_intent_handler"
+  | "named_plan_request_handler"
+  | "plan_social_choice_handler"
+  | "interview_answer_abbreviated_handler"
+  | "system_command_handler";
 
 export type ConversationState = {
   mode: ConversationMode;
@@ -47,6 +61,7 @@ export type NormalizedInboundMessagePayload = {
   inbound_message_id: string;
   inbound_message_sid: string;
   from_e164: string;
+  from_phone_hash?: string | null;
   to_e164: string;
   body_raw: string;
   body_normalized: string;
@@ -79,6 +94,11 @@ type ProfileSummary = {
   is_complete_mvp: boolean;
   state: string | null;
 };
+
+type ClassifyIntentFn = (
+  message: string,
+  session: IntentClassifierSession,
+) => IntentClassification;
 
 const ONBOARDING_MODE: ConversationMode = "interviewing";
 const ONBOARDING_STATE_TOKEN = "onboarding:awaiting_opening_response";
@@ -118,6 +138,7 @@ const STOP_HELP_COMMANDS = new Set([
   "HELP",
   "INFO",
 ]);
+const HASH_ENCODER = new TextEncoder();
 
 const CONVERSATION_MODES: readonly ConversationMode[] = [
   "idle",
@@ -181,11 +202,44 @@ export async function routeConversationMessage(
     supabase: SupabaseClientLike;
     payload: NormalizedInboundMessagePayload;
     safetyOverrideApplied?: boolean;
+    classifyIntentFn?: ClassifyIntentFn;
   },
 ): Promise<RoutingDecision> {
   const startedAt = nowMetricMs();
   let outcome: "success" | "error" = "success";
   try {
+    const normalizedBody = params.payload.body_normalized.trim().toUpperCase();
+    if (isSystemCommand(normalizedBody)) {
+      const fallbackState = validateConversationState("idle", "idle");
+      return {
+        user_id: "",
+        state: fallbackState,
+        profile_is_complete_mvp: null,
+        route: "system_command_handler",
+        safety_override_applied: params.safetyOverrideApplied ?? false,
+        next_transition: "idle:awaiting_user_input",
+      };
+    }
+
+    const phoneHash =
+      params.payload.from_phone_hash?.trim() ||
+      (await sha256Hex(params.payload.from_e164));
+    const pendingInvitation = await fetchPendingInvitationByPhoneHash(
+      params.supabase,
+      phoneHash,
+    );
+    if (pendingInvitation) {
+      const fallbackState = validateConversationState("idle", "idle");
+      return {
+        user_id: "",
+        state: fallbackState,
+        profile_is_complete_mvp: null,
+        route: "contact_invite_response_handler",
+        safety_override_applied: params.safetyOverrideApplied ?? false,
+        next_transition: "idle:awaiting_user_input",
+      };
+    }
+
     const user = await fetchUserByPhone(params.supabase, params.payload.from_e164);
     if (!user) {
       throw new ConversationRouterError(
@@ -234,11 +288,23 @@ export async function routeConversationMessage(
       ? ONBOARDING_STATE_TOKEN
       : resolveNextTransition(state, route);
 
+    const classifier = params.classifyIntentFn ?? classifyIntent;
+    let routedIntent: IntentClassification["intent"] | null = null;
+    let dispatchRoute: RouterRoute = route;
+
+    if (!shouldBypassIntentClassificationForState(state)) {
+      const classification = classifier(params.payload.body_raw, {
+        mode: state.mode,
+      });
+      routedIntent = classification.intent;
+      dispatchRoute = resolveRouteForIntent(classification.intent, state);
+    }
+
     const decision: RoutingDecision = {
       user_id: user.id,
       state,
       profile_is_complete_mvp: profile?.is_complete_mvp ?? null,
-      route,
+      route: dispatchRoute,
       safety_override_applied: params.safetyOverrideApplied ?? false,
       next_transition: nextTransition,
     };
@@ -250,6 +316,7 @@ export async function routeConversationMessage(
       payload: {
         inbound_message_id: params.payload.inbound_message_id,
         route: decision.route,
+        intent: routedIntent,
         session_mode: decision.state.mode,
         session_state_token: decision.state.state_token,
         profile_is_complete_mvp: decision.profile_is_complete_mvp,
@@ -426,11 +493,61 @@ function classifyPostEventStateToken(stateToken: string): PostEventStateToken {
   return stateToken as PostEventStateToken;
 }
 
+function shouldBypassIntentClassificationForState(state: ConversationState): boolean {
+  return (
+    state.mode === "interviewing" ||
+    state.mode === "linkup_forming" ||
+    state.mode === "awaiting_invite_reply" ||
+    state.mode === "post_event" ||
+    state.mode === "safety_hold"
+  );
+}
+
+function resolveRouteForIntent(
+  intent: IntentClassification["intent"],
+  state: ConversationState,
+): RouterRoute {
+  switch (intent) {
+    case "CONTACT_INVITE_RESPONSE":
+      return "contact_invite_response_handler";
+    case "POST_ACTIVITY_CHECKIN":
+      return "post_activity_checkin_handler";
+    case "OPEN_INTENT":
+      return "open_intent_handler";
+    case "NAMED_PLAN_REQUEST":
+      return "named_plan_request_handler";
+    case "PLAN_SOCIAL_CHOICE":
+      return "plan_social_choice_handler";
+    case "INTERVIEW_ANSWER":
+      return resolveRouteForState(state);
+    case "INTERVIEW_ANSWER_ABBREVIATED":
+      return "interview_answer_abbreviated_handler";
+    case "SYSTEM_COMMAND":
+      return "system_command_handler";
+  }
+}
+
+function isIntentHandlerRoute(route: RouterRoute): boolean {
+  return (
+    route === "contact_invite_response_handler" ||
+    route === "post_activity_checkin_handler" ||
+    route === "open_intent_handler" ||
+    route === "named_plan_request_handler" ||
+    route === "plan_social_choice_handler" ||
+    route === "interview_answer_abbreviated_handler" ||
+    route === "system_command_handler"
+  );
+}
+
 export async function dispatchConversationRoute(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
-  const resolvedRoute = resolveRouteForState(input.decision.state);
-  if (resolvedRoute !== input.decision.route) {
+  const normalizedRoute = resolveRouteForState(input.decision.state);
+  const resolvedRoute = isIntentHandlerRoute(input.decision.route)
+    ? input.decision.route
+    : normalizedRoute;
+
+  if (!isIntentHandlerRoute(input.decision.route) && normalizedRoute !== input.decision.route) {
     logEvent({
       level: "warn",
       event: "system.migration_mismatch_warning",
@@ -545,12 +662,54 @@ export async function dispatchConversationRoute(
       assertDispatchedEngineMatchesRoute(resolvedRoute, result.engine);
       return result;
     }
+    case "contact_invite_response_handler":
+      return {
+        engine: "contact_invite_response_handler",
+        reply_message: null,
+      };
+    case "post_activity_checkin_handler":
+    case "open_intent_handler":
+    case "named_plan_request_handler":
+    case "plan_social_choice_handler":
+    case "interview_answer_abbreviated_handler": {
+      return dispatchViaDefaultEnginePlaceholder(resolvedRoute, input);
+    }
+    case "system_command_handler":
+      return {
+        engine: "system_command_handler",
+        reply_message: null,
+      };
     default:
       throw new ConversationRouterError(
         "INVALID_ROUTE",
         `Unsupported route '${input.decision.route}'.`
       );
   }
+}
+
+async function fetchPendingInvitationByPhoneHash(
+  supabase: SupabaseClientLike,
+  phoneHash: string,
+): Promise<{ id: string } | null> {
+  const { data, error } = await supabase
+    .from("contact_invitations")
+    .select("id")
+    .eq("invitee_phone_hash", phoneHash)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "INVITATION_LOOKUP_FAILED",
+      "Unable to load contact invitation state for routing.",
+    );
+  }
+
+  if (!data?.id) {
+    return null;
+  }
+
+  return { id: data.id };
 }
 
 async function fetchUserByPhone(
@@ -889,6 +1048,47 @@ function assertDispatchedEngineMatchesRoute(
       `Dispatch returned engine '${engine}' for route '${route}'.`
     );
   }
+}
+
+async function dispatchViaDefaultEnginePlaceholder(
+  handlerRoute: Extract<
+    RouterRoute,
+    | "contact_invite_response_handler"
+    | "post_activity_checkin_handler"
+    | "open_intent_handler"
+    | "named_plan_request_handler"
+    | "plan_social_choice_handler"
+    | "interview_answer_abbreviated_handler"
+  >,
+  input: EngineDispatchInput,
+): Promise<EngineDispatchResult> {
+  const fallbackDecision: RoutingDecision = {
+    ...input.decision,
+    route: "default_engine",
+  };
+  const fallbackResult = await runDefaultEngine({
+    ...input,
+    decision: fallbackDecision,
+  });
+
+  return {
+    engine: handlerRoute,
+    reply_message: fallbackResult.reply_message,
+  };
+}
+
+function isSystemCommand(normalizedBody: string): boolean {
+  return STOP_HELP_COMMANDS.has(normalizedBody);
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", HASH_ENCODER.encode(value));
+  const bytes = new Uint8Array(digest);
+  let hex = "";
+  for (let index = 0; index < bytes.length; index += 1) {
+    hex += bytes[index].toString(16).padStart(2, "0");
+  }
+  return hex;
 }
 
 function isConversationMode(value: string): value is ConversationMode {
