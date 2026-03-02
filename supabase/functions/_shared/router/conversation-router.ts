@@ -486,12 +486,6 @@ export function resolveRouteForState(state: ConversationState): RouterRoute {
   }
 
   if (state.mode === "pending_contact_invite_confirmation") {
-    if (!isInviteConfirmationStateToken(state.state_token)) {
-      throw new ConversationRouterError(
-        "INVALID_STATE",
-        `Unknown invite confirmation state token '${state.state_token}'.`,
-      );
-    }
     return "named_plan_request_handler";
   }
 

@@ -57,7 +57,7 @@ describe("conversation router foundation", () => {
 
   it("routes pending invite confirmation tokens to named_plan_request_handler", () => {
     const state = validateConversationState(
-      "pending_plan_confirmation",
+      "pending_contact_invite_confirmation",
       "invite_confirm:create:v1:KzE0MTU1NTUwMTIz:VGF5bG9y",
     );
     const route = resolveRouteForState(state);
