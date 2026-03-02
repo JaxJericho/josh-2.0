@@ -14,6 +14,12 @@ import { classifyIntent } from "../../../../packages/messaging/src/intents/inten
 import { handleOpenIntent } from "../../../../packages/messaging/src/handlers/handle-open-intent.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
+  handleInterviewAnswerAbbreviated,
+  type AbbreviatedInterviewProfilePatch,
+  type AbbreviatedInterviewSessionPatch,
+} from "../../../../packages/messaging/src/handlers/handle-interview-answer-abbreviated.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
   handlePlanSocialChoice,
   type PlanSocialChoiceAuditAction,
 } from "../../../../packages/messaging/src/handlers/handle-plan-social-choice.ts";
@@ -120,6 +126,37 @@ type ConversationSessionRow = {
   mode: string | null;
   state_token: string | null;
   linkup_id: string | null;
+};
+
+type AbbreviatedInterviewSessionRow = {
+  id: string;
+  mode: string;
+  state_token: string;
+  current_step_id: string | null;
+  last_inbound_message_sid: string | null;
+};
+
+type AbbreviatedInterviewProfileRow = {
+  id: string;
+  user_id: string;
+  state: string;
+  is_complete_mvp: boolean;
+  country_code: string | null;
+  state_code: string | null;
+  last_interview_step: string | null;
+  preferences: unknown;
+  fingerprint: unknown;
+  activity_patterns: unknown;
+  boundaries: unknown;
+  active_intent: unknown;
+  coordination_dimensions: unknown;
+  scheduling_availability: unknown;
+  notice_preference: string | null;
+  coordination_style: string | null;
+  completeness_percent: number;
+  completed_at: string | null;
+  status_reason: string | null;
+  state_changed_at: string;
 };
 
 type ProfileSummary = {
@@ -808,7 +845,7 @@ export async function dispatchConversationRoute(
     case "named_plan_request_handler":
       return runNamedPlanRequestHandler(input);
     case "interview_answer_abbreviated_handler": {
-      return dispatchViaDefaultEnginePlaceholder(resolvedRoute, input);
+      return runInterviewAnswerAbbreviatedHandler(input);
     }
     case "system_command_handler":
       return {
@@ -1685,6 +1722,149 @@ async function fetchProfileSummary(
   };
 }
 
+async function fetchAbbreviatedInterviewSession(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<AbbreviatedInterviewSessionRow | null> {
+  const { data, error } = await supabase
+    .from("conversation_sessions")
+    .select("id,mode,state_token,current_step_id,last_inbound_message_sid")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "STATE_LOOKUP_FAILED",
+      "Unable to load conversation session for abbreviated interview handling.",
+    );
+  }
+
+  if (!data?.id || !data.mode || !data.state_token) {
+    return null;
+  }
+
+  return {
+    id: data.id,
+    mode: data.mode,
+    state_token: data.state_token,
+    current_step_id: data.current_step_id ?? null,
+    last_inbound_message_sid: data.last_inbound_message_sid ?? null,
+  };
+}
+
+async function fetchAbbreviatedInterviewProfile(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<AbbreviatedInterviewProfileRow | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(
+      [
+        "id",
+        "user_id",
+        "state",
+        "is_complete_mvp",
+        "country_code",
+        "state_code",
+        "last_interview_step",
+        "preferences",
+        "fingerprint",
+        "activity_patterns",
+        "boundaries",
+        "active_intent",
+        "coordination_dimensions",
+        "scheduling_availability",
+        "notice_preference",
+        "coordination_style",
+        "completeness_percent",
+        "completed_at",
+        "status_reason",
+        "state_changed_at",
+      ].join(","),
+    )
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "PROFILE_LOOKUP_FAILED",
+      "Unable to load profile for abbreviated interview handling.",
+    );
+  }
+
+  if (!data?.id || !data.user_id || !data.state) {
+    return null;
+  }
+
+  return {
+    id: data.id,
+    user_id: data.user_id,
+    state: data.state,
+    is_complete_mvp: data.is_complete_mvp ?? false,
+    country_code: data.country_code ?? null,
+    state_code: data.state_code ?? null,
+    last_interview_step: data.last_interview_step ?? null,
+    preferences: data.preferences ?? {},
+    fingerprint: data.fingerprint ?? {},
+    activity_patterns: data.activity_patterns ?? [],
+    boundaries: data.boundaries ?? {},
+    active_intent: data.active_intent ?? null,
+    coordination_dimensions: data.coordination_dimensions ?? {},
+    scheduling_availability: data.scheduling_availability ?? null,
+    notice_preference: data.notice_preference ?? null,
+    coordination_style: data.coordination_style ?? null,
+    completeness_percent: typeof data.completeness_percent === "number" ? data.completeness_percent : 0,
+    completed_at: data.completed_at ?? null,
+    status_reason: data.status_reason ?? null,
+    state_changed_at: data.state_changed_at ?? new Date(0).toISOString(),
+  };
+}
+
+async function persistAbbreviatedInterviewProfilePatch(input: {
+  supabase: SupabaseClientLike;
+  profileId: string;
+  patch: AbbreviatedInterviewProfilePatch;
+}): Promise<void> {
+  const { error } = await input.supabase
+    .from("profiles")
+    .update(input.patch)
+    .eq("id", input.profileId)
+    .select("id")
+    .single();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "PROFILE_UPDATE_FAILED",
+      "Unable to persist abbreviated interview profile patch.",
+    );
+  }
+}
+
+async function persistAbbreviatedInterviewSessionPatch(input: {
+  supabase: SupabaseClientLike;
+  sessionId: string;
+  patch: AbbreviatedInterviewSessionPatch;
+}): Promise<void> {
+  const { error } = await input.supabase
+    .from("conversation_sessions")
+    .update({
+      mode: input.patch.mode,
+      state_token: input.patch.state_token,
+      current_step_id: input.patch.current_step_id,
+      last_inbound_message_sid: input.patch.last_inbound_message_sid,
+    })
+    .eq("id", input.sessionId)
+    .select("id")
+    .single();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "STATE_UPDATE_FAILED",
+      "Unable to persist abbreviated interview session patch.",
+    );
+  }
+}
+
 function shouldRouteIdleUserToInterview(
   state: ConversationState,
   profile: ProfileSummary | null,
@@ -1695,6 +1875,14 @@ function shouldRouteIdleUserToInterview(
 
   if (!profile) {
     return true;
+  }
+
+  if (
+    profile.state === "complete_invited" ||
+    profile.state === "complete_mvp" ||
+    profile.state === "complete_full"
+  ) {
+    return false;
   }
 
   return !profile.is_complete_mvp;
@@ -1920,6 +2108,133 @@ async function runPlanSocialChoiceHandler(
 
   return {
     engine: "plan_social_choice_handler",
+    reply_message: replyMessage,
+  };
+}
+
+async function runInterviewAnswerAbbreviatedHandler(
+  input: EngineDispatchInput,
+): Promise<EngineDispatchResult> {
+  const session = await fetchAbbreviatedInterviewSession(input.supabase, input.decision.user_id);
+  if (!session) {
+    return {
+      engine: "interview_answer_abbreviated_handler",
+      reply_message: null,
+    };
+  }
+
+  if (session.mode !== INVITED_ABBREVIATED_MODE && session.mode !== "idle") {
+    throw new ConversationRouterError(
+      "INVALID_STATE",
+      `Abbreviated interview handler received unsupported mode '${session.mode}'.`,
+    );
+  }
+
+  const profile = await fetchAbbreviatedInterviewProfile(input.supabase, input.decision.user_id);
+  if (!profile) {
+    throw new ConversationRouterError(
+      "PROFILE_LOOKUP_FAILED",
+      "Unable to load profile for abbreviated interview handling.",
+    );
+  }
+
+  const phoneHash = input.payload.from_phone_hash?.trim() ||
+    await sha256Hex(input.payload.from_e164);
+  const invitation = await fetchInvitationForContactInviteResponse(input.supabase, phoneHash);
+  const inviterDisplayName = invitation
+    ? await fetchInviterDisplayName(input.supabase, invitation.inviter_user_id)
+    : "A friend";
+  const nowIso = new Date().toISOString();
+
+  const transition = await handleInterviewAnswerAbbreviated({
+    message: input.payload.body_raw,
+    inboundMessageSid: input.payload.inbound_message_sid,
+    inviterName: inviterDisplayName,
+    nowIso,
+    session,
+    profile,
+  });
+
+  if (transition.profilePatch) {
+    await persistAbbreviatedInterviewProfilePatch({
+      supabase: input.supabase,
+      profileId: profile.id,
+      patch: transition.profilePatch,
+    });
+  }
+
+  if (transition.sessionPatch) {
+    await persistAbbreviatedInterviewSessionPatch({
+      supabase: input.supabase,
+      sessionId: session.id,
+      patch: transition.sessionPatch,
+    });
+  }
+
+  await insertAuditLogRecord({
+    supabase: input.supabase,
+    action: "interview_abbreviated_answer_processed",
+    targetType: "profile",
+    targetId: profile.id,
+    reason: "interview_abbreviated_answer_processed",
+    idempotencyKey: `interview_abbreviated:processed:${session.id}:${input.payload.inbound_message_sid}`,
+    payload: {
+      profile_id: profile.id,
+      session_id: session.id,
+      updated_dimension_keys: transition.updatedDimensionKeys,
+      updated_signal_keys: transition.updatedSignalKeys,
+      completion_snapshot: transition.completionSnapshot,
+      idempotency_status: transition.replayed ? "replay" : "first_run",
+    },
+  });
+
+  if (!transition.completed && !transition.replayed) {
+    await insertAuditLogRecord({
+      supabase: input.supabase,
+      action: "interview_abbreviated_progress_updated",
+      targetType: "profile",
+      targetId: profile.id,
+      reason: "interview_abbreviated_progress_updated",
+      idempotencyKey: `interview_abbreviated:progress:${session.id}:${input.payload.inbound_message_sid}`,
+      payload: {
+        profile_id: profile.id,
+        session_id: session.id,
+        updated_dimension_keys: transition.updatedDimensionKeys,
+        updated_signal_keys: transition.updatedSignalKeys,
+        completion_snapshot: transition.completionSnapshot,
+        idempotency_status: "first_run",
+      },
+    });
+  }
+
+  let completionAuditStatus: "inserted" | "duplicate" | null = null;
+  if (transition.completed) {
+    completionAuditStatus = await insertAuditLogRecord({
+      supabase: input.supabase,
+      action: "interview_abbreviated_completed",
+      targetType: "profile",
+      targetId: profile.id,
+      reason: "interview_abbreviated_completed",
+      idempotencyKey: `interview_abbreviated:completed:${profile.id}`,
+      payload: {
+        profile_id: profile.id,
+        session_id: session.id,
+        updated_dimension_keys: transition.updatedDimensionKeys,
+        updated_signal_keys: transition.updatedSignalKeys,
+        completion_snapshot: transition.completionSnapshot,
+        idempotency_status: transition.completedNow ? "first_run" : "replay",
+      },
+    });
+  }
+
+  const replyMessage = transition.completed
+    ? (transition.completedNow && completionAuditStatus === "inserted"
+      ? transition.replyMessage
+      : null)
+    : transition.replyMessage;
+
+  return {
+    engine: "interview_answer_abbreviated_handler",
     reply_message: replyMessage,
   };
 }
