@@ -11,10 +11,17 @@ import { logEvent } from "../../../../packages/core/src/observability/logger.ts"
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { classifyIntent } from "../../../../packages/messaging/src/intents/intent-classifier.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { handleOpenIntent } from "../../../../packages/messaging/src/handlers/handle-open-intent.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import type {
   ConversationSession as IntentClassifierSession,
   IntentClassification,
 } from "../../../../packages/messaging/src/intents/intent-types.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  createSupabaseSoloActivityRepository,
+  suggestSoloActivity,
+} from "../../../../packages/core/src/suggestions/suggest-solo-activity.ts";
 import {
   elapsedMetricMs,
   emitMetricBestEffort,
@@ -25,6 +32,7 @@ import {
 export type ConversationMode =
   | "idle"
   | "interviewing"
+  | "awaiting_social_choice"
   | "linkup_forming"
   | "awaiting_invite_reply"
   | "post_event"
@@ -143,6 +151,7 @@ const HASH_ENCODER = new TextEncoder();
 const CONVERSATION_MODES: readonly ConversationMode[] = [
   "idle",
   "interviewing",
+  "awaiting_social_choice",
   "linkup_forming",
   "awaiting_invite_reply",
   "post_event",
@@ -154,6 +163,7 @@ const VALID_MODES: ReadonlySet<ConversationMode> = new Set(CONVERSATION_MODES);
 const STATE_TOKEN_PATTERN_BY_MODE: Record<ConversationMode, RegExp> = {
   idle: /^idle$/,
   interviewing: /^[a-z0-9:_-]+$/i,
+  awaiting_social_choice: /^[a-z0-9:_-]+$/i,
   linkup_forming: /^[a-z0-9:_-]+$/i,
   awaiting_invite_reply: /^[a-z0-9:_-]+$/i,
   post_event: POST_EVENT_TOKEN_PATTERN,
@@ -163,6 +173,7 @@ const STATE_TOKEN_PATTERN_BY_MODE: Record<ConversationMode, RegExp> = {
 const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
   idle: "default_engine",
   interviewing: "profile_interview_engine",
+  awaiting_social_choice: "default_engine",
   linkup_forming: "default_engine",
   awaiting_invite_reply: "default_engine",
   post_event: "post_event_engine",
@@ -172,6 +183,7 @@ const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
 const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
   idle: "idle:awaiting_user_input",
   interviewing: "interview:awaiting_next_input",
+  awaiting_social_choice: "social:awaiting_choice",
   linkup_forming: "linkup:awaiting_details",
   awaiting_invite_reply: "invite:awaiting_reply",
   post_event: "post_event:attendance",
@@ -181,6 +193,7 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
 const LEGAL_TRANSITIONS_BY_MODE: Record<ConversationMode, ReadonlySet<string>> = {
   idle: new Set(["idle:awaiting_user_input", ONBOARDING_STATE_TOKEN]),
   interviewing: new Set(["interview:awaiting_next_input", ...ONBOARDING_STATE_TOKENS]),
+  awaiting_social_choice: new Set(["social:awaiting_choice"]),
   linkup_forming: new Set(["linkup:awaiting_details"]),
   awaiting_invite_reply: new Set(["invite:awaiting_reply"]),
   post_event: new Set(POST_EVENT_STATE_TOKENS),
@@ -668,7 +681,9 @@ export async function dispatchConversationRoute(
         reply_message: null,
       };
     case "post_activity_checkin_handler":
+      return dispatchViaDefaultEnginePlaceholder(resolvedRoute, input);
     case "open_intent_handler":
+      return runOpenIntentHandler(input);
     case "named_plan_request_handler":
     case "plan_social_choice_handler":
     case "interview_answer_abbreviated_handler": {
@@ -1075,6 +1090,231 @@ async function dispatchViaDefaultEnginePlaceholder(
     engine: handlerRoute,
     reply_message: fallbackResult.reply_message,
   };
+}
+
+const AWAITING_SOCIAL_CHOICE_STATE_TOKEN = "social:awaiting_choice";
+
+async function runOpenIntentHandler(
+  input: EngineDispatchInput,
+): Promise<EngineDispatchResult> {
+  let replyMessage: string | null = null;
+  const soloRepository = createSupabaseSoloActivityRepository(input.supabase);
+
+  await handleOpenIntent(
+    input.decision.user_id,
+    input.payload.body_raw,
+    {
+      mode: input.decision.state.mode,
+      has_user_record: true,
+      has_pending_contact_invitation: false,
+      is_unknown_number_with_pending_invitation: false,
+    },
+    {
+      evaluateEligibility: ({ userId, action_type }) =>
+        evaluateEligibility({
+          supabase: input.supabase,
+          userId,
+          action_type,
+        }),
+      hasContactCircleEntries: async (userId) => {
+        const { data, error } = await input.supabase
+          .from("contact_circle")
+          .select("id")
+          .eq("user_id", userId)
+          .limit(1)
+          .maybeSingle();
+
+        if (error) {
+          throw new ConversationRouterError(
+            "CONTACT_CIRCLE_LOOKUP_FAILED",
+            "Unable to load contact circle state for open intent handling.",
+          );
+        }
+
+        return Boolean(data?.id);
+      },
+      handoffToLinkupFlow: async () => {
+        const fallbackDecision: RoutingDecision = {
+          ...input.decision,
+          route: "default_engine",
+        };
+        const linkupResult = await runDefaultEngine({
+          ...input,
+          decision: fallbackDecision,
+        });
+        replyMessage = linkupResult.reply_message;
+        return { took_over: true };
+      },
+      handoffToNamedPlanFlow: async () => {
+        // Named-plan handler is not implemented in this ticket; continue to solo fallback.
+        return { took_over: false };
+      },
+      suggestSoloActivity: (userId) =>
+        suggestSoloActivity(userId, {
+          repository: soloRepository,
+        }),
+      sendMessage: async ({ body }) => {
+        replyMessage = body;
+      },
+      updateSessionMode: async ({ userId, mode }) => {
+        if (mode !== "awaiting_social_choice") {
+          throw new ConversationRouterError(
+            "INVALID_STATE",
+            `Unsupported open intent target mode '${mode}'.`,
+          );
+        }
+        await persistAwaitingSocialChoiceSession({
+          supabase: input.supabase,
+          userId,
+        });
+      },
+    },
+  );
+
+  return {
+    engine: "open_intent_handler",
+    reply_message: replyMessage,
+  };
+}
+
+type OpenIntentEligibilityInput = {
+  supabase: SupabaseClientLike;
+  userId: string;
+  action_type: "can_initiate_linkup" | "can_initiate_named_plan";
+};
+
+async function evaluateEligibility(
+  input: OpenIntentEligibilityInput,
+): Promise<{ allowed: boolean; reason_code: string | null; user_message: string | null }> {
+  if (input.action_type === "can_initiate_named_plan") {
+    const subscription = await fetchActiveSubscriptionState(input.supabase, input.userId);
+    const allowed = subscription === "active";
+    return {
+      allowed,
+      reason_code: allowed ? null : "subscription_inactive",
+      user_message: null,
+    };
+  }
+
+  const [entitlements, subscriptionState, profileState] = await Promise.all([
+    fetchEntitlementSnapshot(input.supabase, input.userId),
+    fetchActiveSubscriptionState(input.supabase, input.userId),
+    fetchProfileState(input.supabase, input.userId),
+  ]);
+
+  const subscriptionActive = subscriptionState === "active";
+  const canInitiateLinkup = entitlements?.can_initiate_linkup === true;
+  const profileEligible = profileState === "complete_mvp" || profileState === "complete_full";
+  const allowed = subscriptionActive && canInitiateLinkup && profileEligible;
+
+  return {
+    allowed,
+    reason_code: allowed ? null : "linkup_eligibility_failed",
+    user_message: null,
+  };
+}
+
+async function fetchEntitlementSnapshot(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<{ can_initiate_linkup: boolean } | null> {
+  const { data, error } = await supabase
+    .from("entitlements")
+    .select("can_initiate_linkup")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "ELIGIBILITY_LOOKUP_FAILED",
+      "Unable to evaluate LinkUp entitlement state.",
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return {
+    can_initiate_linkup: data.can_initiate_linkup === true,
+  };
+}
+
+async function fetchActiveSubscriptionState(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("subscriptions")
+    .select("state")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "ELIGIBILITY_LOOKUP_FAILED",
+      "Unable to evaluate subscription state.",
+    );
+  }
+
+  return typeof data?.state === "string" ? data.state : null;
+}
+
+async function fetchProfileState(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("state")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "ELIGIBILITY_LOOKUP_FAILED",
+      "Unable to evaluate profile completion state.",
+    );
+  }
+
+  return typeof data?.state === "string" ? data.state : null;
+}
+
+async function persistAwaitingSocialChoiceSession(input: {
+  supabase: SupabaseClientLike;
+  userId: string;
+}): Promise<void> {
+  const session = await fetchConversationSession(input.supabase, input.userId);
+  if (!session?.id) {
+    throw new ConversationRouterError(
+      "STATE_LOOKUP_FAILED",
+      "Unable to locate conversation session for open intent transition.",
+    );
+  }
+
+  if (
+    session.mode === "awaiting_social_choice" &&
+    session.state_token === AWAITING_SOCIAL_CHOICE_STATE_TOKEN
+  ) {
+    return;
+  }
+
+  const { error } = await input.supabase
+    .from("conversation_sessions")
+    .update({
+      mode: "awaiting_social_choice",
+      state_token: AWAITING_SOCIAL_CHOICE_STATE_TOKEN,
+    })
+    .eq("id", session.id)
+    .select("id")
+    .single();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "STATE_UPDATE_FAILED",
+      "Unable to persist awaiting_social_choice session state.",
+    );
+  }
 }
 
 function isSystemCommand(normalizedBody: string): boolean {
