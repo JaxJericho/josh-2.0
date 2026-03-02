@@ -94,6 +94,18 @@ describe("conversation router foundation", () => {
     expect(nextTransition).toBe("post_event:contact_exchange");
   });
 
+  it("routes pending contact invite confirmation to named plan handler", () => {
+    const state = validateConversationState(
+      "pending_contact_invite_confirmation",
+      "invite_confirm:create:v1:foo:_",
+    );
+    const route = resolveRouteForState(state);
+    const nextTransition = resolveNextTransition(state, route);
+
+    expect(route).toBe("named_plan_request_handler");
+    expect(nextTransition).toBe("invite_confirm:create:v1:foo:_");
+  });
+
   it("throws explicit error when state token is missing", () => {
     expect(() => validateConversationState("idle", ""))
       .toThrow(ConversationRouterError);

@@ -49,6 +49,7 @@ export type ConversationMode =
   | "interviewing"
   | "awaiting_social_choice"
   | "pending_plan_confirmation"
+  | "pending_contact_invite_confirmation"
   | "linkup_forming"
   | "awaiting_invite_reply"
   | "post_event"
@@ -215,6 +216,7 @@ const CONVERSATION_MODES: readonly ConversationMode[] = [
   "interviewing",
   "awaiting_social_choice",
   "pending_plan_confirmation",
+  "pending_contact_invite_confirmation",
   "linkup_forming",
   "awaiting_invite_reply",
   "post_event",
@@ -228,6 +230,7 @@ const STATE_TOKEN_PATTERN_BY_MODE: Record<ConversationMode, RegExp> = {
   interviewing: /^[a-z0-9:_-]+$/i,
   awaiting_social_choice: /^[a-z0-9:_-]+$/i,
   pending_plan_confirmation: /^[a-z0-9:_-]+$/i,
+  pending_contact_invite_confirmation: /^[a-z0-9:_-]+$/i,
   linkup_forming: /^[a-z0-9:_-]+$/i,
   awaiting_invite_reply: /^[a-z0-9:_-]+$/i,
   post_event: POST_EVENT_TOKEN_PATTERN,
@@ -239,6 +242,7 @@ const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
   interviewing: "profile_interview_engine",
   awaiting_social_choice: "default_engine",
   pending_plan_confirmation: "default_engine",
+  pending_contact_invite_confirmation: "default_engine",
   linkup_forming: "default_engine",
   awaiting_invite_reply: "default_engine",
   post_event: "post_event_engine",
@@ -250,6 +254,7 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
   interviewing: "interview:awaiting_next_input",
   awaiting_social_choice: "social:awaiting_choice",
   pending_plan_confirmation: PENDING_PLAN_CONFIRMATION_STATE_TOKEN,
+  pending_contact_invite_confirmation: "invite_confirm:awaiting_reply",
   linkup_forming: "linkup:awaiting_details",
   awaiting_invite_reply: "invite:awaiting_reply",
   post_event: "post_event:attendance",
@@ -261,6 +266,7 @@ const LEGAL_TRANSITIONS_BY_MODE: Record<ConversationMode, ReadonlySet<string>> =
   interviewing: new Set(["interview:awaiting_next_input", ...ONBOARDING_STATE_TOKENS]),
   awaiting_social_choice: new Set([SOCIAL_CHOICE_STATE_TOKEN_PREFIX]),
   pending_plan_confirmation: new Set([PENDING_PLAN_CONFIRMATION_STATE_TOKEN]),
+  pending_contact_invite_confirmation: new Set(["invite_confirm:create:v1"]),
   linkup_forming: new Set(["linkup:awaiting_details"]),
   awaiting_invite_reply: new Set(["invite:awaiting_reply"]),
   post_event: new Set(POST_EVENT_STATE_TOKENS),
@@ -479,10 +485,13 @@ export function resolveRouteForState(state: ConversationState): RouterRoute {
     return resolveInterviewRoute(state.state_token);
   }
 
-  if (
-    state.mode === "pending_plan_confirmation" &&
-    isInviteConfirmationStateToken(state.state_token)
-  ) {
+  if (state.mode === "pending_contact_invite_confirmation") {
+    if (!isInviteConfirmationStateToken(state.state_token)) {
+      throw new ConversationRouterError(
+        "INVALID_STATE",
+        `Unknown invite confirmation state token '${state.state_token}'.`,
+      );
+    }
     return "named_plan_request_handler";
   }
 
@@ -506,15 +515,11 @@ export function resolveNextTransition(
     ? state.state_token
     : state.mode === "post_event"
     ? state.state_token
-    : state.mode === "pending_plan_confirmation" &&
-        isInviteConfirmationStateToken(state.state_token)
+    : state.mode === "pending_contact_invite_confirmation"
     ? state.state_token
     : NEXT_TRANSITION_BY_MODE[state.mode];
 
-  if (
-    state.mode === "pending_plan_confirmation" &&
-    isInviteConfirmationStateToken(nextTransition)
-  ) {
+  if (state.mode === "pending_contact_invite_confirmation") {
     return nextTransition;
   }
 
@@ -595,6 +600,7 @@ function shouldBypassIntentClassificationForState(state: ConversationState): boo
   return (
     state.mode === "interviewing" ||
     state.mode === "pending_plan_confirmation" ||
+    state.mode === "pending_contact_invite_confirmation" ||
     state.mode === "linkup_forming" ||
     state.mode === "awaiting_invite_reply" ||
     state.mode === "post_event" ||
@@ -1451,7 +1457,7 @@ async function runNamedPlanRequestHandler(
   await persistConversationSessionState({
     supabase: input.supabase,
     userId: input.decision.user_id,
-    mode: "pending_plan_confirmation",
+    mode: "pending_contact_invite_confirmation",
     stateToken: pendingStateToken,
   });
 
@@ -1687,7 +1693,7 @@ function requireSmsEncryptionKey(): string {
 function parseInviteConfirmationState(
   state: ConversationState,
 ): { inviteePhoneE164: string; inviteeDisplayName: string | null } | null {
-  if (state.mode !== "pending_plan_confirmation") {
+  if (state.mode !== "pending_contact_invite_confirmation") {
     return null;
   }
   return parseInviteConfirmationStateToken(state.state_token);
@@ -1848,7 +1854,11 @@ async function persistAwaitingSocialChoiceSession(input: {
 async function persistConversationSessionState(input: {
   supabase: SupabaseClientLike;
   userId: string;
-  mode: "idle" | "awaiting_social_choice" | "pending_plan_confirmation";
+  mode:
+    | "idle"
+    | "awaiting_social_choice"
+    | "pending_plan_confirmation"
+    | "pending_contact_invite_confirmation";
   stateToken: string;
 }): Promise<void> {
   const session = await fetchConversationSession(input.supabase, input.userId);
