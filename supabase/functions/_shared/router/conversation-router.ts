@@ -13,6 +13,16 @@ import { classifyIntent } from "../../../../packages/messaging/src/intents/inten
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { handleOpenIntent } from "../../../../packages/messaging/src/handlers/handle-open-intent.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  handlePlanSocialChoice,
+  type PlanSocialChoiceAuditAction,
+} from "../../../../packages/messaging/src/handlers/handle-plan-social-choice.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  PENDING_PLAN_CONFIRMATION_STATE_TOKEN,
+  SOCIAL_CHOICE_STATE_TOKEN_PREFIX,
+} from "../../../../packages/messaging/src/handlers/social-choice-state.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import type {
   ConversationSession as IntentClassifierSession,
   IntentClassification,
@@ -33,6 +43,7 @@ export type ConversationMode =
   | "idle"
   | "interviewing"
   | "awaiting_social_choice"
+  | "pending_plan_confirmation"
   | "linkup_forming"
   | "awaiting_invite_reply"
   | "post_event"
@@ -152,6 +163,7 @@ const CONVERSATION_MODES: readonly ConversationMode[] = [
   "idle",
   "interviewing",
   "awaiting_social_choice",
+  "pending_plan_confirmation",
   "linkup_forming",
   "awaiting_invite_reply",
   "post_event",
@@ -164,6 +176,7 @@ const STATE_TOKEN_PATTERN_BY_MODE: Record<ConversationMode, RegExp> = {
   idle: /^idle$/,
   interviewing: /^[a-z0-9:_-]+$/i,
   awaiting_social_choice: /^[a-z0-9:_-]+$/i,
+  pending_plan_confirmation: /^[a-z0-9:_-]+$/i,
   linkup_forming: /^[a-z0-9:_-]+$/i,
   awaiting_invite_reply: /^[a-z0-9:_-]+$/i,
   post_event: POST_EVENT_TOKEN_PATTERN,
@@ -174,6 +187,7 @@ const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
   idle: "default_engine",
   interviewing: "profile_interview_engine",
   awaiting_social_choice: "default_engine",
+  pending_plan_confirmation: "default_engine",
   linkup_forming: "default_engine",
   awaiting_invite_reply: "default_engine",
   post_event: "post_event_engine",
@@ -184,6 +198,7 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
   idle: "idle:awaiting_user_input",
   interviewing: "interview:awaiting_next_input",
   awaiting_social_choice: "social:awaiting_choice",
+  pending_plan_confirmation: PENDING_PLAN_CONFIRMATION_STATE_TOKEN,
   linkup_forming: "linkup:awaiting_details",
   awaiting_invite_reply: "invite:awaiting_reply",
   post_event: "post_event:attendance",
@@ -193,7 +208,8 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
 const LEGAL_TRANSITIONS_BY_MODE: Record<ConversationMode, ReadonlySet<string>> = {
   idle: new Set(["idle:awaiting_user_input", ONBOARDING_STATE_TOKEN]),
   interviewing: new Set(["interview:awaiting_next_input", ...ONBOARDING_STATE_TOKENS]),
-  awaiting_social_choice: new Set(["social:awaiting_choice"]),
+  awaiting_social_choice: new Set([SOCIAL_CHOICE_STATE_TOKEN_PREFIX]),
+  pending_plan_confirmation: new Set([PENDING_PLAN_CONFIRMATION_STATE_TOKEN]),
   linkup_forming: new Set(["linkup:awaiting_details"]),
   awaiting_invite_reply: new Set(["invite:awaiting_reply"]),
   post_event: new Set(POST_EVENT_STATE_TOKENS),
@@ -509,6 +525,7 @@ function classifyPostEventStateToken(stateToken: string): PostEventStateToken {
 function shouldBypassIntentClassificationForState(state: ConversationState): boolean {
   return (
     state.mode === "interviewing" ||
+    state.mode === "pending_plan_confirmation" ||
     state.mode === "linkup_forming" ||
     state.mode === "awaiting_invite_reply" ||
     state.mode === "post_event" ||
@@ -684,8 +701,9 @@ export async function dispatchConversationRoute(
       return dispatchViaDefaultEnginePlaceholder(resolvedRoute, input);
     case "open_intent_handler":
       return runOpenIntentHandler(input);
-    case "named_plan_request_handler":
     case "plan_social_choice_handler":
+      return runPlanSocialChoiceHandler(input);
+    case "named_plan_request_handler":
     case "interview_answer_abbreviated_handler": {
       return dispatchViaDefaultEnginePlaceholder(resolvedRoute, input);
     }
@@ -1092,8 +1110,6 @@ async function dispatchViaDefaultEnginePlaceholder(
   };
 }
 
-const AWAITING_SOCIAL_CHOICE_STATE_TOKEN = "social:awaiting_choice";
-
 async function runOpenIntentHandler(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
@@ -1156,7 +1172,7 @@ async function runOpenIntentHandler(
       sendMessage: async ({ body }) => {
         replyMessage = body;
       },
-      updateSessionMode: async ({ userId, mode }) => {
+      updateSessionMode: async ({ userId, mode, stateToken }) => {
         if (mode !== "awaiting_social_choice") {
           throw new ConversationRouterError(
             "INVALID_STATE",
@@ -1166,6 +1182,7 @@ async function runOpenIntentHandler(
         await persistAwaitingSocialChoiceSession({
           supabase: input.supabase,
           userId,
+          stateToken,
         });
       },
     },
@@ -1173,6 +1190,107 @@ async function runOpenIntentHandler(
 
   return {
     engine: "open_intent_handler",
+    reply_message: replyMessage,
+  };
+}
+
+async function runPlanSocialChoiceHandler(
+  input: EngineDispatchInput,
+): Promise<EngineDispatchResult> {
+  let replyMessage: string | null = null;
+  const soloRepository = createSupabaseSoloActivityRepository(input.supabase);
+
+  await handlePlanSocialChoice(
+    input.decision.user_id,
+    input.payload.body_raw,
+    {
+      mode: input.decision.state.mode,
+      state_token: input.decision.state.state_token,
+      has_user_record: true,
+      has_pending_contact_invitation: false,
+      is_unknown_number_with_pending_invitation: false,
+    },
+    {
+      createPlanBrief: async ({ userId, activityKey, notes, status }) => {
+        const { data, error } = await input.supabase
+          .from("plan_briefs")
+          .insert({
+            creator_user_id: userId,
+            activity_key: activityKey,
+            notes,
+            status,
+          })
+          .select("id")
+          .single();
+
+        if (error) {
+          throw new ConversationRouterError(
+            "PLAN_BRIEF_CREATE_FAILED",
+            "Unable to create a confirmed plan brief.",
+          );
+        }
+
+        if (!data?.id) {
+          throw new ConversationRouterError(
+            "PLAN_BRIEF_CREATE_FAILED",
+            "Plan brief insert succeeded without an id.",
+          );
+        }
+
+        return { id: data.id as string };
+      },
+      suggestSoloActivity: ({ userId, excludeActivityKeys }) =>
+        suggestSoloActivity(userId, {
+          repository: soloRepository,
+          excludeActivityKeys,
+        }),
+      sendMessage: async ({ body }) => {
+        replyMessage = body;
+      },
+      updateSessionState: async ({ userId, mode, stateToken }) => {
+        await persistConversationSessionState({
+          supabase: input.supabase,
+          userId,
+          mode,
+          stateToken,
+        });
+      },
+      writeAuditEvent: async ({
+        userId,
+        action,
+        targetType,
+        targetId,
+        reason,
+        payload,
+      }) => {
+        const idempotencyKey = buildPlanSocialChoiceAuditIdempotencyKey({
+          userId,
+          inboundMessageSid: input.payload.inbound_message_sid,
+          action,
+        });
+        const { error } = await input.supabase
+          .from("audit_log")
+          .insert({
+            action,
+            target_type: targetType,
+            target_id: targetId ?? null,
+            reason,
+            payload,
+            idempotency_key: idempotencyKey,
+          });
+
+        if (error && !isDuplicateKeyError(error)) {
+          throw new ConversationRouterError(
+            "AUDIT_LOG_FAILED",
+            "Unable to write social-choice audit event.",
+          );
+        }
+      },
+    },
+  );
+
+  return {
+    engine: "plan_social_choice_handler",
     reply_message: replyMessage,
   };
 }
@@ -1283,18 +1401,33 @@ async function fetchProfileState(
 async function persistAwaitingSocialChoiceSession(input: {
   supabase: SupabaseClientLike;
   userId: string;
+  stateToken: string;
+}): Promise<void> {
+  await persistConversationSessionState({
+    supabase: input.supabase,
+    userId: input.userId,
+    mode: "awaiting_social_choice",
+    stateToken: input.stateToken,
+  });
+}
+
+async function persistConversationSessionState(input: {
+  supabase: SupabaseClientLike;
+  userId: string;
+  mode: "idle" | "awaiting_social_choice" | "pending_plan_confirmation";
+  stateToken: string;
 }): Promise<void> {
   const session = await fetchConversationSession(input.supabase, input.userId);
   if (!session?.id) {
     throw new ConversationRouterError(
       "STATE_LOOKUP_FAILED",
-      "Unable to locate conversation session for open intent transition.",
+      "Unable to locate conversation session for social-choice transition.",
     );
   }
 
   if (
-    session.mode === "awaiting_social_choice" &&
-    session.state_token === AWAITING_SOCIAL_CHOICE_STATE_TOKEN
+    session.mode === input.mode &&
+    session.state_token === input.stateToken
   ) {
     return;
   }
@@ -1302,8 +1435,8 @@ async function persistAwaitingSocialChoiceSession(input: {
   const { error } = await input.supabase
     .from("conversation_sessions")
     .update({
-      mode: "awaiting_social_choice",
-      state_token: AWAITING_SOCIAL_CHOICE_STATE_TOKEN,
+      mode: input.mode,
+      state_token: input.stateToken,
     })
     .eq("id", session.id)
     .select("id")
@@ -1312,9 +1445,28 @@ async function persistAwaitingSocialChoiceSession(input: {
   if (error) {
     throw new ConversationRouterError(
       "STATE_UPDATE_FAILED",
-      "Unable to persist awaiting_social_choice session state.",
+      "Unable to persist conversation session state transition.",
     );
   }
+}
+
+function buildPlanSocialChoiceAuditIdempotencyKey(input: {
+  userId: string;
+  inboundMessageSid: string;
+  action: PlanSocialChoiceAuditAction;
+}): string {
+  return `plan_social_choice:audit:${input.userId}:${input.inboundMessageSid}:${input.action}`;
+}
+
+function isDuplicateKeyError(error: { code?: string; message?: string } | null): boolean {
+  if (!error) {
+    return false;
+  }
+  if (error.code === "23505") {
+    return true;
+  }
+  const message = error.message ?? "";
+  return message.toLowerCase().includes("duplicate key");
 }
 
 function isSystemCommand(normalizedBody: string): boolean {

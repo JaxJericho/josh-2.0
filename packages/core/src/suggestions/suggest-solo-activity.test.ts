@@ -59,6 +59,35 @@ describe("suggestSoloActivity", () => {
     expect(selected.activity_key).toBe("city_walk");
     expect(selected.regional_availability).toBe("urban_dense");
   });
+
+  it("supports exclusion of a prior suggestion while keeping deterministic ranking", async () => {
+    const repository: SoloActivityRepository = {
+      fetchUserPreferences: async () => ({
+        regional_availability: "anywhere",
+        motive_weights: null,
+        preferred_windows: ["evening"],
+      }),
+      listSoloActivities: async () => [
+        buildActivity({
+          activity_key: "coffee_walk",
+          short_description: "Take a short coffee walk.",
+          preferred_windows: ["evening"],
+        }),
+        buildActivity({
+          activity_key: "bookstore_browse",
+          short_description: "Browse a neighborhood bookstore.",
+          preferred_windows: ["evening"],
+        }),
+      ],
+    };
+
+    const selected = await suggestSoloActivity("usr_123", {
+      repository,
+      excludeActivityKeys: ["coffee_walk"],
+    });
+
+    expect(selected.activity_key).toBe("bookstore_browse");
+  });
 });
 
 function buildActivity(

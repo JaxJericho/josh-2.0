@@ -38,6 +38,7 @@ export type ConversationMode =
   | "idle"
   | "interviewing"
   | "awaiting_social_choice"
+  | "pending_plan_confirmation"
   | "linkup_forming"
   | "awaiting_invite_reply"
   | "post_event"

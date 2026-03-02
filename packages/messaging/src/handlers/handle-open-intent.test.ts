@@ -62,6 +62,7 @@ describe("handleOpenIntent", () => {
     expect(deps.updateSessionMode).toHaveBeenCalledWith({
       userId: "usr_123",
       mode: "awaiting_social_choice",
+      stateToken: "social:awaiting_choice:solo_walk:0",
     });
   });
 
@@ -78,6 +79,7 @@ describe("handleOpenIntent", () => {
     expect(deps.updateSessionMode).toHaveBeenCalledWith({
       userId: "usr_123",
       mode: "awaiting_social_choice",
+      stateToken: "social:awaiting_choice:solo_walk:0",
     });
   });
 });

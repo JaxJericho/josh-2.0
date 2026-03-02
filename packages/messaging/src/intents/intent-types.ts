@@ -13,6 +13,7 @@ export type ConversationSessionMode =
   | "interviewing"
   | "interviewing_abbreviated"
   | "awaiting_social_choice"
+  | "pending_plan_confirmation"
   | "awaiting_invite_reply"
   | "post_activity_checkin"
   | "post_event"
@@ -21,6 +22,7 @@ export type ConversationSessionMode =
 
 export type ConversationSession = {
   mode: ConversationSessionMode | null;
+  state_token?: string | null;
   has_user_record?: boolean | null;
   has_pending_contact_invitation?: boolean | null;
   is_unknown_number_with_pending_invitation?: boolean | null;
