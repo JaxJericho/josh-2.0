@@ -578,6 +578,12 @@ function buildSupabaseMock(
           queryState[column] = value;
           return query;
         },
+        order() {
+          return query;
+        },
+        limit() {
+          return query;
+        },
         async maybeSingle() {
           if (table === "contact_invitations") {
             state.invitationLookupCalls += 1;
