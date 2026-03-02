@@ -22,6 +22,7 @@ export async function suggestSoloActivity(
   userId: string,
   options?: {
     repository: SoloActivityRepository;
+    excludeActivityKeys?: string[];
   },
 ): Promise<ActivityCatalogEntry> {
   const repository = options?.repository;
@@ -34,20 +35,33 @@ export async function suggestSoloActivity(
     repository.listSoloActivities(),
   ]);
 
+  const excludedActivityKeys = new Set(
+    (options?.excludeActivityKeys ?? [])
+      .map((activityKey) => activityKey.trim().toLowerCase())
+      .filter(Boolean),
+  );
+
   const viableActivities = activities.filter((activity) =>
+    activity.group_size_fit.includes("solo") &&
+    activity.short_description.trim().length > 0 &&
+    !excludedActivityKeys.has(activity.activity_key.trim().toLowerCase())
+  );
+
+  const fallbackActivities = activities.filter((activity) =>
     activity.group_size_fit.includes("solo") &&
     activity.short_description.trim().length > 0
   );
+  const candidatesPool = viableActivities.length > 0 ? viableActivities : fallbackActivities;
 
-  if (viableActivities.length === 0) {
+  if (candidatesPool.length === 0) {
     throw new Error("No solo activities are available.");
   }
 
   const regionFiltered = filterByRegionalAvailability(
-    viableActivities,
+    candidatesPool,
     preferences.regional_availability,
   );
-  const candidates = regionFiltered.length > 0 ? regionFiltered : viableActivities;
+  const candidates = regionFiltered.length > 0 ? regionFiltered : candidatesPool;
 
   const preferredWindows = new Set(
     preferences.preferred_windows.map((window) => window.trim().toLowerCase()).filter(Boolean),

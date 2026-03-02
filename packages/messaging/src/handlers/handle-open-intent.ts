@@ -1,5 +1,6 @@
 import type { ActivityCatalogEntry } from "../../../db/src/types/activity-catalog.ts";
 import type { ConversationSession } from "../intents/intent-types.ts";
+import { buildSocialChoiceStateToken } from "./social-choice-state.ts";
 
 export type OpenIntentActionType =
   | "can_initiate_linkup"
@@ -39,6 +40,7 @@ export type HandleOpenIntentDependencies = {
   updateSessionMode: (input: {
     userId: string;
     mode: "awaiting_social_choice";
+    stateToken: string;
   }) => Promise<void>;
 };
 
@@ -95,6 +97,7 @@ export async function handleOpenIntent(
   await dependencies.updateSessionMode({
     userId,
     mode: "awaiting_social_choice",
+    stateToken: buildSocialChoiceStateToken(suggestion.activity_key, 0),
   });
 }
 
