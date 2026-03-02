@@ -14,6 +14,7 @@ export type ConversationSessionMode =
   | "interviewing_abbreviated"
   | "awaiting_social_choice"
   | "pending_plan_confirmation"
+  | "pending_contact_invite_confirmation"
   | "awaiting_invite_reply"
   | "post_activity_checkin"
   | "post_event"
