@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   ConversationRouterError,
@@ -107,6 +107,83 @@ describe("conversation router foundation", () => {
 
     expect(() => resolveNextTransition(state, "profile_interview_engine"))
       .toThrow(ConversationRouterError);
+  });
+
+  it("short-circuits pending invitation lookup before user resolution", async () => {
+    const classifySpy = vi.fn(() => ({
+      intent: "OPEN_INTENT" as const,
+      confidence: 0.9,
+    }));
+    const inviteePhoneHash = "hash_invitee_123";
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: { id: "ses_123", mode: "idle", state_token: "idle" },
+      profile: { is_complete_mvp: true, state: "complete_mvp" },
+      pendingInvitationPhoneHashes: [inviteePhoneHash],
+    });
+
+    const decision = await routeConversationMessage({
+      supabase,
+      payload: {
+        ...samplePayload(),
+        from_phone_hash: inviteePhoneHash,
+      },
+      classifyIntentFn: classifySpy,
+    });
+
+    expect(decision.route).toBe("contact_invite_response_handler");
+    expect(decision.user_id).toBe("");
+    expect(supabase.debugState().invitationLookupCalls).toBe(1);
+    expect(supabase.debugState().userLookupCalls).toBe(0);
+    expect(classifySpy).not.toHaveBeenCalled();
+  });
+
+  it("bypasses classifier and all lookups for STOP/HELP system commands", async () => {
+    const classifySpy = vi.fn(() => ({
+      intent: "OPEN_INTENT" as const,
+      confidence: 0.9,
+    }));
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: { id: "ses_123", mode: "idle", state_token: "idle" },
+      profile: { is_complete_mvp: true, state: "complete_mvp" },
+    });
+
+    const decision = await routeConversationMessage({
+      supabase,
+      payload: {
+        ...samplePayload(),
+        body_raw: "STOP",
+        body_normalized: "STOP",
+      },
+      classifyIntentFn: classifySpy,
+    });
+
+    expect(decision.route).toBe("system_command_handler");
+    expect(supabase.debugState().invitationLookupCalls).toBe(0);
+    expect(supabase.debugState().userLookupCalls).toBe(0);
+    expect(classifySpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps interviewing mode on engine routing without classifier call", async () => {
+    const classifySpy = vi.fn(() => ({
+      intent: "OPEN_INTENT" as const,
+      confidence: 0.9,
+    }));
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: { id: "ses_123", mode: "interviewing", state_token: "interview:step_07" },
+      profile: { is_complete_mvp: true, state: "complete_mvp" },
+    });
+
+    const decision = await routeConversationMessage({
+      supabase,
+      payload: samplePayload(),
+      classifyIntentFn: classifySpy,
+    });
+
+    expect(decision.route).toBe("profile_interview_engine");
+    expect(classifySpy).not.toHaveBeenCalled();
   });
 
   it("routes idle users with incomplete profile into interview engine", async () => {
@@ -435,6 +512,7 @@ function buildSupabaseMock(
     } | null;
     profile: { is_complete_mvp: boolean; state: string | null } | null;
     linkupStates?: Record<string, string>;
+    pendingInvitationPhoneHashes?: string[];
   },
 ) {
   const state = {
@@ -447,6 +525,9 @@ function buildSupabaseMock(
       : null,
     profile: data.profile,
     linkupStates: data.linkupStates ?? {},
+    pendingInvitationPhoneHashes: new Set(data.pendingInvitationPhoneHashes ?? []),
+    userLookupCalls: 0,
+    invitationLookupCalls: 0,
     postEventTransitionCalls: 0,
     postEventTransitionWrites: 0,
     postEventAttendanceWrites: 0,
@@ -474,7 +555,19 @@ function buildSupabaseMock(
           return query;
         },
         async maybeSingle() {
+          if (table === "contact_invitations") {
+            state.invitationLookupCalls += 1;
+            const inviteePhoneHash = typeof queryState.invitee_phone_hash === "string"
+              ? queryState.invitee_phone_hash
+              : "";
+            const status = typeof queryState.status === "string" ? queryState.status : "";
+            if (status === "pending" && state.pendingInvitationPhoneHashes.has(inviteePhoneHash)) {
+              return { data: { id: "inv_123" }, error: null };
+            }
+            return { data: null, error: null };
+          }
           if (table === "users") {
+            state.userLookupCalls += 1;
             return { data: state.user, error: null };
           }
           if (table === "conversation_sessions") {
