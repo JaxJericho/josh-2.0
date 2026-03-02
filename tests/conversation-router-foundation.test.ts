@@ -55,6 +55,18 @@ describe("conversation router foundation", () => {
     expect(nextTransition).toBe("post_event:attendance");
   });
 
+  it("routes pending invite confirmation tokens to named_plan_request_handler", () => {
+    const state = validateConversationState(
+      "pending_plan_confirmation",
+      "invite_confirm:create:v1:KzE0MTU1NTUwMTIz:VGF5bG9y",
+    );
+    const route = resolveRouteForState(state);
+    const nextTransition = resolveNextTransition(state, route);
+
+    expect(route).toBe("named_plan_request_handler");
+    expect(nextTransition).toBe(state.state_token);
+  });
+
   it("accepts post_event reflection as a legal transition token", () => {
     const state = validateConversationState("post_event", "post_event:reflection");
     const route = resolveRouteForState(state);
