@@ -210,6 +210,27 @@ describe("conversation router foundation", () => {
     expect(classifySpy).not.toHaveBeenCalled();
   });
 
+  it("keeps interviewing_abbreviated mode on abbreviated handler routing without classifier call", async () => {
+    const classifySpy = vi.fn(() => ({
+      intent: "OPEN_INTENT" as const,
+      confidence: 0.9,
+    }));
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: { id: "ses_123", mode: "interviewing_abbreviated", state_token: "interview_abbreviated:awaiting_reply" },
+      profile: { is_complete_mvp: false, state: "partial" },
+    });
+
+    const decision = await routeConversationMessage({
+      supabase,
+      payload: samplePayload(),
+      classifyIntentFn: classifySpy,
+    });
+
+    expect(decision.route).toBe("interview_answer_abbreviated_handler");
+    expect(classifySpy).not.toHaveBeenCalled();
+  });
+
   it("routes idle users with incomplete profile into interview engine", async () => {
     const supabase = buildSupabaseMock({
       user: { id: "usr_123" },
@@ -226,6 +247,23 @@ describe("conversation router foundation", () => {
     expect(decision.state.mode).toBe("interviewing");
     expect(decision.state.state_token).toBe("onboarding:awaiting_opening_response");
     expect(decision.next_transition).toBe("onboarding:awaiting_opening_response");
+  });
+
+  it("keeps idle users with complete_invited profile out of onboarding re-interview", async () => {
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: { id: "ses_123", mode: "idle", state_token: "idle" },
+      profile: { is_complete_mvp: false, state: "complete_invited" },
+    });
+
+    const decision = await routeConversationMessage({
+      supabase,
+      payload: samplePayload(),
+    });
+
+    expect(decision.route).toBe("open_intent_handler");
+    expect(decision.state.mode).toBe("idle");
+    expect(decision.state.state_token).toBe("idle");
   });
 
   it("transitions to post_event mode when linked linkup reaches completed", async () => {

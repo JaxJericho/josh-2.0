@@ -14,6 +14,7 @@ import type { HolisticExtractOutput } from "../../../db/src/types/index.ts";
 export type ProfileState =
   | "empty"
   | "partial"
+  | "complete_invited"
   | "complete_mvp"
   | "complete_full"
   | "stale";

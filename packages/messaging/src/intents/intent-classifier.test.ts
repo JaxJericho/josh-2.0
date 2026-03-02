@@ -69,6 +69,22 @@ describe("classifyIntent", () => {
     expect(disambiguator).not.toHaveBeenCalled();
   });
 
+  it("classifies interviewing_abbreviated mode as INTERVIEW_ANSWER_ABBREVIATED without LLM", () => {
+    const disambiguator = vi.fn((): "OPEN_INTENT" => "OPEN_INTENT");
+
+    const classification = classifyIntent(
+      "Weeknights are best for me",
+      buildSession({ mode: "interviewing_abbreviated" }),
+      { resolveAmbiguousIntent: disambiguator },
+    );
+
+    expect(classification).toEqual({
+      intent: "INTERVIEW_ANSWER_ABBREVIATED",
+      confidence: 1,
+    });
+    expect(disambiguator).not.toHaveBeenCalled();
+  });
+
   it("classifies STOP and HELP as SYSTEM_COMMAND from any mode", () => {
     const stopClassification = classifyIntent(
       " stop ",
