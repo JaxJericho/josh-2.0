@@ -37,6 +37,12 @@ import {
   createSupabaseSoloActivityRepository,
   suggestSoloActivity,
 } from "../../../../packages/core/src/suggestions/suggest-solo-activity.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
+  buildInvitedAbbreviatedWelcomeMessage,
+  CONTACT_INVITE_DECLINE_CONFIRMATION_MESSAGE,
+  CONTACT_INVITE_RESPONSE_CLARIFICATION_MESSAGE,
+} from "../../../../packages/core/src/invitations/abbreviated-welcome-messages.ts";
 import {
   elapsedMetricMs,
   emitMetricBestEffort,
@@ -47,6 +53,7 @@ import {
 export type ConversationMode =
   | "idle"
   | "interviewing"
+  | "interviewing_abbreviated"
   | "awaiting_social_choice"
   | "pending_plan_confirmation"
   | "pending_contact_invite_confirmation"
@@ -120,6 +127,12 @@ type ProfileSummary = {
   state: string | null;
 };
 
+type ContactInvitationResponseRow = {
+  id: string;
+  inviter_user_id: string;
+  status: string;
+};
+
 type ClassifyIntentFn = (
   message: string,
   session: IntentClassifierSession,
@@ -127,6 +140,8 @@ type ClassifyIntentFn = (
 
 const ONBOARDING_MODE: ConversationMode = "interviewing";
 const ONBOARDING_STATE_TOKEN = "onboarding:awaiting_opening_response";
+const INVITED_ABBREVIATED_MODE: ConversationMode = "interviewing_abbreviated";
+const INVITED_ABBREVIATED_STATE_TOKEN = "interview_abbreviated:awaiting_reply";
 const ONBOARDING_AWAITING_BURST_TOKEN = "onboarding:awaiting_burst";
 const ONBOARDING_STATE_TOKENS = [
   "onboarding:awaiting_opening_response",
@@ -202,6 +217,21 @@ const INVITE_CONFIRM_NO_EXACT_MATCHES = new Set([
   "don't",
   "decline",
 ]);
+const CONTACT_INVITE_ACCEPT_EXACT_MATCHES = new Set([
+  "yes",
+  "y",
+  "ok",
+  "okay",
+  "sure",
+  "accept",
+  "join",
+]);
+const CONTACT_INVITE_DECLINE_EXACT_MATCHES = new Set([
+  "no",
+  "n",
+  "stop",
+  "decline",
+]);
 const DIRECT_INVITE_INTENT_PATTERNS = [
   /\binvite\b/i,
   /\bsend(?:\s+an?)?\s+invite\b/i,
@@ -214,6 +244,7 @@ const HASH_ENCODER = new TextEncoder();
 const CONVERSATION_MODES: readonly ConversationMode[] = [
   "idle",
   "interviewing",
+  "interviewing_abbreviated",
   "awaiting_social_choice",
   "pending_plan_confirmation",
   "pending_contact_invite_confirmation",
@@ -228,6 +259,7 @@ const VALID_MODES: ReadonlySet<ConversationMode> = new Set(CONVERSATION_MODES);
 const STATE_TOKEN_PATTERN_BY_MODE: Record<ConversationMode, RegExp> = {
   idle: /^idle$/,
   interviewing: /^[a-z0-9:_-]+$/i,
+  interviewing_abbreviated: /^[a-z0-9:_-]+$/i,
   awaiting_social_choice: /^[a-z0-9:_-]+$/i,
   pending_plan_confirmation: /^[a-z0-9:_-]+$/i,
   pending_contact_invite_confirmation: /^[a-z0-9:_-]+$/i,
@@ -240,6 +272,7 @@ const STATE_TOKEN_PATTERN_BY_MODE: Record<ConversationMode, RegExp> = {
 const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
   idle: "default_engine",
   interviewing: "profile_interview_engine",
+  interviewing_abbreviated: "interview_answer_abbreviated_handler",
   awaiting_social_choice: "default_engine",
   pending_plan_confirmation: "default_engine",
   pending_contact_invite_confirmation: "default_engine",
@@ -252,6 +285,7 @@ const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
 const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
   idle: "idle:awaiting_user_input",
   interviewing: "interview:awaiting_next_input",
+  interviewing_abbreviated: "interview_abbreviated:awaiting_next_input",
   awaiting_social_choice: "social:awaiting_choice",
   pending_plan_confirmation: PENDING_PLAN_CONFIRMATION_STATE_TOKEN,
   pending_contact_invite_confirmation: "invite_confirm:awaiting_reply",
@@ -264,6 +298,7 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
 const LEGAL_TRANSITIONS_BY_MODE: Record<ConversationMode, ReadonlySet<string>> = {
   idle: new Set(["idle:awaiting_user_input", ONBOARDING_STATE_TOKEN]),
   interviewing: new Set(["interview:awaiting_next_input", ...ONBOARDING_STATE_TOKENS]),
+  interviewing_abbreviated: new Set(["interview_abbreviated:awaiting_next_input"]),
   awaiting_social_choice: new Set([SOCIAL_CHOICE_STATE_TOKEN_PREFIX]),
   pending_plan_confirmation: new Set([PENDING_PLAN_CONFIRMATION_STATE_TOKEN]),
   pending_contact_invite_confirmation: new Set(["invite_confirm:create:v1"]),
@@ -593,6 +628,7 @@ function classifyPostEventStateToken(stateToken: string): PostEventStateToken {
 function shouldBypassIntentClassificationForState(state: ConversationState): boolean {
   return (
     state.mode === "interviewing" ||
+    state.mode === "interviewing_abbreviated" ||
     state.mode === "pending_plan_confirmation" ||
     state.mode === "pending_contact_invite_confirmation" ||
     state.mode === "linkup_forming" ||
@@ -762,10 +798,7 @@ export async function dispatchConversationRoute(
       return result;
     }
     case "contact_invite_response_handler":
-      return {
-        engine: "contact_invite_response_handler",
-        reply_message: null,
-      };
+      return runContactInviteResponseHandler(input);
     case "post_activity_checkin_handler":
       return dispatchViaDefaultEnginePlaceholder(resolvedRoute, input);
     case "open_intent_handler":
@@ -799,6 +832,8 @@ async function fetchPendingInvitationByPhoneHash(
     .select("id")
     .eq("invitee_phone_hash", phoneHash)
     .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (error) {
@@ -813,6 +848,530 @@ async function fetchPendingInvitationByPhoneHash(
   }
 
   return { id: data.id };
+}
+
+type ContactInviteResponseIntent = "accept" | "decline" | "unknown";
+
+async function runContactInviteResponseHandler(
+  input: EngineDispatchInput,
+): Promise<EngineDispatchResult> {
+  const phoneHash = input.payload.from_phone_hash?.trim() ||
+    await sha256Hex(input.payload.from_e164);
+  const invitation = await fetchInvitationForContactInviteResponse(
+    input.supabase,
+    phoneHash,
+  );
+
+  if (!invitation) {
+    return {
+      engine: "contact_invite_response_handler",
+      reply_message: null,
+    };
+  }
+
+  const responseIntent = parseContactInviteResponseIntent(input.payload.body_raw);
+  const inboundAuditIdempotencyKey =
+    `contact_invite_response:received:${invitation.id}:${input.payload.inbound_message_sid}`;
+
+  if (responseIntent === "unknown") {
+    await insertAuditLogRecord({
+      supabase: input.supabase,
+      action: "contact_invite_clarify_prompted",
+      targetType: "contact_invitation",
+      targetId: invitation.id,
+      reason: "contact_invite_response_clarify_prompted",
+      idempotencyKey:
+        `contact_invite_response:clarify:${invitation.id}:${input.payload.inbound_message_sid}`,
+      payload: {
+        invitation_id: invitation.id,
+        inviter_user_id: invitation.inviter_user_id,
+        invitee_phone_hash: phoneHash,
+        idempotency_status: "first_run",
+      },
+    });
+    await insertAuditLogRecord({
+      supabase: input.supabase,
+      action: "contact_invite_response_received",
+      targetType: "contact_invitation",
+      targetId: invitation.id,
+      reason: "contact_invite_response_received",
+      idempotencyKey: inboundAuditIdempotencyKey,
+      payload: {
+        invitation_id: invitation.id,
+        inviter_user_id: invitation.inviter_user_id,
+        invitee_phone_hash: phoneHash,
+        parsed_response: responseIntent,
+        outcome: "clarify_prompted",
+        idempotency_status: "first_run",
+      },
+    });
+    return {
+      engine: "contact_invite_response_handler",
+      reply_message: CONTACT_INVITE_RESPONSE_CLARIFICATION_MESSAGE,
+    };
+  }
+
+  if (responseIntent === "decline") {
+    await transitionInvitationStatusIfPending({
+      supabase: input.supabase,
+      invitationId: invitation.id,
+      status: "declined",
+    });
+
+    const declineAudit = await insertAuditLogRecord({
+      supabase: input.supabase,
+      action: "contact_invite_declined",
+      targetType: "contact_invitation",
+      targetId: invitation.id,
+      reason: "contact_invite_declined",
+      idempotencyKey: `contact_invite_response:declined:${invitation.id}`,
+      payload: {
+        invitation_id: invitation.id,
+        inviter_user_id: invitation.inviter_user_id,
+        invitee_phone_hash: phoneHash,
+      },
+    });
+
+    await insertAuditLogRecord({
+      supabase: input.supabase,
+      action: "contact_invite_response_received",
+      targetType: "contact_invitation",
+      targetId: invitation.id,
+      reason: "contact_invite_response_received",
+      idempotencyKey: inboundAuditIdempotencyKey,
+      payload: {
+        invitation_id: invitation.id,
+        inviter_user_id: invitation.inviter_user_id,
+        invitee_phone_hash: phoneHash,
+        parsed_response: responseIntent,
+        outcome: "declined",
+        idempotency_status: declineAudit === "inserted" ? "first_run" : "replay",
+      },
+    });
+
+    return {
+      engine: "contact_invite_response_handler",
+      reply_message: declineAudit === "inserted"
+        ? CONTACT_INVITE_DECLINE_CONFIRMATION_MESSAGE
+        : null,
+    };
+  }
+
+  await transitionInvitationStatusIfPending({
+    supabase: input.supabase,
+    invitationId: invitation.id,
+    status: "accepted",
+  });
+
+  const user = await createOrReuseInvitedUser({
+    supabase: input.supabase,
+    phoneE164: input.payload.from_e164,
+    phoneHash,
+  });
+  const profile = await createOrReuseInvitedProfile(input.supabase, user.id);
+  const session = await createOrReuseInvitedSession(input.supabase, user.id);
+  const inviterDisplayName = await fetchInviterDisplayName(
+    input.supabase,
+    invitation.inviter_user_id,
+  );
+
+  const acceptedAudit = await insertAuditLogRecord({
+    supabase: input.supabase,
+    action: "contact_invite_accepted",
+    targetType: "contact_invitation",
+    targetId: invitation.id,
+    reason: "contact_invite_accepted",
+    idempotencyKey: `contact_invite_response:accepted:${invitation.id}`,
+    payload: {
+      invitation_id: invitation.id,
+      inviter_user_id: invitation.inviter_user_id,
+      invitee_phone_hash: phoneHash,
+      accepted_user_id: user.id,
+      accepted_profile_id: profile.id,
+      accepted_session_id: session.id,
+      user_created: user.created,
+      user_reused: !user.created,
+      profile_created: profile.created,
+      profile_reused: !profile.created,
+      session_created: session.created,
+      session_reused: !session.created,
+      session_mode: session.mode,
+      session_state_token: session.state_token,
+      idempotency_status: "first_run",
+    },
+  });
+
+  await insertAuditLogRecord({
+    supabase: input.supabase,
+    action: "contact_invite_response_received",
+    targetType: "contact_invitation",
+    targetId: invitation.id,
+    reason: "contact_invite_response_received",
+    idempotencyKey: inboundAuditIdempotencyKey,
+    payload: {
+      invitation_id: invitation.id,
+      inviter_user_id: invitation.inviter_user_id,
+      invitee_phone_hash: phoneHash,
+      parsed_response: responseIntent,
+      outcome: "accepted",
+      accepted_user_id: user.id,
+      accepted_profile_id: profile.id,
+      accepted_session_id: session.id,
+      user_created: user.created,
+      user_reused: !user.created,
+      profile_created: profile.created,
+      profile_reused: !profile.created,
+      session_created: session.created,
+      session_reused: !session.created,
+      session_mode: session.mode,
+      session_state_token: session.state_token,
+      idempotency_status: acceptedAudit === "inserted" ? "first_run" : "replay",
+    },
+  });
+
+  return {
+    engine: "contact_invite_response_handler",
+    reply_message: acceptedAudit === "inserted"
+      ? buildInvitedAbbreviatedWelcomeMessage(inviterDisplayName)
+      : null,
+  };
+}
+
+async function fetchInvitationForContactInviteResponse(
+  supabase: SupabaseClientLike,
+  phoneHash: string,
+): Promise<ContactInvitationResponseRow | null> {
+  const { data, error } = await supabase
+    .from("contact_invitations")
+    .select("id,inviter_user_id,status,created_at")
+    .eq("invitee_phone_hash", phoneHash)
+    .in("status", ["pending", "accepted", "declined"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "INVITATION_LOOKUP_FAILED",
+      "Unable to load invitation for contact invite response handling.",
+    );
+  }
+
+  if (!data?.id || !data?.inviter_user_id || !data?.status) {
+    return null;
+  }
+
+  return {
+    id: data.id,
+    inviter_user_id: data.inviter_user_id,
+    status: data.status,
+  };
+}
+
+async function transitionInvitationStatusIfPending(input: {
+  supabase: SupabaseClientLike;
+  invitationId: string;
+  status: "accepted" | "declined";
+}): Promise<void> {
+  const { error: updateError } = await input.supabase
+    .from("contact_invitations")
+    .update({ status: input.status })
+    .eq("id", input.invitationId)
+    .eq("status", "pending")
+    .select("id")
+    .maybeSingle();
+
+  if (updateError) {
+    throw new ConversationRouterError(
+      "INVITATION_UPDATE_FAILED",
+      "Unable to persist contact invitation status transition.",
+    );
+  }
+}
+
+async function createOrReuseInvitedUser(input: {
+  supabase: SupabaseClientLike;
+  phoneE164: string;
+  phoneHash: string;
+}): Promise<{ id: string; created: boolean }> {
+  const existingByHash = await fetchUserByPhoneHash(input.supabase, input.phoneHash);
+  if (existingByHash?.id) {
+    return {
+      id: existingByHash.id,
+      created: false,
+    };
+  }
+
+  const existingByPhone = await fetchUserByPhone(input.supabase, input.phoneE164);
+  if (existingByPhone?.id) {
+    return {
+      id: existingByPhone.id,
+      created: false,
+    };
+  }
+
+  const { data, error } = await input.supabase
+    .from("users")
+    .insert({
+      phone_e164: input.phoneE164,
+      phone_hash: input.phoneHash,
+      first_name: "Invited",
+      last_name: "User",
+      birthday: "1970-01-01",
+      email: null,
+      state: "interviewing",
+      sms_consent: true,
+      age_consent: true,
+      terms_consent: true,
+      privacy_consent: true,
+      region_id: null,
+      deleted_at: null,
+      registration_source: "contact_invitation",
+    })
+    .select("id")
+    .single();
+
+  if (error && isDuplicateKeyError(error)) {
+    const duplicate = await fetchUserByPhoneHash(input.supabase, input.phoneHash) ||
+      await fetchUserByPhone(input.supabase, input.phoneE164);
+    if (duplicate?.id) {
+      return {
+        id: duplicate.id,
+        created: false,
+      };
+    }
+  }
+
+  if (error || !data?.id) {
+    throw new ConversationRouterError(
+      "USER_CREATE_FAILED",
+      "Unable to create invited user for contact invitation response.",
+    );
+  }
+
+  return {
+    id: data.id,
+    created: true,
+  };
+}
+
+async function fetchUserByPhoneHash(
+  supabase: SupabaseClientLike,
+  phoneHash: string,
+): Promise<{ id: string } | null> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("id")
+    .eq("phone_hash", phoneHash)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "USER_LOOKUP_FAILED",
+      "Unable to load user record by phone hash.",
+    );
+  }
+
+  if (!data?.id) {
+    return null;
+  }
+
+  return { id: data.id };
+}
+
+async function createOrReuseInvitedProfile(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<{ id: string; created: boolean }> {
+  const existing = await fetchProfileIdByUserId(supabase, userId);
+  if (existing?.id) {
+    return {
+      id: existing.id,
+      created: false,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .insert({
+      user_id: userId,
+      country_code: null,
+      state_code: null,
+      state: "empty",
+      is_complete_mvp: false,
+      preferences: {},
+      fingerprint: {},
+      activity_patterns: [],
+      boundaries: {},
+      active_intent: null,
+      completeness_percent: 0,
+      status_reason: "invited_interview_pending",
+      last_interview_step: null,
+      completed_at: null,
+      state_changed_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+
+  if (error && isDuplicateKeyError(error)) {
+    const duplicate = await fetchProfileIdByUserId(supabase, userId);
+    if (duplicate?.id) {
+      return {
+        id: duplicate.id,
+        created: false,
+      };
+    }
+  }
+
+  if (error || !data?.id) {
+    throw new ConversationRouterError(
+      "PROFILE_CREATE_FAILED",
+      "Unable to create invited profile for contact invitation response.",
+    );
+  }
+
+  return {
+    id: data.id,
+    created: true,
+  };
+}
+
+async function fetchProfileIdByUserId(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<{ id: string } | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "PROFILE_LOOKUP_FAILED",
+      "Unable to load profile for contact invite response handling.",
+    );
+  }
+
+  if (!data?.id) {
+    return null;
+  }
+
+  return { id: data.id };
+}
+
+async function createOrReuseInvitedSession(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<{ id: string; mode: string; state_token: string; created: boolean }> {
+  const existing = await fetchConversationSession(supabase, userId);
+  if (existing?.id) {
+    if (existing.mode === INVITED_ABBREVIATED_MODE && existing.state_token) {
+      return {
+        id: existing.id,
+        mode: existing.mode,
+        state_token: existing.state_token,
+        created: false,
+      };
+    }
+
+    const { data, error } = await supabase
+      .from("conversation_sessions")
+      .update({
+        mode: INVITED_ABBREVIATED_MODE,
+        state_token: INVITED_ABBREVIATED_STATE_TOKEN,
+      })
+      .eq("id", existing.id)
+      .select("id,mode,state_token")
+      .maybeSingle();
+
+    if (error || !data?.id || !data?.mode || !data?.state_token) {
+      throw new ConversationRouterError(
+        "STATE_UPDATE_FAILED",
+        "Unable to update invited conversation session state.",
+      );
+    }
+
+    return {
+      id: data.id,
+      mode: data.mode,
+      state_token: data.state_token,
+      created: false,
+    };
+  }
+
+  const { data, error } = await supabase
+    .from("conversation_sessions")
+    .insert({
+      user_id: userId,
+      mode: INVITED_ABBREVIATED_MODE,
+      state_token: INVITED_ABBREVIATED_STATE_TOKEN,
+      current_step_id: null,
+      last_inbound_message_sid: null,
+    })
+    .select("id,mode,state_token")
+    .single();
+
+  if (error && isDuplicateKeyError(error)) {
+    const duplicate = await fetchConversationSession(supabase, userId);
+    if (duplicate?.id) {
+      return {
+        id: duplicate.id,
+        mode: duplicate.mode ?? INVITED_ABBREVIATED_MODE,
+        state_token: duplicate.state_token ?? INVITED_ABBREVIATED_STATE_TOKEN,
+        created: false,
+      };
+    }
+  }
+
+  if (error || !data?.id || !data?.mode || !data?.state_token) {
+    throw new ConversationRouterError(
+      "STATE_CREATE_FAILED",
+      "Unable to create invited conversation session.",
+    );
+  }
+
+  return {
+    id: data.id,
+    mode: data.mode,
+    state_token: data.state_token,
+    created: true,
+  };
+}
+
+async function insertAuditLogRecord(input: {
+  supabase: SupabaseClientLike;
+  action: string;
+  targetType: string;
+  targetId: string;
+  reason: string;
+  payload: Record<string, unknown>;
+  idempotencyKey: string;
+}): Promise<"inserted" | "duplicate"> {
+  const { error } = await input.supabase
+    .from("audit_log")
+    .insert({
+      action: input.action,
+      target_type: input.targetType,
+      target_id: input.targetId,
+      reason: input.reason,
+      payload: input.payload,
+      idempotency_key: input.idempotencyKey,
+      correlation_id: input.targetId,
+    });
+
+  if (error && isDuplicateKeyError(error)) {
+    return "duplicate";
+  }
+
+  if (error) {
+    throw new ConversationRouterError(
+      "AUDIT_LOG_FAILED",
+      `Unable to persist '${input.action}' audit event.`,
+    );
+  }
+
+  return "inserted";
 }
 
 async function fetchUserByPhone(
@@ -1771,6 +2330,41 @@ function parseInviteConfirmationReply(message: string): "yes" | "no" | "ambiguou
     return "no";
   }
   return "ambiguous";
+}
+
+export function parseContactInviteResponseIntent(
+  message: string,
+): ContactInviteResponseIntent {
+  const normalized = normalizeIntentText(message);
+  if (!normalized) {
+    return "unknown";
+  }
+  if (CONTACT_INVITE_ACCEPT_EXACT_MATCHES.has(normalized)) {
+    return "accept";
+  }
+  if (CONTACT_INVITE_DECLINE_EXACT_MATCHES.has(normalized)) {
+    return "decline";
+  }
+
+  const tokens = normalized.split(" ").filter(Boolean);
+  let sawAccept = false;
+  let sawDecline = false;
+  for (const token of tokens) {
+    if (CONTACT_INVITE_ACCEPT_EXACT_MATCHES.has(token)) {
+      sawAccept = true;
+    }
+    if (CONTACT_INVITE_DECLINE_EXACT_MATCHES.has(token)) {
+      sawDecline = true;
+    }
+  }
+
+  if (sawAccept && !sawDecline) {
+    return "accept";
+  }
+  if (sawDecline && !sawAccept) {
+    return "decline";
+  }
+  return "unknown";
 }
 
 function isDirectInviteIntent(message: string, phoneCandidate: string): boolean {

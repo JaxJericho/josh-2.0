@@ -121,11 +121,14 @@ export async function runProfileInterviewEngine(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
   const nowIso = new Date().toISOString();
+  const fallbackMode: ConversationMode = input.decision.state.mode === "interviewing_abbreviated"
+    ? "interviewing"
+    : input.decision.state.mode;
 
   const session = await fetchOrCreateConversationSession(
     input.supabase,
     input.decision.user_id,
-    input.decision.state.mode,
+    fallbackMode,
     input.decision.state.state_token,
   );
 
