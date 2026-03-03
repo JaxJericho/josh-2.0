@@ -12,7 +12,7 @@ describe("admin set entitlements", () => {
     expect(() =>
       parseAdminSetEntitlementsRequest({
         profile_id: "pro_1",
-        waitlist_override: true,
+        region_override: true,
       })
     ).toThrow("reason is required when any override field is set to true");
   });
@@ -23,7 +23,7 @@ describe("admin set entitlements", () => {
       profile_id: "pro_1",
       can_initiate: true,
       can_participate: true,
-      waitlist_override: true,
+      region_override: true,
       reason: "Ticket 6.1 test override",
     });
 
@@ -52,13 +52,14 @@ describe("admin set entitlements", () => {
     expect(repository.rowCount()).toBe(1);
   });
 
-  it("admin override flips behavior deterministically in evaluator", async () => {
+  it("safety override flips behavior deterministically in evaluator", async () => {
     const repository = new InMemoryEntitlementsRepository();
     const command = parseAdminSetEntitlementsRequest({
-      profile_id: "pro_waitlist",
+      profile_id: "pro_safety_override",
       can_initiate: true,
-      waitlist_override: true,
-      reason: "Allow waitlist bypass for test account",
+      can_participate: true,
+      safety_override: true,
+      reason: "Allow safety hold override for test account",
     });
 
     const result = await executeAdminSetEntitlements({
@@ -71,21 +72,9 @@ describe("admin set entitlements", () => {
     });
 
     const evaluation = resolveEntitlementsEvaluation({
-      profile_id: "pro_waitlist",
-      user_id: "usr_waitlist",
-      region: {
-        id: "reg_waitlist",
-        slug: "waitlist",
-        is_active: false,
-        is_launch_region: false,
-      },
-      waitlist_entry: {
-        profile_id: "pro_waitlist",
-        region_id: "reg_waitlist",
-        status: "waiting",
-        last_notified_at: null,
-      },
-      has_active_safety_hold: false,
+      profile_id: "pro_safety_override",
+      user_id: "usr_safety_override",
+      has_active_safety_hold: true,
       stored_entitlements: {
         can_initiate: result.profile_entitlements.can_initiate,
         can_participate: result.profile_entitlements.can_participate,
@@ -97,7 +86,7 @@ describe("admin set entitlements", () => {
       },
     });
 
-    expect(evaluation.blocked_by_waitlist).toBe(false);
+    expect(evaluation.blocked_by_safety_hold).toBe(false);
     expect(evaluation.can_initiate).toBe(true);
     expect(evaluation.can_participate).toBe(true);
   });

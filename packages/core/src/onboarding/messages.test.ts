@@ -39,7 +39,7 @@ describe("onboarding messages constants", () => {
 
   it("renders the opening with a first name replacement", () => {
     expect(renderOnboardingOpening("Alex")).toBe(
-      `Call me JOSH. Nice to meet you, Alex. You're off the waitlist — time to find your people.
+      `Call me JOSH. Nice to meet you, Alex. Time to find your people.
 
 Quick heads up: a profile photo is required before I can lock in your first LinkUp. You can add it anytime through your dashboard — now or later both work. Just know it needs to be there before any plan gets confirmed. Sound good?`,
     );

@@ -270,7 +270,7 @@ describe("sendSms", () => {
         body: "legacy",
         correlationId: "corr_legacy_purpose",
         purpose: "region_launch_notify",
-        idempotencyKey: "waitlist_activation_onboarding:reg:profile:onboarding_opening",
+        idempotencyKey: "onboarding:opening:usr_legacy",
       }),
     ).rejects.toThrow("Legacy region_launch_notify purpose is forbidden.");
 

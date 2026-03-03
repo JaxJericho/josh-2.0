@@ -7,7 +7,7 @@ import { resolveRegionAssignment } from "../../../../packages/core/src/regions/a
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { createSupabaseEntitlementsRepository, evaluateEntitlements } from "../../../../packages/core/src/entitlements/evaluate-entitlements.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import { enforceWaitlistGate, SAFETY_HOLD_MESSAGE } from "../waitlist/waitlist-operations.ts";
+import { safetyHoldNotification } from "../../../../packages/messaging/src/templates/safety.ts";
 import type {
   EngineDispatchInput,
   EngineDispatchResult,
@@ -58,6 +58,7 @@ const VALID_PROFILE_STATES: ReadonlySet<ProfileState> = new Set([
   "complete_full",
   "stale",
 ]) as ReadonlySet<ProfileState>;
+const SAFETY_HOLD_MESSAGE = safetyHoldNotification();
 
 function normalizeConversationMode(modeRaw: string): ConversationMode {
   if (!VALID_CONVERSATION_MODES.has(modeRaw as ConversationMode)) {
@@ -328,7 +329,6 @@ async function persistInterviewTransition(params: {
 }): Promise<{ reply_message_override: string | null }> {
   const conversationIdempotencyKey =
     `profile_interview:conversation:${params.userId}:${params.inboundMessageSid}:${params.transition.action}`;
-  let replyMessageOverride: string | null = null;
 
   if (params.transition.profile_patch) {
     const { error: updateProfileError } = await params.supabase
@@ -346,16 +346,6 @@ async function persistInterviewTransition(params: {
       countryCode: params.transition.profile_patch.country_code ?? params.profile.country_code,
       stateCode: params.transition.profile_patch.state_code ?? params.profile.state_code,
     });
-
-    const waitlistGate = await enforceWaitlistGate({
-      supabase: params.supabase,
-      userId: params.userId,
-      allowNotification: params.transition.action === "complete",
-    });
-    if (waitlistGate.is_waitlist_region && waitlistGate.reply_message) {
-      replyMessageOverride = waitlistGate.reply_message;
-    }
-
   }
 
   if (params.transition.profile_event_type && params.transition.profile_event_step_id && params.transition.profile_event_payload) {
@@ -440,7 +430,7 @@ async function persistInterviewTransition(params: {
     }
   }
 
-  return { reply_message_override: replyMessageOverride };
+  return { reply_message_override: null };
 }
 
 async function upsertProfileRegionAssignment(params: {
