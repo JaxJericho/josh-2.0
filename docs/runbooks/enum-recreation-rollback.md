@@ -7,6 +7,8 @@ This runbook rolls back the destructive enum migration that removed deprecated v
 
 Use this only if `20260303101500_recreate_enums_remove_deprecated.sql` was already applied and must be reversed.
 
+`one_to_one` match mode was removed from runtime in JOSH 3.0 Phase 21 (Tickets 21.2 and 21.5). Any `one_to_one` references in this runbook are rollback-only and historical.
+
 ## Safety Rules
 
 - Run in staging first.
