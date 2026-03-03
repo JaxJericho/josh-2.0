@@ -2629,9 +2629,6 @@ export type Database = {
         | "linkup_feedback_text"
         | "contact_exchange_mutual_yes"
         | "contact_exchange_declined"
-        | "match_preview_accepted"
-        | "match_preview_rejected"
-        | "match_preview_expired"
         | "user_blocked_other"
         | "user_reported_other"
       linkup_member_role: "initiator" | "participant"
@@ -2648,7 +2645,7 @@ export type Database = {
         | "completed"
         | "expired"
         | "canceled"
-      match_mode: "one_to_one" | "linkup"
+      match_mode: "linkup"
       match_run_status: "started" | "completed" | "failed"
       profile_state:
         | "empty"
@@ -2840,9 +2837,6 @@ export const Constants = {
         "linkup_feedback_text",
         "contact_exchange_mutual_yes",
         "contact_exchange_declined",
-        "match_preview_accepted",
-        "match_preview_rejected",
-        "match_preview_expired",
         "user_blocked_other",
         "user_reported_other",
       ],
@@ -2862,7 +2856,7 @@ export const Constants = {
         "expired",
         "canceled",
       ],
-      match_mode: ["one_to_one", "linkup"],
+      match_mode: ["linkup"],
       match_run_status: ["started", "completed", "failed"],
       profile_state: [
         "empty",
