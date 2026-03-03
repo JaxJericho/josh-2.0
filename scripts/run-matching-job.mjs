@@ -28,21 +28,16 @@ try {
   const scoringRuntime = await loadScoringRuntime();
   const nowIso = new Date().toISOString();
 
-  const [users, profiles, signals, profileEntitlements, entitlements, assignments, waitlistEntries, activeHolds, userBlocks] =
+  const [users, profiles, profileEntitlements, entitlements, assignments, waitlistEntries, activeHolds, userBlocks] =
     await Promise.all([
       fetchRowsOrThrow(supabase, "users", "id,state,deleted_at"),
       fetchRowsOrThrow(
         supabase,
         "profiles",
-        "id,user_id,state,is_complete_mvp",
+        "id,user_id,state,is_complete_mvp,coordination_dimensions",
         (query) =>
           // complete_invited hard filter: never relax
           query.neq("state", "complete_invited"),
-      ),
-      fetchRowsOrThrow(
-        supabase,
-        "profile_compatibility_signals",
-        "user_id,profile_id,interest_vector,trait_vector,intent_vector,availability_vector,metadata,content_hash",
       ),
       fetchRowsOrThrow(
         supabase,
@@ -67,7 +62,6 @@ try {
     ]);
 
   const userById = buildByIdMap(users);
-  const profileByUserId = buildByIdMap(profiles, "user_id");
   const profileEntitlementsByProfileId = buildByIdMap(profileEntitlements, "profile_id");
   const introEntitlementsByUserId = buildByIdMap(entitlements, "user_id");
   const assignmentByProfileId = buildByIdMap(assignments, "profile_id");
@@ -85,10 +79,9 @@ try {
   };
 
   const candidatePool = [];
-  for (const signal of signals) {
-    const userId = signal.user_id;
+  for (const profile of profiles) {
+    const userId = profile.user_id;
     const user = userById.get(userId);
-    const profile = profileByUserId.get(userId);
 
     if (!user || !profile) {
       continue;
@@ -135,7 +128,6 @@ try {
     candidatePool.push({
       user,
       profile,
-      signal,
       assignment,
       entitlementEvaluation,
       introEntitlement: introEntitlementsByUserId.get(user.id) ?? null,
@@ -246,20 +238,10 @@ try {
 
       const score = scoringRuntime.scorePair(
         {
-          interest_vector: sourceEntry.signal.interest_vector,
-          trait_vector: sourceEntry.signal.trait_vector,
-          intent_vector: sourceEntry.signal.intent_vector,
-          availability_vector: sourceEntry.signal.availability_vector,
-          content_hash: sourceEntry.signal.content_hash,
-          metadata: sourceEntry.signal.metadata ?? {},
+          coordination_dimensions: sourceEntry.profile.coordination_dimensions ?? null,
         },
         {
-          interest_vector: candidateEntry.signal.interest_vector,
-          trait_vector: candidateEntry.signal.trait_vector,
-          intent_vector: candidateEntry.signal.intent_vector,
-          availability_vector: candidateEntry.signal.availability_vector,
-          content_hash: candidateEntry.signal.content_hash,
-          metadata: candidateEntry.signal.metadata ?? {},
+          coordination_dimensions: candidateEntry.profile.coordination_dimensions ?? null,
         },
       );
 
@@ -267,8 +249,8 @@ try {
       const explainability = {
         top_reasons: topReasons,
         score_version: score.version,
-        source_signal_hash: sourceEntry.signal.content_hash,
-        candidate_signal_hash: candidateEntry.signal.content_hash,
+        source_signal_hash: score.a_hash,
+        candidate_signal_hash: score.b_hash,
       };
 
       rankedCandidates.push({
@@ -289,8 +271,8 @@ try {
           run_key: runKey,
           source_user_id: sourceUserId,
           candidate_user_id: candidateUserId,
-          source_hash: sourceEntry.signal.content_hash,
-          candidate_hash: candidateEntry.signal.content_hash,
+          source_hash: score.a_hash,
+          candidate_hash: score.b_hash,
           score_version: score.version,
           mode: args.mode,
           config,
@@ -614,10 +596,12 @@ function buildBlockedPairSet(rows) {
 
 function buildTopReasons(breakdown) {
   const labels = {
-    interests: "Shared interests",
-    traits: "Personality alignment",
-    intent: "Intent overlap",
-    availability: "Availability overlap",
+    social_energy: "Social energy alignment",
+    social_pace: "Social pace alignment",
+    conversation_depth: "Conversation depth alignment",
+    adventure_orientation: "Adventure alignment",
+    group_dynamic: "Group dynamic alignment",
+    values_proximity: "Values proximity alignment",
   };
 
   return Object.entries(labels)

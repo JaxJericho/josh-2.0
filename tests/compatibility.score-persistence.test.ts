@@ -3,7 +3,6 @@ import {
   COMPATIBILITY_SCORE_TABLE,
   computeAndUpsertScore,
 } from "../packages/core/src/compatibility/compatibility-score-writer";
-import { COMPATIBILITY_SIGNAL_TABLE } from "../packages/core/src/compatibility/compatibility-signal-writer";
 
 describe("compatibility score persistence", () => {
   it("upserts idempotently for the same pair/hash/version key", async () => {
@@ -27,24 +26,37 @@ describe("compatibility score persistence", () => {
     const stored = tables[COMPATIBILITY_SCORE_TABLE][0];
     expect(stored.user_a_id).toBe(USER_1);
     expect(stored.user_b_id).toBe(USER_2);
-    expect(stored.a_hash).toBe("hash-user-1");
-    expect(stored.b_hash).toBe("hash-user-2");
+    expect(stored.a_hash).toBe(first.a_hash);
+    expect(stored.b_hash).toBe(first.b_hash);
     expect(stored.score_version).toBe(first.version);
   });
 
-  it("fails fast when compatibility signals are missing", async () => {
+  it("keeps incomplete profiles in scoring with deterministic attenuation", async () => {
     const { supabase, tables } = createMockSupabase();
-    tables[COMPATIBILITY_SIGNAL_TABLE] = tables[COMPATIBILITY_SIGNAL_TABLE].filter(
-      (row) => row.user_id !== USER_2,
+
+    const complete = await computeAndUpsertScore({
+      supabase,
+      user_a_id: USER_1,
+      user_b_id: USER_2,
+    });
+
+    tables.profiles = tables.profiles.map((profile) =>
+      profile.user_id === USER_2
+        ? {
+            ...profile,
+            coordination_dimensions: partialCoordinationDimensions(),
+          }
+        : profile,
     );
 
-    await expect(() =>
-      computeAndUpsertScore({
-        supabase,
-        user_a_id: USER_1,
-        user_b_id: USER_2,
-      })
-    ).rejects.toThrow(`Compatibility signals not found for user '${USER_2}'.`);
+    const incomplete = await computeAndUpsertScore({
+      supabase,
+      user_a_id: USER_1,
+      user_b_id: USER_2,
+    });
+
+    expect(incomplete.score).toBeGreaterThanOrEqual(0);
+    expect(incomplete.score).toBeLessThan(complete.score);
   });
 
   it("excludes complete_invited profiles even when is_complete_mvp is true", async () => {
@@ -92,12 +104,14 @@ function createMockSupabase() {
         user_id: USER_1,
         state: "complete_mvp",
         is_complete_mvp: true,
+        coordination_dimensions: fullCoordinationDimensions(0.02),
       },
       {
         id: "pro-2",
         user_id: USER_2,
         state: "complete_mvp",
         is_complete_mvp: true,
+        coordination_dimensions: fullCoordinationDimensions(-0.02),
       },
     ],
     entitlements: [
@@ -133,26 +147,6 @@ function createMockSupabase() {
       },
     ],
     safety_holds: [],
-    [COMPATIBILITY_SIGNAL_TABLE]: [
-      {
-        user_id: USER_1,
-        interest_vector: [0.7, 0.4, 0.3, 0.5, 0, 0, 0.2, 0.6, 0.4],
-        trait_vector: [0.8, 1, 0, 0, 1, 0, 1, 0, 0.6],
-        intent_vector: [0.4, 0.7, 0.2, 0.1, 0.9, 1, 0, 0],
-        availability_vector: [1, 0, 1, 0, 1, 0, 0],
-        metadata: {},
-        content_hash: "hash-user-1",
-      },
-      {
-        user_id: USER_2,
-        interest_vector: [0.5, 0.6, 0.1, 0.4, 0, 0, 0.2, 0.8, 0.3],
-        trait_vector: [0.6, 1, 0, 0, 0, 1, 0, 1, 0.6],
-        intent_vector: [0.5, 0.6, 0.2, 0.2, 0.7, 1, 0, 0],
-        availability_vector: [1, 0, 0, 1, 0, 0, 1],
-        metadata: {},
-        content_hash: "hash-user-2",
-      },
-    ],
     [COMPATIBILITY_SCORE_TABLE]: [],
   };
 
@@ -234,5 +228,24 @@ function createMockSupabase() {
   return {
     supabase,
     tables,
+  };
+}
+
+function fullCoordinationDimensions(offset: number): Record<string, unknown> {
+  return {
+    social_energy: { value: 0.62 + offset, confidence: 0.9 },
+    social_pace: { value: 0.58 + offset, confidence: 0.88 },
+    conversation_depth: { value: 0.7 + offset, confidence: 0.91 },
+    adventure_orientation: { value: 0.66 + offset, confidence: 0.86 },
+    group_dynamic: { value: 0.44 + offset, confidence: 0.8 },
+    values_proximity: { value: 0.76 + offset, confidence: 0.92 },
+  };
+}
+
+function partialCoordinationDimensions(): Record<string, unknown> {
+  return {
+    social_energy: { value: 0.6, confidence: 0.9 },
+    social_pace: { value: 0.57, confidence: 0.87 },
+    conversation_depth: { value: 0.69, confidence: 0.91 },
   };
 }
