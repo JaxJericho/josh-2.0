@@ -46,6 +46,27 @@ describe("compatibility score persistence", () => {
       })
     ).rejects.toThrow(`Compatibility signals not found for user '${USER_2}'.`);
   });
+
+  it("excludes complete_invited profiles even when is_complete_mvp is true", async () => {
+    const { supabase, tables } = createMockSupabase();
+    tables.profiles = tables.profiles.map((profile) =>
+      profile.user_id === USER_2
+        ? {
+            ...profile,
+            state: "complete_invited",
+            is_complete_mvp: true,
+          }
+        : profile,
+    );
+
+    await expect(() =>
+      computeAndUpsertScore({
+        supabase,
+        user_a_id: USER_1,
+        user_b_id: USER_2,
+      }),
+    ).rejects.toThrow(`Profile not found for user '${USER_2}'.`);
+  });
 });
 
 const USER_1 = "00000000-0000-0000-0000-000000000001";
@@ -139,16 +160,24 @@ function createMockSupabase() {
     from(table: string) {
       return {
         select(..._args: unknown[]) {
-          const filters: Array<[string, unknown]> = [];
+          const filters: Array<{ column: string; value: unknown; op: "eq" | "neq" }> = [];
           const query = {
             eq(column: string, value: unknown) {
-              filters.push([column, value]);
+              filters.push({ column, value, op: "eq" });
+              return query;
+            },
+            neq(column: string, value: unknown) {
+              filters.push({ column, value, op: "neq" });
               return query;
             },
             async maybeSingle() {
               const rows = tables[table] ?? [];
               const matches = rows.filter((row) =>
-                filters.every(([column, value]) => row[column] === value)
+                filters.every((filter) =>
+                  filter.op === "eq"
+                    ? row[filter.column] === filter.value
+                    : row[filter.column] !== filter.value,
+                ),
               );
 
               if (matches.length > 1) {
