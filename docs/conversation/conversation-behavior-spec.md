@@ -386,9 +386,9 @@ social\_energy, social\_pace, conversation\_depth, adventure\_orientation, group
 
 scheduling\_availability, notice\_preference, coordination\_style
 
-### Canonical Motives (6)
+### Canonical Motives (9)
 
-connection, comfort, growth, play, restorative, adventure
+restorative, connection, play, exploration, achievement, stimulation, belonging, focus, comfort
 
 ---
 
