@@ -1,27 +1,43 @@
+import { createHash } from "node:crypto";
+import type { CoordinationDimensionKey } from "../../../db/src/types/index.ts";
 import {
   COMPATIBILITY_COMPONENT_WEIGHTS,
-  COMPATIBILITY_PENALTY_CONFIG,
   COMPATIBILITY_SCORE_ROUND_DIGITS,
   COMPATIBILITY_SCORE_SCALE_MAX,
   COMPATIBILITY_SCORE_VERSION,
   COMPATIBILITY_WEIGHT_SUM,
 } from "./scoring-version.ts";
 
+const COORDINATION_DIMENSION_KEYS: readonly CoordinationDimensionKey[] = [
+  "social_energy",
+  "social_pace",
+  "conversation_depth",
+  "adventure_orientation",
+  "group_dynamic",
+  "values_proximity",
+];
+
+type ParsedDimension = {
+  value: number;
+  confidence: number;
+};
+
+type ParsedDimensions = Partial<Record<CoordinationDimensionKey, ParsedDimension>>;
+
 export type CompatibilitySignalSnapshot = {
-  interest_vector: number[];
-  trait_vector: number[];
-  intent_vector: number[];
-  availability_vector: number[];
-  content_hash: string;
-  metadata: Record<string, unknown>;
+  coordination_dimensions?: unknown;
+  content_hash?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type CompatibilityScoreBreakdown = {
-  interests: number;
-  traits: number;
-  intent: number;
-  availability: number;
-  penalties: number;
+  social_energy: number;
+  social_pace: number;
+  conversation_depth: number;
+  adventure_orientation: number;
+  group_dynamic: number;
+  values_proximity: number;
+  coverage: number;
   total: number;
 };
 
@@ -39,62 +55,60 @@ export function scorePair(
 ): CompatibilityScoreResult {
   assertSignalSnapshot(a, "a");
   assertSignalSnapshot(b, "b");
-
   assertWeightSum();
 
-  const interestsSimilarity = cosineSimilarity(a.interest_vector, b.interest_vector, "interest_vector");
-  const traitsSimilarity = cosineSimilarity(a.trait_vector, b.trait_vector, "trait_vector");
-  const intentSimilarity = cosineSimilarity(a.intent_vector, b.intent_vector, "intent_vector");
-  const availabilitySimilarity = cosineSimilarity(
-    a.availability_vector,
-    b.availability_vector,
-    "availability_vector",
-  );
+  const leftDimensions = parseDimensions(a.coordination_dimensions);
+  const rightDimensions = parseDimensions(b.coordination_dimensions);
+  const breakdown: CompatibilityScoreBreakdown = {
+    social_energy: 0,
+    social_pace: 0,
+    conversation_depth: 0,
+    adventure_orientation: 0,
+    group_dynamic: 0,
+    values_proximity: 0,
+    coverage: 0,
+    total: 0,
+  };
 
-  const interestsScore = round(
-    interestsSimilarity *
-      COMPATIBILITY_COMPONENT_WEIGHTS.interests *
+  let availableWeight = 0;
+  for (const key of COORDINATION_DIMENSION_KEYS) {
+    const left = leftDimensions[key];
+    const right = rightDimensions[key];
+    if (!left || !right) {
+      continue;
+    }
+
+    const similarity = 1 - clamp(Math.abs(left.value - right.value), 0, 1);
+    const confidence = Math.min(left.confidence, right.confidence);
+    const weight = COMPATIBILITY_COMPONENT_WEIGHTS[key];
+    const contribution = round(similarity * confidence * weight * COMPATIBILITY_SCORE_SCALE_MAX);
+
+    availableWeight += weight;
+    breakdown[key] = contribution;
+  }
+
+  const coverage = round(clamp(availableWeight / COMPATIBILITY_WEIGHT_SUM, 0, 1));
+  const totalScore = round(
+    clamp(
+      breakdown.social_energy +
+        breakdown.social_pace +
+        breakdown.conversation_depth +
+        breakdown.adventure_orientation +
+        breakdown.group_dynamic +
+        breakdown.values_proximity,
+      0,
       COMPATIBILITY_SCORE_SCALE_MAX,
-  );
-  const traitsScore = round(
-    traitsSimilarity * COMPATIBILITY_COMPONENT_WEIGHTS.traits * COMPATIBILITY_SCORE_SCALE_MAX,
-  );
-  const intentScore = round(
-    intentSimilarity * COMPATIBILITY_COMPONENT_WEIGHTS.intent * COMPATIBILITY_SCORE_SCALE_MAX,
-  );
-  const availabilityScore = round(
-    availabilitySimilarity *
-      COMPATIBILITY_COMPONENT_WEIGHTS.availability *
-      COMPATIBILITY_SCORE_SCALE_MAX,
-  );
-
-  const positiveSubtotal = round(
-    interestsScore + traitsScore + intentScore + availabilityScore,
-  );
-
-  const penaltiesScore = round(
-    Math.min(
-      positiveSubtotal,
-      boundaryPenaltyPoints(a.availability_vector, b.availability_vector),
     ),
   );
 
-  const totalScore = round(
-    clamp(positiveSubtotal - penaltiesScore, 0, COMPATIBILITY_SCORE_SCALE_MAX),
-  );
+  breakdown.coverage = coverage;
+  breakdown.total = totalScore;
 
   return {
     score: totalScore,
-    breakdown: {
-      interests: interestsScore,
-      traits: traitsScore,
-      intent: intentScore,
-      availability: availabilityScore,
-      penalties: penaltiesScore,
-      total: totalScore,
-    },
-    a_hash: a.content_hash,
-    b_hash: b.content_hash,
+    breakdown,
+    a_hash: resolveContentHash(a.content_hash, leftDimensions),
+    b_hash: resolveContentHash(b.content_hash, rightDimensions),
     version: COMPATIBILITY_SCORE_VERSION,
   };
 }
@@ -107,31 +121,56 @@ function assertSignalSnapshot(
     throw new Error(`${label} signal snapshot must be an object.`);
   }
 
-  assertVector(signal.interest_vector, `${label}.interest_vector`);
-  assertVector(signal.trait_vector, `${label}.trait_vector`);
-  assertVector(signal.intent_vector, `${label}.intent_vector`);
-  assertVector(signal.availability_vector, `${label}.availability_vector`);
-
-  if (typeof signal.content_hash !== "string" || signal.content_hash.length === 0) {
-    throw new Error(`${label}.content_hash must be a non-empty string.`);
+  if (signal.metadata != null && (
+    typeof signal.metadata !== "object" ||
+    Array.isArray(signal.metadata)
+  )) {
+    throw new Error(`${label}.metadata must be an object when provided.`);
   }
 
-  if (!signal.metadata || typeof signal.metadata !== "object" || Array.isArray(signal.metadata)) {
-    throw new Error(`${label}.metadata must be an object.`);
+  if (
+    signal.content_hash != null &&
+    (typeof signal.content_hash !== "string" || signal.content_hash.length === 0)
+  ) {
+    throw new Error(`${label}.content_hash must be a non-empty string when provided.`);
   }
 }
 
-function assertVector(vector: number[], label: string): void {
-  if (!Array.isArray(vector) || vector.length === 0) {
-    throw new Error(`${label} must be a non-empty numeric vector.`);
+function parseDimensions(raw: unknown): ParsedDimensions {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
   }
 
-  for (let index = 0; index < vector.length; index += 1) {
-    const value = vector[index];
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      throw new Error(`${label}[${index}] must be a finite number.`);
+  const record = raw as Record<string, unknown>;
+  const parsed: ParsedDimensions = {};
+
+  for (const key of COORDINATION_DIMENSION_KEYS) {
+    const nodeRaw = record[key];
+    if (!nodeRaw || typeof nodeRaw !== "object" || Array.isArray(nodeRaw)) {
+      continue;
     }
+
+    const node = nodeRaw as Record<string, unknown>;
+    const value = toUnitInterval(node.value);
+    const confidence = toUnitInterval(node.confidence);
+    if (value == null || confidence == null) {
+      continue;
+    }
+
+    parsed[key] = {
+      value,
+      confidence,
+    };
   }
+
+  return parsed;
+}
+
+function toUnitInterval(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  return round(clamp(value, 0, 1));
 }
 
 function assertWeightSum(): void {
@@ -141,64 +180,44 @@ function assertWeightSum(): void {
   }
 }
 
-function cosineSimilarity(
-  left: number[],
-  right: number[],
-  label: string,
-): number {
-  if (left.length !== right.length) {
-    throw new Error(`Vector length mismatch for ${label}.`);
+function resolveContentHash(
+  contentHash: string | undefined,
+  dimensions: ParsedDimensions,
+): string {
+  if (typeof contentHash === "string" && contentHash.length > 0) {
+    return contentHash;
   }
 
-  let dot = 0;
-  let leftSquared = 0;
-  let rightSquared = 0;
-
-  for (let index = 0; index < left.length; index += 1) {
-    const leftValue = left[index];
-    const rightValue = right[index];
-
-    dot += leftValue * rightValue;
-    leftSquared += leftValue * leftValue;
-    rightSquared += rightValue * rightValue;
-  }
-
-  if (leftSquared === 0 && rightSquared === 0) {
-    return 1;
-  }
-
-  if (leftSquared === 0 || rightSquared === 0) {
-    return 0;
-  }
-
-  const similarity = dot / (Math.sqrt(leftSquared) * Math.sqrt(rightSquared));
-  if (!Number.isFinite(similarity)) {
-    return 0;
-  }
-
-  return round(clamp(similarity, 0, 1));
+  return createHash("sha256").update(stableStringify(dimensions)).digest("hex");
 }
 
-function boundaryPenaltyPoints(
-  availabilityLeft: number[],
-  availabilityRight: number[],
-): number {
-  let mismatchTotal = 0;
-  const indices = COMPATIBILITY_PENALTY_CONFIG.boundary_flag_indices;
-
-  for (let index = 0; index < indices.length; index += 1) {
-    const vectorIndex = indices[index];
-    if (vectorIndex >= availabilityLeft.length || vectorIndex >= availabilityRight.length) {
-      throw new Error("Availability vector is missing required boundary flags.");
-    }
-
-    const left = clamp(availabilityLeft[vectorIndex], 0, 1);
-    const right = clamp(availabilityRight[vectorIndex], 0, 1);
-    mismatchTotal += Math.abs(left - right);
+function stableStringify(value: unknown): string {
+  if (value === null) {
+    return "null";
   }
 
-  const mismatchRatio = mismatchTotal / indices.length;
-  return round(mismatchRatio * COMPATIBILITY_PENALTY_CONFIG.max_penalty_points);
+  const valueType = typeof value;
+  if (valueType === "number" || valueType === "boolean") {
+    return JSON.stringify(value);
+  }
+
+  if (valueType === "string") {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(",")}]`;
+  }
+
+  if (valueType === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`)
+      .join(",");
+    return `{${entries}}`;
+  }
+
+  return JSON.stringify(null);
 }
 
 function clamp(value: number, min: number, max: number): number {

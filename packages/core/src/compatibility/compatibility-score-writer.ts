@@ -1,4 +1,3 @@
-import { COMPATIBILITY_SIGNAL_TABLE } from "./compatibility-signal-writer.ts";
 import { scorePair, type CompatibilityScoreResult, type CompatibilitySignalSnapshot } from "./scorer.ts";
 import {
   createSupabaseEntitlementsRepository,
@@ -22,16 +21,7 @@ type ProfileRow = {
   user_id: string;
   state: string;
   is_complete_mvp: boolean;
-};
-
-type SignalRow = {
-  user_id: string;
-  interest_vector: number[];
-  trait_vector: number[];
-  intent_vector: number[];
-  availability_vector: number[];
-  metadata: Record<string, unknown>;
-  content_hash: string;
+  coordination_dimensions: unknown;
 };
 
 export type ComputeAndUpsertScoreResult = CompatibilityScoreResult & {
@@ -39,41 +29,6 @@ export type ComputeAndUpsertScoreResult = CompatibilityScoreResult & {
   user_b_id: string;
   upserted: true;
 };
-
-export async function getSignalsForUser(params: {
-  supabase: SupabaseClientLike;
-  user_id: string;
-}): Promise<SignalRow> {
-  const { data, error } = await params.supabase
-    .from(COMPATIBILITY_SIGNAL_TABLE)
-    .select(
-      "user_id,interest_vector,trait_vector,intent_vector,availability_vector,metadata,content_hash",
-    )
-    .eq("user_id", params.user_id)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(
-      `Failed to load compatibility signals for user '${params.user_id}'.`,
-    );
-  }
-
-  if (!data?.user_id) {
-    throw new Error(
-      `Compatibility signals not found for user '${params.user_id}'.`,
-    );
-  }
-
-  return {
-    user_id: data.user_id,
-    interest_vector: data.interest_vector,
-    trait_vector: data.trait_vector,
-    intent_vector: data.intent_vector,
-    availability_vector: data.availability_vector,
-    metadata: (data.metadata ?? {}) as Record<string, unknown>,
-    content_hash: data.content_hash,
-  };
-}
 
 export async function computeAndUpsertScore(params: {
   supabase: SupabaseClientLike;
@@ -86,8 +41,8 @@ export async function computeAndUpsertScore(params: {
   const rightContext = await loadEligibleUserContext(params.supabase, pair.user_b_id);
 
   const score = scorePair(
-    toSignalSnapshot(leftContext.signals),
-    toSignalSnapshot(rightContext.signals),
+    toSignalSnapshot(leftContext.profile),
+    toSignalSnapshot(rightContext.profile),
   );
 
   const row = {
@@ -124,19 +79,15 @@ export async function computeAndUpsertScore(params: {
 async function loadEligibleUserContext(
   supabase: SupabaseClientLike,
   userId: string,
-): Promise<{ signals: SignalRow }> {
-  await assertUserIsEligible(supabase, userId);
-  const signals = await getSignalsForUser({
-    supabase,
-    user_id: userId,
-  });
-  return { signals };
+): Promise<{ profile: ProfileRow }> {
+  const profile = await assertUserIsEligible(supabase, userId);
+  return { profile };
 }
 
 async function assertUserIsEligible(
   supabase: SupabaseClientLike,
   userId: string,
-): Promise<void> {
+): Promise<ProfileRow> {
   const user = await fetchUser(supabase, userId);
   if (user.state !== "active") {
     throw new Error(
@@ -174,6 +125,8 @@ async function assertUserIsEligible(
       `User '${userId}' is not eligible: can_participate is false.`,
     );
   }
+
+  return profile;
 }
 
 async function fetchUser(
@@ -207,7 +160,7 @@ async function fetchProfile(
 ): Promise<ProfileRow> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id,user_id,state,is_complete_mvp")
+    .select("id,user_id,state,is_complete_mvp,coordination_dimensions")
     .eq("user_id", userId)
     // complete_invited hard filter: never relax
     .neq("state", "complete_invited")
@@ -226,17 +179,13 @@ async function fetchProfile(
     user_id: data.user_id,
     state: data.state,
     is_complete_mvp: data.is_complete_mvp,
+    coordination_dimensions: data.coordination_dimensions ?? null,
   };
 }
 
-function toSignalSnapshot(row: SignalRow): CompatibilitySignalSnapshot {
+function toSignalSnapshot(row: ProfileRow): CompatibilitySignalSnapshot {
   return {
-    interest_vector: row.interest_vector,
-    trait_vector: row.trait_vector,
-    intent_vector: row.intent_vector,
-    availability_vector: row.availability_vector,
-    content_hash: row.content_hash,
-    metadata: row.metadata,
+    coordination_dimensions: row.coordination_dimensions,
   };
 }
 
