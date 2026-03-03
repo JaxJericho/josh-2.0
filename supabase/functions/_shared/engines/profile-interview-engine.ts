@@ -119,9 +119,10 @@ export async function runProfileInterviewEngine(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
   const nowIso = new Date().toISOString();
-  const fallbackMode: ConversationMode = input.decision.state.mode === "interviewing_abbreviated"
+  const fallbackMode: ConversationMode = input.decision.state.mode === "interviewing_abbreviated" ||
+      input.decision.state.mode === "post_activity_checkin"
     ? "interviewing"
-    : input.decision.state.mode;
+    : normalizeConversationMode(input.decision.state.mode);
 
   const session = await fetchOrCreateConversationSession(
     input.supabase,
