@@ -28,7 +28,7 @@ try {
   const scoringRuntime = await loadScoringRuntime();
   const nowIso = new Date().toISOString();
 
-  const [users, profiles, profileEntitlements, entitlements, assignments, waitlistEntries, activeHolds, userBlocks] =
+  const [users, profiles, profileEntitlements, entitlements, assignments, activeHolds, userBlocks] =
     await Promise.all([
       fetchRowsOrThrow(supabase, "users", "id,state,deleted_at"),
       fetchRowsOrThrow(
@@ -54,7 +54,6 @@ try {
         "profile_region_assignments",
         "profile_id,region_id,regions!inner(id,slug,is_active,is_launch_region)",
       ),
-      fetchRowsOrThrow(supabase, "waitlist_entries", "profile_id,region_id,status,last_notified_at"),
       fetchRowsOrThrow(supabase, "safety_holds", "user_id,status,expires_at", (query) =>
         query.eq("status", "active"),
       ),
@@ -65,7 +64,6 @@ try {
   const profileEntitlementsByProfileId = buildByIdMap(profileEntitlements, "profile_id");
   const introEntitlementsByUserId = buildByIdMap(entitlements, "user_id");
   const assignmentByProfileId = buildByIdMap(assignments, "profile_id");
-  const waitlistEntryByProfileId = buildByIdMap(waitlistEntries, "profile_id");
   const activeHoldByUserId = buildActiveHoldMap(activeHolds);
   const blockedPairSet = buildBlockedPairSet(userBlocks);
 
@@ -105,14 +103,10 @@ try {
 
     const storedEntitlements = profileEntitlementsByProfileId.get(profile.id) ?? null;
     const assignment = assignmentByProfileId.get(profile.id) ?? null;
-    const regionRaw = assignment?.regions;
-    const region = Array.isArray(regionRaw) ? regionRaw[0] ?? null : regionRaw ?? null;
 
     const entitlementEvaluation = scoringRuntime.resolveEntitlementsEvaluation({
       profile_id: profile.id,
       user_id: user.id,
-      region,
-      waitlist_entry: waitlistEntryByProfileId.get(profile.id) ?? null,
       has_active_safety_hold: activeHoldByUserId.has(user.id),
       stored_entitlements: storedEntitlements,
     });
@@ -474,7 +468,6 @@ async function loadScoringRuntime() {
       "packages/core/src/compatibility/scorer.ts",
       "packages/core/src/compatibility/scoring-version.ts",
       "packages/core/src/entitlements/evaluate-entitlements.ts",
-      "packages/core/src/regions/waitlist-routing.ts",
     ],
     {
       encoding: "utf8",

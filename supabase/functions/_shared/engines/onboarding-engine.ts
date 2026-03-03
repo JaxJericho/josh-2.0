@@ -19,7 +19,7 @@ import type {
   EngineDispatchResult,
 } from "../router/conversation-router.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import { SAFETY_HOLD_MESSAGE } from "../waitlist/waitlist-operations.ts";
+import { safetyHoldNotification } from "../../../../packages/messaging/src/templates/safety.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { runProfileInterviewEngine } from "./profile-interview-engine.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
@@ -70,6 +70,7 @@ const INBOUND_DIRECT_SEND_BLOCKED_MESSAGE_KEYS = new Set<OnboardingOutboundMessa
   "onboarding_message_3",
   "onboarding_message_4",
 ]);
+const SAFETY_HOLD_MESSAGE = safetyHoldNotification();
 
 const DEFAULT_ONBOARDING_ENGINE_DEPENDENCIES: OnboardingEngineDependencies = {
   scheduleOnboardingStep: scheduleOnboardingStep,
@@ -309,95 +310,6 @@ export async function runOnboardingEngine(
     engine: "onboarding_engine",
     reply_message: handoff.reply_message,
   };
-}
-
-export async function startOnboardingForActivatedUser(params: {
-  supabase: EngineDispatchInput["supabase"];
-  userId: string;
-  correlationId: string | null;
-  activationIdempotencyKey: string;
-}): Promise<"inserted" | "duplicate"> {
-  const profileId = await fetchProfileId(params.supabase, params.userId);
-  if (!profileId) {
-    return "duplicate";
-  }
-  const evaluation = await evaluateEntitlements({
-    profile_id: profileId,
-    repository: createSupabaseEntitlementsRepository(params.supabase),
-  });
-
-  if (evaluation.blocked_by_safety_hold) {
-    return "duplicate";
-  }
-
-  const session = await fetchOrCreateConversationSession(
-    params.supabase,
-    params.userId,
-    "interviewing",
-    ONBOARDING_AWAITING_OPENING_RESPONSE,
-  );
-  const user = await fetchUserContact(params.supabase, params.userId);
-  const twilio = readOutboundTwilioConfig();
-
-  const hasOpeningEvent = await hasConversationEventByIdempotencyKey(
-    params.supabase,
-    onboardingOpeningEventIdempotencyKey(params.userId),
-  );
-  if (
-    hasOpeningEvent ||
-    session.state_token.startsWith("interview:") ||
-    session.state_token === ONBOARDING_AWAITING_BURST ||
-    session.state_token === ONBOARDING_AWAITING_EXPLANATION_RESPONSE ||
-    session.state_token === ONBOARDING_AWAITING_INTERVIEW_START
-  ) {
-    return "duplicate";
-  }
-
-  await startOnboardingForUser({
-    firstName: user.first_name,
-    currentStateToken: session.state_token,
-    hasOpeningBeenSent: false,
-    openingIdempotencyKey: onboardingOpeningSendIdempotencyKey(params.userId),
-    sendMessage: async (sendInput) => {
-      await sendAndRecordOutboundMessage({
-        supabase: params.supabase,
-        userId: params.userId,
-        toE164: user.phone_e164,
-        fallbackFromE164: twilio.fromE164,
-        correlationId: params.correlationId,
-        idempotencyKey: sendInput.idempotencyKey,
-        messageKey: sendInput.messageKey,
-        body: sendInput.body,
-        twilio,
-      });
-    },
-    persistState: async (persistInput) => {
-      await persistConversationSessionState({
-        supabase: params.supabase,
-        sessionId: session.id,
-        mode: "interviewing",
-        stateToken: persistInput.nextStateToken,
-        currentStepId: null,
-        lastInboundMessageSid: session.last_inbound_message_sid,
-      });
-    },
-  });
-
-  await insertConversationEvent({
-    supabase: params.supabase,
-    conversationSessionId: session.id,
-    userId: params.userId,
-    eventType: "onboarding_opening_sent",
-    stepToken: ONBOARDING_AWAITING_OPENING_RESPONSE,
-    twilioMessageSid: null,
-    idempotencyKey: onboardingOpeningEventIdempotencyKey(params.userId),
-    payload: {
-      source: "waitlist_activation",
-      activation_idempotency_key: params.activationIdempotencyKey,
-    },
-  });
-
-  return "inserted";
 }
 
 export function resolveOnboardingStateForInbound(params: {

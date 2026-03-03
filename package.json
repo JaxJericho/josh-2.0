@@ -45,7 +45,6 @@
     "verify:linkup:e2e": "node scripts/verify/run-linkup-e2e.mjs",
     "verify:coordination:seed": "node scripts/verify/seed-coordination-e2e.mjs",
     "verify:coordination:e2e": "node scripts/verify/run-coordination-e2e.mjs",
-    "staging:onboarding:e2e": "node scripts/staging-onboarding-e2e.mjs",
     "seed:activity-catalog": "tsx scripts/seed-activity-catalog.ts",
     "build": "next build",
     "start": "next start"

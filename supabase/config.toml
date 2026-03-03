@@ -288,9 +288,6 @@ verify_jwt = false
 [functions.qstash-echo]
 verify_jwt = false
 
-[functions.admin-waitlist-batch-notify]
-verify_jwt = false
-
 [functions.admin-set-entitlements]
 verify_jwt = false
 

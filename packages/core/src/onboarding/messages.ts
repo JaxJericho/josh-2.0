@@ -1,6 +1,6 @@
 export const ONBOARDING_MESSAGES_VERSION: string = "v1";
 
-export const ONBOARDING_OPENING: string = `Call me JOSH. Nice to meet you, {firstName}. You're off the waitlist — time to find your people.
+export const ONBOARDING_OPENING: string = `Call me JOSH. Nice to meet you, {firstName}. Time to find your people.
 
 Quick heads up: a profile photo is required before I can lock in your first LinkUp. You can add it anytime through your dashboard — now or later both work. Just know it needs to be there before any plan gets confirmed. Sound good?`;
 

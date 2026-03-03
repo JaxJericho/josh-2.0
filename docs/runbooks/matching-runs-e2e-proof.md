@@ -22,7 +22,7 @@ The scripts fail fast with non-zero exit if required env vars are missing.
 ## What The Job Enforces
 
 - Account/profile eligibility: `users.state='active'`, not deleted, profile complete.
-- Eligibility + safety gates: `profile_entitlements` + region assignment + waitlist + active holds (via canonical entitlement evaluation logic).
+- Eligibility + safety gates: `profile_entitlements` + region assignment + active holds (via canonical entitlement evaluation logic).
 - Source-user intro entitlement gate: `entitlements.can_receive_intro=true` and `intro_credits_remaining > 0`.
 - Block safety gate: excludes blocked pairs in both directions.
 - Canonical scoring implementation: uses `packages/core/src/compatibility/scorer.ts` (v1 weights/breakdown).
