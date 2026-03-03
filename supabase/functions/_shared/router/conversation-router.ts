@@ -30,6 +30,10 @@ import {
 } from "../../../../packages/messaging/src/handlers/handle-named-plan-request.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
+  handlePostActivityCheckin,
+} from "../../../../packages/messaging/src/handlers/handle-post-activity-checkin.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
   createContactInvitationWithSupabase,
 } from "../invitations/create-contact-invitation.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
@@ -69,6 +73,7 @@ export type ConversationMode =
   | "pending_contact_invite_confirmation"
   | "linkup_forming"
   | "awaiting_invite_reply"
+  | "post_activity_checkin"
   | "post_event"
   | "safety_hold";
 
@@ -299,6 +304,7 @@ const CONVERSATION_MODES: readonly ConversationMode[] = [
   "pending_contact_invite_confirmation",
   "linkup_forming",
   "awaiting_invite_reply",
+  "post_activity_checkin",
   "post_event",
   "safety_hold",
 ];
@@ -314,6 +320,7 @@ const STATE_TOKEN_PATTERN_BY_MODE: Record<ConversationMode, RegExp> = {
   pending_contact_invite_confirmation: /^[a-z0-9:_-]+$/i,
   linkup_forming: /^[a-z0-9:_-]+$/i,
   awaiting_invite_reply: /^[a-z0-9:_-]+$/i,
+  post_activity_checkin: /^checkin:awaiting_(attendance|do_again|bridge):[a-z0-9-]*$/i,
   post_event: POST_EVENT_TOKEN_PATTERN,
   safety_hold: /^[a-z0-9:_-]+$/i,
 };
@@ -327,6 +334,7 @@ const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
   pending_contact_invite_confirmation: "default_engine",
   linkup_forming: "default_engine",
   awaiting_invite_reply: "default_engine",
+  post_activity_checkin: "post_activity_checkin_handler",
   post_event: "post_event_engine",
   safety_hold: "default_engine",
 };
@@ -340,6 +348,7 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
   pending_contact_invite_confirmation: "invite_confirm:awaiting_reply",
   linkup_forming: "linkup:awaiting_details",
   awaiting_invite_reply: "invite:awaiting_reply",
+  post_activity_checkin: "checkin:awaiting_attendance",
   post_event: "post_event:attendance",
   safety_hold: "safety:hold_enforced",
 };
@@ -353,6 +362,7 @@ const LEGAL_TRANSITIONS_BY_MODE: Record<ConversationMode, ReadonlySet<string>> =
   pending_contact_invite_confirmation: new Set(["invite_confirm:create:v1"]),
   linkup_forming: new Set(["linkup:awaiting_details"]),
   awaiting_invite_reply: new Set(["invite:awaiting_reply"]),
+  post_activity_checkin: new Set(["checkin:awaiting_attendance"]),
   post_event: new Set(POST_EVENT_STATE_TOKENS),
   safety_hold: new Set(["safety:hold_enforced"]),
 };
@@ -593,11 +603,14 @@ export function resolveNextTransition(
     ? state.state_token
     : state.mode === "post_event"
     ? state.state_token
+    : state.mode === "post_activity_checkin"
+    ? state.state_token
     : state.mode === "pending_contact_invite_confirmation"
     ? state.state_token
     : NEXT_TRANSITION_BY_MODE[state.mode];
 
-  if (state.mode === "pending_contact_invite_confirmation") {
+  if (state.mode === "pending_contact_invite_confirmation" ||
+    state.mode === "post_activity_checkin") {
     return nextTransition;
   }
 
@@ -682,6 +695,7 @@ function shouldBypassIntentClassificationForState(state: ConversationState): boo
     state.mode === "pending_contact_invite_confirmation" ||
     state.mode === "linkup_forming" ||
     state.mode === "awaiting_invite_reply" ||
+    state.mode === "post_activity_checkin" ||
     state.mode === "post_event" ||
     state.mode === "safety_hold"
   );
@@ -849,7 +863,7 @@ export async function dispatchConversationRoute(
     case "contact_invite_response_handler":
       return runContactInviteResponseHandler(input);
     case "post_activity_checkin_handler":
-      return dispatchViaDefaultEnginePlaceholder(resolvedRoute, input);
+      return runPostActivityCheckinHandler(input);
     case "open_intent_handler":
       return runOpenIntentHandler(input);
     case "plan_social_choice_handler":
@@ -2251,6 +2265,85 @@ async function runInterviewAnswerAbbreviatedHandler(
   };
 }
 
+async function runPostActivityCheckinHandler(
+  input: EngineDispatchInput,
+): Promise<EngineDispatchResult> {
+  let replyMessage: string | null = null;
+
+  await handlePostActivityCheckin(
+    input.decision.user_id,
+    input.payload.body_raw,
+    {
+      mode: input.decision.state.mode,
+      state_token: input.decision.state.state_token,
+      has_user_record: true,
+      has_pending_contact_invitation: false,
+      is_unknown_number_with_pending_invitation: false,
+    },
+    input.payload.inbound_message_id,
+    {
+      fetchPlanBriefActivityKey: async ({ planBriefId }) => {
+        const { data, error } = await input.supabase
+          .from("plan_briefs")
+          .select("activity_key")
+          .eq("id", planBriefId)
+          .maybeSingle();
+
+        if (error) {
+          throw new ConversationRouterError(
+            "PLAN_BRIEF_LOOKUP_FAILED",
+            "Unable to load plan brief for post-activity checkin.",
+          );
+        }
+
+        return typeof data?.activity_key === "string" ? data.activity_key : null;
+      },
+      insertLearningSignal: async (signal) => {
+        const { error } = await input.supabase.from("learning_signals").insert(signal);
+        return {
+          error: error
+            ? {
+              code: typeof error.code === "string" ? error.code : undefined,
+              message: error.message,
+            }
+            : null,
+        };
+      },
+      updateConversationSession: async ({ userId, mode, state_token, updated_at }) => {
+        await persistConversationSessionState({
+          supabase: input.supabase,
+          userId,
+          mode,
+          stateToken: state_token,
+          updatedAt: updated_at,
+        });
+      },
+      sendSms: async ({ body }) => {
+        replyMessage = body;
+      },
+      log: ({ level, event, payload }) => {
+        logEvent({
+          level,
+          event,
+          user_id: input.decision.user_id,
+          correlation_id: input.payload.inbound_message_id,
+          payload: {
+            route: "post_activity_checkin_handler",
+            session_mode: input.decision.state.mode,
+            session_state_token: input.decision.state.state_token,
+            ...payload,
+          },
+        });
+      },
+    },
+  );
+
+  return {
+    engine: "post_activity_checkin_handler",
+    reply_message: replyMessage,
+  };
+}
+
 async function runNamedPlanRequestHandler(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
@@ -2878,6 +2971,7 @@ async function persistConversationSessionState(input: {
   userId: string;
   mode:
     | "idle"
+    | "post_activity_checkin"
     | "awaiting_social_choice"
     | "pending_plan_confirmation"
     | "pending_contact_invite_confirmation";
