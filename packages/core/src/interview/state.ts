@@ -416,18 +416,11 @@ function applyHolisticExtractOutputToProfilePatch(params: {
   extractionOutput: HolisticExtractOutput;
 }): ProfileUpdatePatch {
   const patch = { ...params.profilePatch } as ProfileUpdatePatch & Record<string, unknown>;
-  const fingerprint = asObject(patch.fingerprint);
   const coordinationDimensions = mergeCoordinationDimensionUpdates({
     existing: asObject(patch.coordination_dimensions),
     updates: params.extractionOutput.coordinationDimensionUpdates,
   });
 
-  const mirroredFingerprint = mergeCoordinationDimensionUpdates({
-    existing: fingerprint,
-    updates: params.extractionOutput.coordinationDimensionUpdates,
-  });
-
-  patch.fingerprint = mirroredFingerprint;
   patch.coordination_dimensions = coordinationDimensions;
 
   if ("scheduling_availability" in params.extractionOutput.coordinationSignalUpdates) {

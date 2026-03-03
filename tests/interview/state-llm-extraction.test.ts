@@ -28,7 +28,7 @@ function createProfile(overrides: Partial<ProfileRowForInterview> = {}): Profile
         updated_at: "2026-02-18T12:00:00.000Z",
       },
     },
-    fingerprint: {},
+    coordination_dimensions: {},
     activity_patterns: [
       { activity_key: "coffee", confidence: 0.65, source: "interview" },
       { activity_key: "walk", confidence: 0.65, source: "interview" },

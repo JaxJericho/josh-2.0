@@ -154,11 +154,10 @@ type AbbreviatedInterviewProfileRow = {
   state_code: string | null;
   last_interview_step: string | null;
   preferences: unknown;
-  fingerprint: unknown;
+  coordination_dimensions: unknown;
   activity_patterns: unknown;
   boundaries: unknown;
   active_intent: unknown;
-  coordination_dimensions: unknown;
   scheduling_availability: unknown;
   notice_preference: string | null;
   coordination_style: string | null;
@@ -1263,7 +1262,7 @@ async function createOrReuseInvitedProfile(
       state: "empty",
       is_complete_mvp: false,
       preferences: {},
-      fingerprint: {},
+      coordination_dimensions: {},
       activity_patterns: [],
       boundaries: {},
       active_intent: null,
@@ -1794,11 +1793,10 @@ async function fetchAbbreviatedInterviewProfile(
         "state_code",
         "last_interview_step",
         "preferences",
-        "fingerprint",
+        "coordination_dimensions",
         "activity_patterns",
         "boundaries",
         "active_intent",
-        "coordination_dimensions",
         "scheduling_availability",
         "notice_preference",
         "coordination_style",
@@ -1831,11 +1829,10 @@ async function fetchAbbreviatedInterviewProfile(
     state_code: data.state_code ?? null,
     last_interview_step: data.last_interview_step ?? null,
     preferences: data.preferences ?? {},
-    fingerprint: data.fingerprint ?? {},
+    coordination_dimensions: data.coordination_dimensions ?? {},
     activity_patterns: data.activity_patterns ?? [],
     boundaries: data.boundaries ?? {},
     active_intent: data.active_intent ?? null,
-    coordination_dimensions: data.coordination_dimensions ?? {},
     scheduling_availability: data.scheduling_availability ?? null,
     notice_preference: data.notice_preference ?? null,
     coordination_style: data.coordination_style ?? null,

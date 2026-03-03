@@ -4,7 +4,7 @@ import {
   type InterviewQuestionStepId,
 } from "./steps.ts";
 
-export const FINGERPRINT_FACTOR_KEYS = [
+export const COORDINATION_DIMENSIONS_FACTOR_KEYS = [
   "connection_depth",
   "social_energy",
   "social_pace",
@@ -19,10 +19,10 @@ export const FINGERPRINT_FACTOR_KEYS = [
   "group_vs_1on1_preference",
 ] as const;
 
-export type FingerprintFactorKey = (typeof FINGERPRINT_FACTOR_KEYS)[number];
+export type CoordinationDimensionsFactorKey = (typeof COORDINATION_DIMENSIONS_FACTOR_KEYS)[number];
 
 export const REQUIRED_COVERAGE_TARGETS = [
-  ...FINGERPRINT_FACTOR_KEYS,
+  ...COORDINATION_DIMENSIONS_FACTOR_KEYS,
   "activity_patterns",
   "group_size_pref",
   "time_preferences",
@@ -102,7 +102,7 @@ export const QUESTION_TARGET_PRIORITY: readonly InterviewSignalTarget[] = [
 type SignalCoverageProfile = {
   country_code?: string | null;
   last_interview_step?: string | null;
-  fingerprint?: unknown;
+  coordination_dimensions?: unknown;
   activity_patterns?: unknown;
   boundaries?: unknown;
   preferences?: unknown;
@@ -273,12 +273,12 @@ function wasBoundariesQuestionAsked(profile: SignalCoverageProfile): boolean {
   return false;
 }
 
-function getCoveredFingerprintFactors(fingerprintRaw: unknown): Set<FingerprintFactorKey> {
-  const fingerprint = asObject(fingerprintRaw);
-  const covered = new Set<FingerprintFactorKey>();
+function getCoveredCoordinationDimensionsFactors(coordination_dimensionsRaw: unknown): Set<CoordinationDimensionsFactorKey> {
+  const coordination_dimensions = asObject(coordination_dimensionsRaw);
+  const covered = new Set<CoordinationDimensionsFactorKey>();
 
-  for (const key of FINGERPRINT_FACTOR_KEYS) {
-    const node = asObject(fingerprint[key]);
+  for (const key of COORDINATION_DIMENSIONS_FACTOR_KEYS) {
+    const node = asObject(coordination_dimensions[key]);
     const confidence = asNumber(node.confidence);
     if (confidence != null && confidence >= 0.55) {
       covered.add(key);
@@ -307,9 +307,9 @@ function getCoveredActivityCount(activityPatternsRaw: unknown): number {
 
 function getCoverageSet(profile: SignalCoverageProfile): Set<RequiredCoverageTarget> {
   const coveredTargets = new Set<RequiredCoverageTarget>();
-  const fingerprintCovered = getCoveredFingerprintFactors(profile.fingerprint);
+  const coordination_dimensionsCovered = getCoveredCoordinationDimensionsFactors(profile.coordination_dimensions);
 
-  for (const key of Array.from(fingerprintCovered)) {
+  for (const key of Array.from(coordination_dimensionsCovered)) {
     coveredTargets.add(key);
   }
 
@@ -424,9 +424,9 @@ export function getSignalCoverageStatus(profile: SignalCoverageProfile): SignalC
   const coveredSet = getCoverageSet(profile);
   const covered = REQUIRED_COVERAGE_TARGETS.filter((target) => coveredSet.has(target));
   const uncovered = REQUIRED_COVERAGE_TARGETS.filter((target) => !coveredSet.has(target));
-  const fingerprintCoveredCount = FINGERPRINT_FACTOR_KEYS.filter((key) => coveredSet.has(key))
+  const coordination_dimensionsCoveredCount = COORDINATION_DIMENSIONS_FACTOR_KEYS.filter((key) => coveredSet.has(key))
     .length;
-  const mvpComplete = fingerprintCoveredCount >= 8 &&
+  const mvpComplete = coordination_dimensionsCoveredCount >= 8 &&
     coveredSet.has("activity_patterns") &&
     coveredSet.has("group_size_pref") &&
     coveredSet.has("time_preferences") &&

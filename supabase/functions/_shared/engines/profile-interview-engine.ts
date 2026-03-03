@@ -32,7 +32,7 @@ type ProfileRow = {
   is_complete_mvp: boolean;
   last_interview_step: string | null;
   preferences: unknown;
-  fingerprint: unknown;
+  coordination_dimensions: unknown;
   activity_patterns: unknown;
   boundaries: unknown;
   active_intent: unknown;
@@ -94,7 +94,7 @@ function toProfileRowForInterview(row: ProfileRow): ProfileRowForInterview {
     is_complete_mvp: row.is_complete_mvp,
     last_interview_step: row.last_interview_step,
     preferences: row.preferences,
-    fingerprint: row.fingerprint,
+    coordination_dimensions: row.coordination_dimensions,
     activity_patterns: row.activity_patterns,
     boundaries: row.boundaries,
     active_intent: row.active_intent,
@@ -237,7 +237,7 @@ async function fetchOrCreateProfile(
   userId: string,
 ): Promise<ProfileRow> {
   const selectColumns =
-    "id,user_id,country_code,state_code,state,is_complete_mvp,last_interview_step,preferences,fingerprint,activity_patterns,boundaries,active_intent,completeness_percent,completed_at,status_reason,state_changed_at,updated_at";
+    "id,user_id,country_code,state_code,state,is_complete_mvp,last_interview_step,preferences,coordination_dimensions,activity_patterns,boundaries,active_intent,completeness_percent,completed_at,status_reason,state_changed_at,updated_at";
 
   const { data: existing, error } = await supabase
     .from("profiles")
@@ -259,7 +259,7 @@ async function fetchOrCreateProfile(
       is_complete_mvp: existing.is_complete_mvp,
       last_interview_step: existing.last_interview_step,
       preferences: existing.preferences,
-      fingerprint: existing.fingerprint,
+      coordination_dimensions: existing.coordination_dimensions,
       activity_patterns: existing.activity_patterns,
       boundaries: existing.boundaries,
       active_intent: existing.active_intent,
@@ -280,7 +280,7 @@ async function fetchOrCreateProfile(
       state: "empty",
       is_complete_mvp: false,
       preferences: {},
-      fingerprint: {},
+      coordination_dimensions: {},
       activity_patterns: [],
       boundaries: {},
       active_intent: null,
@@ -306,7 +306,7 @@ async function fetchOrCreateProfile(
     is_complete_mvp: created.is_complete_mvp,
     last_interview_step: created.last_interview_step,
     preferences: created.preferences,
-    fingerprint: created.fingerprint,
+    coordination_dimensions: created.coordination_dimensions,
     activity_patterns: created.activity_patterns,
     boundaries: created.boundaries,
     active_intent: created.active_intent,

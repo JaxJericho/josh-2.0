@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  FINGERPRINT_FACTOR_KEYS,
+  COORDINATION_DIMENSIONS_FACTOR_KEYS,
   getSignalCoverageStatus,
   selectNextQuestion,
 } from "../../packages/core/src/interview/signal-coverage";
@@ -10,7 +10,7 @@ function createProfile(overrides: Record<string, unknown> = {}): Record<string, 
     country_code: null,
     state_code: null,
     last_interview_step: null,
-    fingerprint: {},
+    coordination_dimensions: {},
     activity_patterns: [],
     boundaries: {},
     preferences: {},
@@ -19,7 +19,7 @@ function createProfile(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
-function createFingerprint(keys: string[]): Record<string, unknown> {
+function createCoordinationDimensions(keys: string[]): Record<string, unknown> {
   return keys.reduce((accumulator, key) => {
     accumulator[key] = {
       value: 0.7,
@@ -36,7 +36,7 @@ describe("signal coverage", () => {
 
     expect(status.mvpComplete).toBe(false);
     expect(status.covered).toHaveLength(0);
-    expect(status.uncovered).toEqual(expect.arrayContaining([...FINGERPRINT_FACTOR_KEYS]));
+    expect(status.uncovered).toEqual(expect.arrayContaining([...COORDINATION_DIMENSIONS_FACTOR_KEYS]));
     expect(status.uncovered).toEqual(
       expect.arrayContaining([
         "activity_patterns",
@@ -50,7 +50,7 @@ describe("signal coverage", () => {
 
   it("partial profile computes covered and uncovered deterministically", () => {
     const status = getSignalCoverageStatus(createProfile({
-      fingerprint: createFingerprint([
+      coordination_dimensions: createCoordinationDimensions([
         "connection_depth",
         "social_energy",
         "conversation_style",
@@ -83,7 +83,7 @@ describe("signal coverage", () => {
 
   it("complete profile meets mvp thresholds", () => {
     const status = getSignalCoverageStatus(createProfile({
-      fingerprint: createFingerprint([
+      coordination_dimensions: createCoordinationDimensions([
         "connection_depth",
         "social_energy",
         "social_pace",
@@ -114,7 +114,7 @@ describe("adaptive next question selection", () => {
   it("skips already-covered targets and returns a stable question id", () => {
     const selection = selectNextQuestion(
       createProfile({
-        fingerprint: createFingerprint([
+        coordination_dimensions: createCoordinationDimensions([
           "connection_depth",
           "novelty_seeking",
         ]),
@@ -136,7 +136,7 @@ describe("adaptive next question selection", () => {
   it("skips inferable targets when conversation history strongly indicates them", () => {
     const selection = selectNextQuestion(
       createProfile({
-        fingerprint: createFingerprint([
+        coordination_dimensions: createCoordinationDimensions([
           "connection_depth",
           "novelty_seeking",
           "social_energy",
