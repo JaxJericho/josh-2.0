@@ -14,8 +14,6 @@ alter table "public"."conversation_sessions" alter column mode type "public"."co
 
 alter table "public"."conversation_sessions" alter column "mode" set default 'idle'::public.conversation_mode;
 
-drop type "public"."conversation_mode__old_version_to_be_dropped";
-
 set check_function_bodies = off;
 
 CREATE OR REPLACE FUNCTION public.enqueue_interview_dropout_nudges(p_nudge_template text, p_sms_encryption_key text, p_now timestamp with time zone DEFAULT now(), p_limit integer DEFAULT 100)
@@ -669,12 +667,38 @@ end;
 $function$
 ;
 
-CREATE TRIGGER enforce_bucket_name_length_trigger BEFORE INSERT OR UPDATE OF name ON storage.buckets FOR EACH ROW EXECUTE FUNCTION storage.enforce_bucket_name_length();
+do $$
+begin
+  if to_regclass('storage.buckets') is not null
+    and to_regprocedure('storage.enforce_bucket_name_length()') is not null then
+    create trigger enforce_bucket_name_length_trigger
+      before insert or update of name on storage.buckets
+      for each row execute function storage.enforce_bucket_name_length();
+  end if;
 
-CREATE TRIGGER protect_buckets_delete BEFORE DELETE ON storage.buckets FOR EACH STATEMENT EXECUTE FUNCTION storage.protect_delete();
+  if to_regclass('storage.buckets') is not null
+    and to_regprocedure('storage.protect_delete()') is not null then
+    create trigger protect_buckets_delete
+      before delete on storage.buckets
+      for each statement execute function storage.protect_delete();
+  end if;
+end
+$$;
 
-CREATE TRIGGER protect_objects_delete BEFORE DELETE ON storage.objects FOR EACH STATEMENT EXECUTE FUNCTION storage.protect_delete();
+do $$
+begin
+  if to_regclass('storage.objects') is not null
+    and to_regprocedure('storage.protect_delete()') is not null then
+    create trigger protect_objects_delete
+      before delete on storage.objects
+      for each statement execute function storage.protect_delete();
+  end if;
 
-CREATE TRIGGER update_objects_updated_at BEFORE UPDATE ON storage.objects FOR EACH ROW EXECUTE FUNCTION storage.update_updated_at_column();
-
-
+  if to_regclass('storage.objects') is not null
+    and to_regprocedure('storage.update_updated_at_column()') is not null then
+    create trigger update_objects_updated_at
+      before update on storage.objects
+      for each row execute function storage.update_updated_at_column();
+  end if;
+end
+$$;
