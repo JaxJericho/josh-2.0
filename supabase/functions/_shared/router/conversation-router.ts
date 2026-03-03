@@ -25,8 +25,12 @@ import {
 } from "../../../../packages/messaging/src/handlers/handle-plan-social-choice.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
+  handleNamedPlanRequest,
+  type NamedPlanIntentFields,
+} from "../../../../packages/messaging/src/handlers/handle-named-plan-request.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
   createContactInvitationWithSupabase,
-  normalizePhoneToE164,
 } from "../invitations/create-contact-invitation.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
@@ -219,17 +223,11 @@ const NAMED_PLAN_INVITE_READY_REPLY =
   "Invite queued. I will send it once invite delivery is enabled.";
 const NAMED_PLAN_INVITE_REUSED_REPLY =
   "That invite is already queued. I will send it once invite delivery is enabled.";
-const NAMED_PLAN_INVITE_PARSE_REPLY =
-  "Share your contact's phone number in E.164 format (for example, +14155550123) and I can queue the invite.";
-const NAMED_PLAN_INVITE_CONFIRM_PROMPT =
-  "Reply YES to queue this invite, or NO to cancel.";
 const NAMED_PLAN_INVITE_CONFIRM_CANCELLED_REPLY =
   "Okay - I will not queue that invite.";
 const NAMED_PLAN_INVITE_CONFIRM_REPROMPT =
   "Reply YES to queue the invite, or NO to cancel.";
 const INVITE_CONFIRMATION_STATE_TOKEN_PREFIX = "invite_confirm:create:v1";
-const INVITEE_PHONE_CANDIDATE_PATTERN = /(\+?\d[\d().\s-]{7,}\d)/;
-const INVITEE_NAME_WITH_PATTERN = /\bwith\s+([a-z][a-z' -]{1,60})/i;
 const INVITE_CONFIRM_YES_EXACT_MATCHES = new Set([
   "yes",
   "y",
@@ -269,13 +267,27 @@ const CONTACT_INVITE_DECLINE_EXACT_MATCHES = new Set([
   "stop",
   "decline",
 ]);
-const DIRECT_INVITE_INTENT_PATTERNS = [
-  /\binvite\b/i,
-  /\bsend(?:\s+an?)?\s+invite\b/i,
-  /\btext\b/i,
-  /\breach\s+out\b/i,
-  /\bqueue\b/i,
-];
+const NAMED_PLAN_WITH_PATTERN = /\bwith\s+([a-z][a-z' -]{1,60})/i;
+const NAMED_PLAN_SEE_IF_PATTERN =
+  /\bsee if\s+([a-z][a-z' -]{1,60})\s+(?:is\s+)?(?:free|available|down)\b/i;
+const NAMED_PLAN_TIME_WINDOW_PATTERN =
+  /\b(today|tonight|tomorrow|this weekend|next weekend|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
+const NAMED_PLAN_ACTIVITY_PATTERN =
+  /\b(?:for|about)\s+(?:a|an|the)?\s*([a-z][a-z0-9' -]{1,100})/i;
+const NAMED_PLAN_CONTACT_STOPWORDS = new Set([
+  "for",
+  "on",
+  "this",
+  "next",
+  "is",
+  "are",
+  "today",
+  "tomorrow",
+  "tonight",
+  "free",
+  "available",
+  "down",
+]);
 const HASH_ENCODER = new TextEncoder();
 
 const CONVERSATION_MODES: readonly ConversationMode[] = [
@@ -2242,6 +2254,8 @@ async function runInterviewAnswerAbbreviatedHandler(
 async function runNamedPlanRequestHandler(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
+  let replyMessage: string | null = null;
+
   const pendingInviteConfirmation = parseInviteConfirmationState(input.decision.state);
   if (pendingInviteConfirmation) {
     const confirmationDecision = parseInviteConfirmationReply(input.payload.body_raw);
@@ -2284,54 +2298,119 @@ async function runNamedPlanRequestHandler(
     };
   }
 
-  const inviteePhoneCandidate = extractInviteePhoneCandidate(input.payload.body_raw);
-  if (!inviteePhoneCandidate) {
-    return {
-      engine: "named_plan_request_handler",
-      reply_message: NAMED_PLAN_INVITE_PARSE_REPLY,
-    };
-  }
-
-  let inviteePhoneE164: string;
-  try {
-    inviteePhoneE164 = normalizePhoneToE164(inviteePhoneCandidate);
-  } catch {
-    return {
-      engine: "named_plan_request_handler",
-      reply_message: NAMED_PLAN_INVITE_PARSE_REPLY,
-    };
-  }
-
-  const inviteeDisplayName = extractInviteeDisplayName(
+  const intentFields = extractNamedPlanIntentFields(input.payload.body_raw);
+  await handleNamedPlanRequest(
+    input.decision.user_id,
     input.payload.body_raw,
-    inviteePhoneCandidate,
-  );
-  if (isDirectInviteIntent(input.payload.body_raw, inviteePhoneCandidate)) {
-    const creationResult = await createInvitationFromPendingConfirmation({
-      input,
-      inviteePhoneE164,
-      inviteeDisplayName,
-    });
-    return {
-      engine: "named_plan_request_handler",
-      reply_message: resolveInviteCreationReply(creationResult),
-    };
-  }
+    {
+      mode: input.decision.state.mode,
+      state_token: input.decision.state.state_token,
+      has_user_record: true,
+      has_pending_contact_invitation: false,
+      is_unknown_number_with_pending_invitation: false,
+    },
+    intentFields,
+    input.payload.inbound_message_id,
+    {
+      evaluateEligibility: async ({ userId, action_type }) => {
+        const eligibility = await evaluateEligibility({
+          supabase: input.supabase,
+          userId,
+          action_type,
+        });
+        return {
+          eligible: eligibility.allowed,
+          reason: eligibility.reason_code,
+        };
+      },
+      findContactByName: async ({ userId, contactName }) => {
+        const { data, error } = await input.supabase
+          .from("contact_circle")
+          .select("id,contact_name,contact_phone_e164")
+          .eq("user_id", userId)
+          .ilike("contact_name", contactName)
+          .maybeSingle();
 
-  const pendingStateToken = buildInviteConfirmationStateToken({
-    inviteePhoneE164,
-    inviteeDisplayName,
-  });
-  await persistConversationSessionState({
-    supabase: input.supabase,
-    userId: input.decision.user_id,
-    mode: "pending_contact_invite_confirmation",
-    stateToken: pendingStateToken,
-  });
+        if (error) {
+          throw new ConversationRouterError(
+            "CONTACT_CIRCLE_LOOKUP_FAILED",
+            "Unable to resolve named-plan contact.",
+          );
+        }
+
+        if (!data?.id || !data?.contact_name) {
+          return null;
+        }
+
+        return {
+          id: data.id as string,
+          contact_name: data.contact_name as string,
+          contact_phone_e164: typeof data.contact_phone_e164 === "string"
+            ? data.contact_phone_e164
+            : null,
+        };
+      },
+      insertPlanBrief: async ({
+        id,
+        creator_user_id,
+        activity_key,
+        proposed_time_window,
+        notes,
+        status,
+        created_at,
+        updated_at,
+      }) => {
+        const { error } = await input.supabase.from("plan_briefs").insert({
+          id,
+          creator_user_id,
+          activity_key,
+          proposed_time_window,
+          notes,
+          status,
+          created_at,
+          updated_at,
+        });
+        return {
+          error: error ? { message: error.message } : null,
+        };
+      },
+      updateConversationSession: async ({
+        userId,
+        mode,
+        state_token,
+        updated_at,
+      }) => {
+        await persistConversationSessionState({
+          supabase: input.supabase,
+          userId,
+          mode,
+          stateToken: state_token,
+          updatedAt: updated_at,
+        });
+      },
+      sendSms: async ({ body }) => {
+        replyMessage = body;
+      },
+      log: ({ level, event, payload }) => {
+        logEvent({
+          level,
+          event,
+          user_id: input.decision.user_id,
+          correlation_id: input.payload.inbound_message_id,
+          payload: {
+            route: "named_plan_request_handler",
+            session_mode: input.decision.state.mode,
+            session_state_token: input.decision.state.state_token,
+            ...payload,
+          },
+        });
+      },
+    },
+  );
 
   return {
     engine: "named_plan_request_handler",
-    reply_message: NAMED_PLAN_INVITE_CONFIRM_PROMPT,
+    reply_message: replyMessage,
   };
 }
 
@@ -2602,18 +2681,6 @@ function parseInviteConfirmationStateToken(
   };
 }
 
-function buildInviteConfirmationStateToken(input: {
-  inviteePhoneE164: string;
-  inviteeDisplayName: string | null;
-}): string {
-  const phonePart = encodeStateTokenPart(input.inviteePhoneE164);
-  const displayName = input.inviteeDisplayName && input.inviteeDisplayName.trim()
-    ? input.inviteeDisplayName.trim()
-    : null;
-  const namePart = displayName ? encodeStateTokenPart(displayName) : "_";
-  return `${INVITE_CONFIRMATION_STATE_TOKEN_PREFIX}:${phonePart}:${namePart}`;
-}
-
 function parseInviteConfirmationReply(message: string): "yes" | "no" | "ambiguous" {
   const normalized = normalizeIntentText(message);
   if (!normalized) {
@@ -2682,13 +2749,20 @@ export function parseContactInviteResponseIntent(
   return "unknown";
 }
 
-function isDirectInviteIntent(message: string, phoneCandidate: string): boolean {
-  const withoutPhone = message.replace(phoneCandidate, " ");
-  return DIRECT_INVITE_INTENT_PATTERNS.some((pattern) => pattern.test(withoutPhone));
-}
-
 function isInviteConfirmationStateToken(stateToken: string): boolean {
   return stateToken.startsWith(`${INVITE_CONFIRMATION_STATE_TOKEN_PREFIX}:`);
+}
+
+function extractNamedPlanIntentFields(message: string): NamedPlanIntentFields {
+  const contactName = extractNamedPlanContactName(message);
+  const timeWindowHint = extractNamedPlanTimeWindowHint(message);
+  const activityHint = extractNamedPlanActivityHint(message, timeWindowHint);
+
+  return {
+    contactNames: contactName ? [contactName] : [],
+    ...(activityHint ? { activityHint } : {}),
+    ...(timeWindowHint ? { timeWindowHint } : {}),
+  };
 }
 
 function normalizeIntentText(value: string): string {
@@ -2697,15 +2771,6 @@ function normalizeIntentText(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9\s']/g, " ")
     .replace(/\s+/g, " ");
-}
-
-function encodeStateTokenPart(value: string): string {
-  const bytes = HASH_ENCODER.encode(value);
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += 1) {
-    binary += String.fromCharCode(bytes[index]);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function decodeStateTokenPart(value: string): string | null {
@@ -2723,22 +2788,76 @@ function decodeStateTokenPart(value: string): string | null {
   }
 }
 
-function extractInviteePhoneCandidate(message: string): string | null {
-  const match = INVITEE_PHONE_CANDIDATE_PATTERN.exec(message);
-  if (!match?.[1]) {
+function extractNamedPlanContactName(message: string): string | null {
+  const withMatch = NAMED_PLAN_WITH_PATTERN.exec(message);
+  if (withMatch?.[1]) {
+    const normalized = normalizeNameCandidate(withMatch[1]);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const seeIfMatch = NAMED_PLAN_SEE_IF_PATTERN.exec(message);
+  if (!seeIfMatch?.[1]) {
     return null;
   }
-  return match[1].trim();
+
+  return normalizeNameCandidate(seeIfMatch[1]);
 }
 
-function extractInviteeDisplayName(message: string, phoneCandidate: string): string | null {
-  const withoutPhone = message.replace(phoneCandidate, " ").replace(/\s+/g, " ").trim();
-  const match = INVITEE_NAME_WITH_PATTERN.exec(withoutPhone);
+function extractNamedPlanTimeWindowHint(message: string): string | null {
+  const match = NAMED_PLAN_TIME_WINDOW_PATTERN.exec(message);
   if (!match?.[1]) {
     return null;
   }
   const trimmed = match[1].replace(/\s+/g, " ").trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function extractNamedPlanActivityHint(
+  message: string,
+  timeWindowHint: string | null,
+): string | null {
+  const match = NAMED_PLAN_ACTIVITY_PATTERN.exec(message);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  let activity = match[1].replace(/\s+/g, " ").trim();
+  if (timeWindowHint) {
+    activity = activity.replace(
+      new RegExp(`\\b${escapeRegExp(timeWindowHint)}\\b`, "i"),
+      " ",
+    ).replace(/\s+/g, " ").trim();
+  }
+
+  if (activity.length === 0) {
+    return null;
+  }
+
+  return activity;
+}
+
+function normalizeNameCandidate(candidate: string): string | null {
+  const tokens = candidate.trim().replace(/\s+/g, " ").split(" ");
+  const keep: string[] = [];
+  for (const token of tokens) {
+    if (NAMED_PLAN_CONTACT_STOPWORDS.has(token.toLowerCase())) {
+      break;
+    }
+    keep.push(token);
+    if (keep.length === 3) {
+      break;
+    }
+  }
+  if (keep.length === 0) {
+    return null;
+  }
+  return keep.join(" ");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function persistAwaitingSocialChoiceSession(input: {
@@ -2763,6 +2882,7 @@ async function persistConversationSessionState(input: {
     | "pending_plan_confirmation"
     | "pending_contact_invite_confirmation";
   stateToken: string;
+  updatedAt?: string;
 }): Promise<void> {
   const session = await fetchConversationSession(input.supabase, input.userId);
   if (!session?.id) {
@@ -2784,6 +2904,7 @@ async function persistConversationSessionState(input: {
     .update({
       mode: input.mode,
       state_token: input.stateToken,
+      ...(input.updatedAt ? { updated_at: input.updatedAt } : {}),
     })
     .eq("id", session.id)
     .select("id")
