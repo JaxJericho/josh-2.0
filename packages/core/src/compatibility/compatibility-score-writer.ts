@@ -209,6 +209,8 @@ async function fetchProfile(
     .from("profiles")
     .select("id,user_id,state,is_complete_mvp")
     .eq("user_id", userId)
+    // complete_invited hard filter: never relax
+    .neq("state", "complete_invited")
     .maybeSingle();
 
   if (error) {

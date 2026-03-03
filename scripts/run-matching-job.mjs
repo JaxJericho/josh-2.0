@@ -31,7 +31,14 @@ try {
   const [users, profiles, signals, profileEntitlements, entitlements, assignments, waitlistEntries, activeHolds, userBlocks] =
     await Promise.all([
       fetchRowsOrThrow(supabase, "users", "id,state,deleted_at"),
-      fetchRowsOrThrow(supabase, "profiles", "id,user_id,state,is_complete_mvp"),
+      fetchRowsOrThrow(
+        supabase,
+        "profiles",
+        "id,user_id,state,is_complete_mvp",
+        (query) =>
+          // complete_invited hard filter: never relax
+          query.neq("state", "complete_invited"),
+      ),
       fetchRowsOrThrow(
         supabase,
         "profile_compatibility_signals",
@@ -88,6 +95,14 @@ try {
     }
 
     if (user.state !== "active" || user.deleted_at !== null) {
+      continue;
+    }
+
+    if (profile.state === "complete_invited") {
+      // complete_invited hard filter: never relax
+      console.warn(
+        `[matching-job] complete_invited candidate excluded by defense guard user_id=${user.id} profile_id=${profile.id}`,
+      );
       continue;
     }
 
