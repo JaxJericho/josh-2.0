@@ -6,9 +6,19 @@ import {
   type RoutingDecision,
 } from "../supabase/functions/_shared/router/conversation-router";
 
-describe("conversation router named plan request confirmation flow", () => {
-  it("stores pending contact invite confirmation when phone is detected but invite intent is ambiguous", async () => {
-    const supabase = buildNamedPlanSupabaseMock();
+describe("conversation router named plan request flow", () => {
+  it("creates a draft plan brief, transitions session, and sends confirmation for eligible users with known contacts", async () => {
+    const supabase = buildNamedPlanSupabaseMock({
+      subscriptionState: "active",
+      contacts: [
+        {
+          id: "contact_123",
+          user_id: "usr_123",
+          contact_name: "Marcus",
+          contact_phone_e164: "+14155550123",
+        },
+      ],
+    });
 
     const result = await dispatchConversationRoute({
       supabase,
@@ -18,103 +28,43 @@ describe("conversation router named plan request confirmation flow", () => {
       }),
       payload: {
         ...samplePayload(),
-        body_raw: "Sam +14155550123",
-        body_normalized: "SAM +14155550123",
+        body_raw: "See if Marcus is free for a hike Saturday",
+        body_normalized: "SEE IF MARCUS IS FREE FOR A HIKE SATURDAY",
       },
     });
 
     expect(result.engine).toBe("named_plan_request_handler");
-    expect(result.reply_message).toBe(
-      "Reply YES to queue this invite, or NO to cancel.",
-    );
+    expect(result.reply_message).toContain("Marcus");
+    expect(result.reply_message).toContain("hike");
 
     const state = supabase.debugState();
-    expect(state.session.mode).toBe("pending_contact_invite_confirmation");
-    expect(state.session.state_token).toMatch(/^invite_confirm:create:v1:/);
-    expect(state.contactInvitationRows).toHaveLength(0);
-    expect(state.smsOutboundJobRows).toHaveLength(0);
+    expect(state.planBriefRows).toHaveLength(1);
+    expect(state.planBriefRows[0]).toMatchObject({
+      creator_user_id: "usr_123",
+      activity_key: "hike",
+      proposed_time_window: "Saturday",
+      status: "draft",
+    });
+    expect(state.session.mode).toBe("pending_plan_confirmation");
+    expect(state.session.state_token).toMatch(
+      /^plan_brief:[a-f0-9-]+:contact:contact_123$/,
+    );
   });
 
-  it("creates invite and outbound job only after YES and does not duplicate rows on replay", async () => {
-    const supabase = buildNamedPlanSupabaseMock();
-    const previousSmsKey = process.env.SMS_BODY_ENCRYPTION_KEY;
-    process.env.SMS_BODY_ENCRYPTION_KEY = "sms-encryption-key";
-
-    try {
-      await dispatchConversationRoute({
-        supabase,
-        decision: decisionForState({
-          mode: "idle",
-          state_token: "idle",
-        }),
-        payload: {
-          ...samplePayload(),
-          inbound_message_sid: "SM_AMBIG_1",
-          body_raw: "Sam +14155550123",
-          body_normalized: "SAM +14155550123",
+  it("returns subscription guidance and does not write plan data for ineligible users", async () => {
+    const supabase = buildNamedPlanSupabaseMock({
+      subscriptionState: "inactive",
+      contacts: [
+        {
+          id: "contact_123",
+          user_id: "usr_123",
+          contact_name: "Marcus",
+          contact_phone_e164: "+14155550123",
         },
-      });
+      ],
+    });
 
-      const pendingToken = supabase.debugState().session.state_token;
-      const firstYes = await dispatchConversationRoute({
-        supabase,
-        decision: decisionForState({
-          mode: "pending_contact_invite_confirmation",
-          state_token: pendingToken,
-        }),
-        payload: {
-          ...samplePayload(),
-          inbound_message_sid: "SM_YES_1",
-          body_raw: "YES",
-          body_normalized: "YES",
-        },
-      });
-
-      expect(firstYes.reply_message).toBe(
-        "Invite queued. I will send it once invite delivery is enabled.",
-      );
-
-      let state = supabase.debugState();
-      expect(state.session.mode).toBe("idle");
-      expect(state.session.state_token).toBe("idle");
-      expect(state.contactInvitationRows).toHaveLength(1);
-      expect(state.smsOutboundJobRows).toHaveLength(1);
-
-      const replayYes = await dispatchConversationRoute({
-        supabase,
-        decision: decisionForState({
-          mode: "pending_contact_invite_confirmation",
-          state_token: pendingToken,
-        }),
-        payload: {
-          ...samplePayload(),
-          inbound_message_sid: "SM_YES_1",
-          body_raw: "YES",
-          body_normalized: "YES",
-        },
-      });
-
-      expect(replayYes.reply_message).toBe(
-        "That invite is already queued. I will send it once invite delivery is enabled.",
-      );
-
-      state = supabase.debugState();
-      expect(state.contactInvitationRows).toHaveLength(1);
-      expect(state.smsOutboundJobRows).toHaveLength(1);
-      expect(state.auditLogRows).toHaveLength(1);
-    } finally {
-      if (typeof previousSmsKey === "string") {
-        process.env.SMS_BODY_ENCRYPTION_KEY = previousSmsKey;
-      } else {
-        delete process.env.SMS_BODY_ENCRYPTION_KEY;
-      }
-    }
-  });
-
-  it("clears pending contact invite confirmation on NO without creating invitation rows", async () => {
-    const supabase = buildNamedPlanSupabaseMock();
-
-    await dispatchConversationRoute({
+    const result = await dispatchConversationRoute({
       supabase,
       decision: decisionForState({
         mode: "idle",
@@ -122,33 +72,47 @@ describe("conversation router named plan request confirmation flow", () => {
       }),
       payload: {
         ...samplePayload(),
-        body_raw: "Sam +14155550123",
-        body_normalized: "SAM +14155550123",
+        body_raw: "See if Marcus is free for a hike Saturday",
+        body_normalized: "SEE IF MARCUS IS FREE FOR A HIKE SATURDAY",
       },
     });
 
-    const pendingToken = supabase.debugState().session.state_token;
-    const noResult = await dispatchConversationRoute({
+    expect(result.engine).toBe("named_plan_request_handler");
+    expect(result.reply_message).toContain("active JOSH subscription");
+
+    const state = supabase.debugState();
+    expect(state.planBriefRows).toHaveLength(0);
+    expect(state.session.mode).toBe("idle");
+    expect(state.session.state_token).toBe("idle");
+  });
+
+  it("returns contact-not-found guidance and does not write plan data when contact is missing", async () => {
+    const supabase = buildNamedPlanSupabaseMock({
+      subscriptionState: "active",
+      contacts: [],
+    });
+
+    const result = await dispatchConversationRoute({
       supabase,
       decision: decisionForState({
-        mode: "pending_contact_invite_confirmation",
-        state_token: pendingToken,
+        mode: "idle",
+        state_token: "idle",
       }),
       payload: {
         ...samplePayload(),
-        inbound_message_sid: "SM_NO_1",
-        body_raw: "NO",
-        body_normalized: "NO",
+        body_raw: "See if Jordan is free for a hike Saturday",
+        body_normalized: "SEE IF JORDAN IS FREE FOR A HIKE SATURDAY",
       },
     });
 
-    expect(noResult.reply_message).toBe("Okay - I will not queue that invite.");
+    expect(result.engine).toBe("named_plan_request_handler");
+    expect(result.reply_message).toContain("Jordan");
+    expect(result.reply_message).toContain("Reply with their number");
 
     const state = supabase.debugState();
+    expect(state.planBriefRows).toHaveLength(0);
     expect(state.session.mode).toBe("idle");
     expect(state.session.state_token).toBe("idle");
-    expect(state.contactInvitationRows).toHaveLength(0);
-    expect(state.smsOutboundJobRows).toHaveLength(0);
   });
 });
 
@@ -176,27 +140,26 @@ function decisionForState(
   };
 }
 
-function buildNamedPlanSupabaseMock() {
+function buildNamedPlanSupabaseMock(input: {
+  subscriptionState: string;
+  contacts: Array<{
+    id: string;
+    user_id: string;
+    contact_name: string;
+    contact_phone_e164: string | null;
+  }>;
+}) {
   const state = {
     session: {
       id: "ses_123",
       mode: "idle",
       state_token: "idle",
       linkup_id: null as string | null,
+      updated_at: "2026-03-03T00:00:00.000Z",
     },
-    contactCircleRows: [] as Array<Record<string, unknown>>,
-    contactInvitationRows: [] as Array<
-      {
-        id: string;
-        inviter_user_id: string;
-        invitee_phone_hash: string;
-        status: string;
-      }
-    >,
-    smsOutboundJobRows: [] as Array<Record<string, unknown>>,
-    auditLogRows: [] as Array<Record<string, unknown>>,
-    invitationSequence: 0,
-    outboundSequence: 0,
+    subscriptionState: input.subscriptionState,
+    contacts: [...input.contacts],
+    planBriefRows: [] as Array<Record<string, unknown>>,
   };
 
   return {
@@ -238,6 +201,7 @@ function buildNamedPlanSupabaseMock() {
                       ...state.session,
                       mode: String(payload.mode),
                       state_token: String(payload.state_token),
+                      updated_at: String(payload.updated_at ?? state.session.updated_at),
                     };
                     return {
                       data: { id: state.session.id },
@@ -252,7 +216,7 @@ function buildNamedPlanSupabaseMock() {
         return query;
       }
 
-      if (table === "profiles") {
+      if (table === "subscriptions") {
         const filters: Record<string, unknown> = {};
         const query = {
           select() {
@@ -267,30 +231,7 @@ function buildNamedPlanSupabaseMock() {
               return { data: null, error: null };
             }
             return {
-              data: { id: "pro_123" },
-              error: null,
-            };
-          },
-        };
-        return query;
-      }
-
-      if (table === "users") {
-        const filters: Record<string, unknown> = {};
-        const query = {
-          select() {
-            return query;
-          },
-          eq(column: string, value: unknown) {
-            filters[column] = value;
-            return query;
-          },
-          async maybeSingle() {
-            if (filters.id !== "usr_123") {
-              return { data: null, error: null };
-            }
-            return {
-              data: { first_name: "Alex" },
+              data: { state: state.subscriptionState },
               error: null,
             };
           },
@@ -299,22 +240,8 @@ function buildNamedPlanSupabaseMock() {
       }
 
       if (table === "contact_circle") {
-        return {
-          async insert(payload: Record<string, unknown>) {
-            const exists = state.contactCircleRows.some((row) =>
-              row.user_id === payload.user_id &&
-              row.contact_phone_hash === payload.contact_phone_hash
-            );
-            if (!exists) {
-              state.contactCircleRows.push({ ...payload });
-            }
-            return { data: null, error: null };
-          },
-        };
-      }
-
-      if (table === "contact_invitations") {
         const filters: Record<string, unknown> = {};
+        let ilikeValue = "";
         const query = {
           select() {
             return query;
@@ -323,127 +250,35 @@ function buildNamedPlanSupabaseMock() {
             filters[column] = value;
             return query;
           },
-          order() {
-            return query;
-          },
-          limit() {
-            return query;
-          },
-          async maybeSingle() {
-            const row = state.contactInvitationRows.find((candidate) =>
-              candidate.inviter_user_id === filters.inviter_user_id &&
-              candidate.invitee_phone_hash === filters.invitee_phone_hash &&
-              candidate.status === filters.status
-            );
-            if (!row) {
-              return { data: null, error: null };
-            }
-            return {
-              data: {
-                id: row.id,
-                status: row.status,
-                created_at: new Date().toISOString(),
-              },
-              error: null,
-            };
-          },
-          insert(payload: Record<string, unknown>) {
-            return {
-              select() {
-                return this;
-              },
-              async single() {
-                const duplicate = state.contactInvitationRows.find((row) =>
-                  row.inviter_user_id === payload.inviter_user_id &&
-                  row.invitee_phone_hash === payload.invitee_phone_hash &&
-                  row.status === "pending"
-                );
-                if (duplicate) {
-                  return {
-                    data: null,
-                    error: {
-                      code: "23505",
-                      message: "duplicate key value violates unique constraint",
-                    },
-                  };
-                }
-                state.invitationSequence += 1;
-                const created = {
-                  id: `inv_${state.invitationSequence}`,
-                  inviter_user_id: String(payload.inviter_user_id),
-                  invitee_phone_hash: String(payload.invitee_phone_hash),
-                  status: String(payload.status ?? "pending"),
-                };
-                state.contactInvitationRows.push(created);
-                return {
-                  data: {
-                    id: created.id,
-                    status: created.status,
-                  },
-                  error: null,
-                };
-              },
-            };
-          },
-        };
-        return query;
-      }
-
-      if (table === "sms_outbound_jobs") {
-        const filters: Record<string, unknown> = {};
-        const query = {
-          select() {
-            return query;
-          },
-          eq(column: string, value: unknown) {
-            filters[column] = value;
+          ilike(_column: string, value: unknown) {
+            ilikeValue = String(value).toLowerCase();
             return query;
           },
           async maybeSingle() {
-            const match = state.smsOutboundJobRows.find((row) =>
-              row.idempotency_key === filters.idempotency_key
+            const match = state.contacts.find((row) =>
+              row.user_id === filters.user_id &&
+              row.contact_name.toLowerCase() === ilikeValue
             );
             if (!match) {
               return { data: null, error: null };
             }
             return {
-              data: { id: match.id },
+              data: {
+                id: match.id,
+                contact_name: match.contact_name,
+                contact_phone_e164: match.contact_phone_e164,
+              },
               error: null,
             };
-          },
-          async insert(payload: Record<string, unknown>) {
-            const duplicate = state.smsOutboundJobRows.find((row) =>
-              row.idempotency_key === payload.idempotency_key
-            );
-            if (!duplicate) {
-              state.outboundSequence += 1;
-              state.smsOutboundJobRows.push({
-                id: `job_${state.outboundSequence}`,
-                ...payload,
-              });
-            }
-            return { data: null, error: null };
           },
         };
         return query;
       }
 
-      if (table === "audit_log") {
+      if (table === "plan_briefs") {
         return {
           async insert(payload: Record<string, unknown>) {
-            const duplicate = state.auditLogRows.find((row) =>
-              row.idempotency_key && row.idempotency_key === payload.idempotency_key
-            );
-            if (duplicate) {
-              return {
-                data: null,
-                error: {
-                  code: "23505",
-                  message: "duplicate key value violates unique constraint",
-                },
-              };
-            }
-            state.auditLogRows.push(payload);
+            state.planBriefRows.push({ ...payload });
             return { data: null, error: null };
           },
         };
@@ -452,21 +287,15 @@ function buildNamedPlanSupabaseMock() {
       throw new Error(`Unexpected table '${table}' in named-plan router test.`);
     },
     async rpc(fn: string, _args?: Record<string, unknown>) {
-      if (fn !== "encrypt_sms_body") {
-        return {
-          data: null,
-          error: { message: `Unexpected rpc function '${fn}'.` },
-        };
-      }
-      return { data: "ciphertext", error: null };
+      return {
+        data: null,
+        error: { message: `Unexpected rpc function '${fn}'.` },
+      };
     },
     debugState() {
       return {
         session: { ...state.session },
-        contactCircleRows: [...state.contactCircleRows],
-        contactInvitationRows: [...state.contactInvitationRows],
-        smsOutboundJobRows: [...state.smsOutboundJobRows],
-        auditLogRows: [...state.auditLogRows],
+        planBriefRows: [...state.planBriefRows],
       };
     },
   };
