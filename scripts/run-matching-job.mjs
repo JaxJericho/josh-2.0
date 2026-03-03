@@ -7,7 +7,7 @@ import { createDbClient } from "../packages/db/src/client-node.mjs";
 
 const DEFAULT_SOURCE_LIMIT = 25;
 const DEFAULT_CANDIDATE_LIMIT = 15;
-const RUN_MODES = new Set(["one_to_one", "linkup"]);
+const RUN_MODES = new Set(["linkup"]);
 
 loadDotEnv(".env.local");
 
@@ -386,7 +386,7 @@ try {
 
 function parseArgs(rawArgs) {
   const parsed = {
-    mode: "one_to_one",
+    mode: "linkup",
     sourceUserId: null,
     regionId: null,
     sourceLimit: DEFAULT_SOURCE_LIMIT,
