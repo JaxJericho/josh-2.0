@@ -3,7 +3,7 @@
  * Deterministic, idempotent upsert by activity_key.
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { createServiceRoleDbClient } from "../packages/db/src/client-node.mjs";
 import { ACTIVITY_CATALOG } from "../docs/seed/activity_catalog_seed";
 
 const supabaseUrl = process.env.SUPABASE_URL!;
@@ -13,7 +13,7 @@ if (!supabaseUrl || !supabaseServiceRoleKey) {
   throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
 }
 
-const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+const supabase = createServiceRoleDbClient();
 
 async function run() {
   console.log("Seeding activity_catalog...");
