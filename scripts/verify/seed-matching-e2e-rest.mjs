@@ -17,12 +17,10 @@ const E2E_PROFILE_IDS = [
 ];
 
 loadDotEnv(".env.local");
-
-const supabaseUrl = requiredEnv("SUPABASE_URL");
+requiredEnv("SUPABASE_URL");
 requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
 
 const supabase = createDbClient({ role: "service" });
-
 const nowIso = new Date().toISOString();
 
 await upsertOrFail(supabase, "regions", [
@@ -114,6 +112,7 @@ await upsertOrFail(supabase, "profiles", [
     user_id: E2E_SOURCE_USER_ID,
     state: "complete_mvp",
     fingerprint: {},
+    coordination_dimensions: buildDimensions([0.72, 0.58, 0.69, 0.63, 0.46, 0.75], [0.91, 0.87, 0.9, 0.86, 0.82, 0.93]),
     activity_patterns: [],
     boundaries: {},
     preferences: {},
@@ -128,6 +127,7 @@ await upsertOrFail(supabase, "profiles", [
     user_id: E2E_CANDIDATE_USER_IDS[0],
     state: "complete_mvp",
     fingerprint: {},
+    coordination_dimensions: buildDimensions([0.7, 0.56, 0.67, 0.61, 0.48, 0.73], [0.9, 0.86, 0.89, 0.85, 0.81, 0.92]),
     activity_patterns: [],
     boundaries: {},
     preferences: {},
@@ -142,6 +142,7 @@ await upsertOrFail(supabase, "profiles", [
     user_id: E2E_CANDIDATE_USER_IDS[1],
     state: "complete_mvp",
     fingerprint: {},
+    coordination_dimensions: buildDimensions([0.54, 0.63, 0.45, 0.78, 0.4, 0.62], [0.88, 0.85, 0.87, 0.84, 0.8, 0.9]),
     activity_patterns: [],
     boundaries: {},
     preferences: {},
@@ -156,6 +157,7 @@ await upsertOrFail(supabase, "profiles", [
     user_id: E2E_CANDIDATE_USER_IDS[2],
     state: "complete_mvp",
     fingerprint: {},
+    coordination_dimensions: buildDimensions([0.42, 0.72, 0.34, 0.81, 0.35, 0.57], [0.86, 0.83, 0.85, 0.82, 0.79, 0.88]),
     activity_patterns: [],
     boundaries: {},
     preferences: {},
@@ -284,65 +286,6 @@ await upsertOrFail(supabase, "entitlements", [
   },
 ], "user_id");
 
-await upsertOrFail(supabase, "profile_compatibility_signals", [
-  {
-    user_id: E2E_SOURCE_USER_ID,
-    profile_id: E2E_PROFILE_IDS[0],
-    normalization_version: "v1",
-    interest_vector: [0.7, 0.42, 0.25, 0.12, 0.15, 0.05, 0.78, 0.35, 0.22],
-    trait_vector: [0.74, 1, 0, 0, 1, 0, 1, 0, 0, 0.62],
-    intent_vector: [0.63, 0.39, 0.15, 0.28, 0.81, 1, 0, 0],
-    availability_vector: [1, 0, 1, 0, 1, 0, 1],
-    metadata: { seed_source: "ticket-7-1-matching-e2e-rest" },
-    source_profile_state: "complete_mvp",
-    source_profile_completed_at: nowIso,
-    source_profile_updated_at: nowIso,
-    content_hash: "matching_e2e_hash_source_v1",
-  },
-  {
-    user_id: E2E_CANDIDATE_USER_IDS[0],
-    profile_id: E2E_PROFILE_IDS[1],
-    normalization_version: "v1",
-    interest_vector: [0.68, 0.4, 0.28, 0.1, 0.17, 0.04, 0.8, 0.3, 0.2],
-    trait_vector: [0.71, 1, 0, 0, 1, 0, 1, 0, 0, 0.58],
-    intent_vector: [0.6, 0.38, 0.16, 0.26, 0.77, 1, 0, 0],
-    availability_vector: [1, 0, 1, 0, 1, 0, 1],
-    metadata: { seed_source: "ticket-7-1-matching-e2e-rest" },
-    source_profile_state: "complete_mvp",
-    source_profile_completed_at: nowIso,
-    source_profile_updated_at: nowIso,
-    content_hash: "matching_e2e_hash_c1_v1",
-  },
-  {
-    user_id: E2E_CANDIDATE_USER_IDS[1],
-    profile_id: E2E_PROFILE_IDS[2],
-    normalization_version: "v1",
-    interest_vector: [0.59, 0.54, 0.18, 0.3, 0.1, 0.05, 0.7, 0.42, 0.28],
-    trait_vector: [0.66, 1, 0, 0, 0, 1, 0, 1, 0, 0.6],
-    intent_vector: [0.56, 0.49, 0.22, 0.22, 0.71, 1, 0, 0],
-    availability_vector: [1, 0, 0, 1, 0, 0, 1],
-    metadata: { seed_source: "ticket-7-1-matching-e2e-rest" },
-    source_profile_state: "complete_mvp",
-    source_profile_completed_at: nowIso,
-    source_profile_updated_at: nowIso,
-    content_hash: "matching_e2e_hash_c2_v1",
-  },
-  {
-    user_id: E2E_CANDIDATE_USER_IDS[2],
-    profile_id: E2E_PROFILE_IDS[3],
-    normalization_version: "v1",
-    interest_vector: [0.49, 0.6, 0.12, 0.38, 0.08, 0.07, 0.62, 0.46, 0.31],
-    trait_vector: [0.57, 1, 0, 0, 0, 1, 0, 1, 0, 0.56],
-    intent_vector: [0.52, 0.52, 0.26, 0.2, 0.66, 1, 0, 0],
-    availability_vector: [1, 0, 0, 1, 0, 0, 1],
-    metadata: { seed_source: "ticket-7-1-matching-e2e-rest" },
-    source_profile_state: "complete_mvp",
-    source_profile_completed_at: nowIso,
-    source_profile_updated_at: nowIso,
-    content_hash: "matching_e2e_hash_c3_v1",
-  },
-], "user_id");
-
 await updateOrFail(
   supabase,
   "safety_holds",
@@ -362,14 +305,25 @@ await deleteOrFail(supabase, "user_blocks", (query) =>
 const userCount = await countRows(supabase, "users", (query) =>
   query.in("id", [E2E_SOURCE_USER_ID, ...E2E_CANDIDATE_USER_IDS]),
 );
-const signalCount = await countRows(supabase, "profile_compatibility_signals", (query) =>
-  query.in("user_id", [E2E_SOURCE_USER_ID, ...E2E_CANDIDATE_USER_IDS]),
+const profileCount = await countRows(supabase, "profiles", (query) =>
+  query.in("id", E2E_PROFILE_IDS),
 );
 
 console.log(`[seed-matching-e2e-rest] users_ready=${userCount}`);
-console.log(`[seed-matching-e2e-rest] signals_ready=${signalCount}`);
+console.log(`[seed-matching-e2e-rest] profiles_ready=${profileCount}`);
 console.log(`[seed-matching-e2e-rest] source_user_id=${E2E_SOURCE_USER_ID}`);
 console.log("[seed-matching-e2e-rest] done=true");
+
+function buildDimensions(values, confidences) {
+  return {
+    social_energy: { value: values[0], confidence: confidences[0] },
+    social_pace: { value: values[1], confidence: confidences[1] },
+    conversation_depth: { value: values[2], confidence: confidences[2] },
+    adventure_orientation: { value: values[3], confidence: confidences[3] },
+    group_dynamic: { value: values[4], confidence: confidences[4] },
+    values_proximity: { value: values[5], confidence: confidences[5] },
+  };
+}
 
 async function upsertOrFail(supabaseClient, table, rows, onConflict) {
   const { error } = await supabaseClient

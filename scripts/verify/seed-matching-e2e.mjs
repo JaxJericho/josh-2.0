@@ -53,20 +53,6 @@ const profilesReady = querySingleValue({
   `,
 });
 
-const signalsReady = querySingleValue({
-  dsn: stagingDbDsn,
-  sql: `
-    select count(*)
-    from public.profile_compatibility_signals
-    where user_id in (
-      '${E2E_SOURCE_USER_ID}',
-      '${E2E_CANDIDATE_USER_IDS[0]}',
-      '${E2E_CANDIDATE_USER_IDS[1]}',
-      '${E2E_CANDIDATE_USER_IDS[2]}'
-    );
-  `,
-});
-
 const profileEntitlementsReady = querySingleValue({
   dsn: stagingDbDsn,
   sql: `
@@ -83,7 +69,6 @@ const profileEntitlementsReady = querySingleValue({
 
 console.log(`[seed-matching-e2e] users_ready=${usersReady}`);
 console.log(`[seed-matching-e2e] profiles_ready=${profilesReady}`);
-console.log(`[seed-matching-e2e] signals_ready=${signalsReady}`);
 console.log(`[seed-matching-e2e] profile_entitlements_ready=${profileEntitlementsReady}`);
 console.log(`[seed-matching-e2e] source_user_id=${E2E_SOURCE_USER_ID}`);
 console.log(`[seed-matching-e2e] region_id=${E2E_REGION_ID}`);
@@ -161,6 +146,7 @@ function buildSeedSql() {
       user_id,
       state,
       fingerprint,
+      coordination_dimensions,
       activity_patterns,
       boundaries,
       preferences,
@@ -171,12 +157,97 @@ function buildSeedSql() {
       state_changed_at
     )
     values
-      ('${E2E_PROFILE_IDS[0]}', '${E2E_SOURCE_USER_ID}', 'complete_mvp', '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, null, now(), true, 100, now()),
-      ('${E2E_PROFILE_IDS[1]}', '${E2E_CANDIDATE_USER_IDS[0]}', 'complete_mvp', '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, null, now(), true, 100, now()),
-      ('${E2E_PROFILE_IDS[2]}', '${E2E_CANDIDATE_USER_IDS[1]}', 'complete_mvp', '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, null, now(), true, 100, now()),
-      ('${E2E_PROFILE_IDS[3]}', '${E2E_CANDIDATE_USER_IDS[2]}', 'complete_mvp', '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, null, now(), true, 100, now())
+      (
+        '${E2E_PROFILE_IDS[0]}',
+        '${E2E_SOURCE_USER_ID}',
+        'complete_mvp',
+        '{}'::jsonb,
+        jsonb_build_object(
+          'social_energy', jsonb_build_object('value', 0.72, 'confidence', 0.91),
+          'social_pace', jsonb_build_object('value', 0.58, 'confidence', 0.87),
+          'conversation_depth', jsonb_build_object('value', 0.69, 'confidence', 0.9),
+          'adventure_orientation', jsonb_build_object('value', 0.63, 'confidence', 0.86),
+          'group_dynamic', jsonb_build_object('value', 0.46, 'confidence', 0.82),
+          'values_proximity', jsonb_build_object('value', 0.75, 'confidence', 0.93)
+        ),
+        '[]'::jsonb,
+        '{}'::jsonb,
+        '{}'::jsonb,
+        null,
+        now(),
+        true,
+        100,
+        now()
+      ),
+      (
+        '${E2E_PROFILE_IDS[1]}',
+        '${E2E_CANDIDATE_USER_IDS[0]}',
+        'complete_mvp',
+        '{}'::jsonb,
+        jsonb_build_object(
+          'social_energy', jsonb_build_object('value', 0.7, 'confidence', 0.9),
+          'social_pace', jsonb_build_object('value', 0.56, 'confidence', 0.86),
+          'conversation_depth', jsonb_build_object('value', 0.67, 'confidence', 0.89),
+          'adventure_orientation', jsonb_build_object('value', 0.61, 'confidence', 0.85),
+          'group_dynamic', jsonb_build_object('value', 0.48, 'confidence', 0.81),
+          'values_proximity', jsonb_build_object('value', 0.73, 'confidence', 0.92)
+        ),
+        '[]'::jsonb,
+        '{}'::jsonb,
+        '{}'::jsonb,
+        null,
+        now(),
+        true,
+        100,
+        now()
+      ),
+      (
+        '${E2E_PROFILE_IDS[2]}',
+        '${E2E_CANDIDATE_USER_IDS[1]}',
+        'complete_mvp',
+        '{}'::jsonb,
+        jsonb_build_object(
+          'social_energy', jsonb_build_object('value', 0.54, 'confidence', 0.88),
+          'social_pace', jsonb_build_object('value', 0.63, 'confidence', 0.85),
+          'conversation_depth', jsonb_build_object('value', 0.45, 'confidence', 0.87),
+          'adventure_orientation', jsonb_build_object('value', 0.78, 'confidence', 0.84),
+          'group_dynamic', jsonb_build_object('value', 0.4, 'confidence', 0.8),
+          'values_proximity', jsonb_build_object('value', 0.62, 'confidence', 0.9)
+        ),
+        '[]'::jsonb,
+        '{}'::jsonb,
+        '{}'::jsonb,
+        null,
+        now(),
+        true,
+        100,
+        now()
+      ),
+      (
+        '${E2E_PROFILE_IDS[3]}',
+        '${E2E_CANDIDATE_USER_IDS[2]}',
+        'complete_mvp',
+        '{}'::jsonb,
+        jsonb_build_object(
+          'social_energy', jsonb_build_object('value', 0.42, 'confidence', 0.86),
+          'social_pace', jsonb_build_object('value', 0.72, 'confidence', 0.83),
+          'conversation_depth', jsonb_build_object('value', 0.34, 'confidence', 0.85),
+          'adventure_orientation', jsonb_build_object('value', 0.81, 'confidence', 0.82),
+          'group_dynamic', jsonb_build_object('value', 0.35, 'confidence', 0.79),
+          'values_proximity', jsonb_build_object('value', 0.57, 'confidence', 0.88)
+        ),
+        '[]'::jsonb,
+        '{}'::jsonb,
+        '{}'::jsonb,
+        null,
+        now(),
+        true,
+        100,
+        now()
+      )
     on conflict (user_id) do update set
       state = 'complete_mvp',
+      coordination_dimensions = excluded.coordination_dimensions,
       is_complete_mvp = true,
       completeness_percent = 100,
       completed_at = now(),
@@ -276,85 +347,6 @@ function buildSeedSql() {
         '${E2E_CANDIDATE_USER_IDS[1]}',
         '${E2E_CANDIDATE_USER_IDS[2]}'
       );
-
-    with seeded_signals as (
-      select
-        '${E2E_SOURCE_USER_ID}'::uuid as user_id,
-        '${E2E_PROFILE_IDS[0]}'::uuid as profile_id,
-        'matching_e2e_hash_source_v1'::text as content_hash,
-        array[0.70, 0.42, 0.25, 0.12, 0.15, 0.05, 0.78, 0.35, 0.22]::double precision[] as interest_vector,
-        array[0.74, 1, 0, 0, 1, 0, 1, 0, 0, 0.62]::double precision[] as trait_vector,
-        array[0.63, 0.39, 0.15, 0.28, 0.81, 1, 0, 0]::double precision[] as intent_vector,
-        array[1, 0, 1, 0, 1, 0, 1]::double precision[] as availability_vector
-      union all
-      select
-        '${E2E_CANDIDATE_USER_IDS[0]}'::uuid,
-        '${E2E_PROFILE_IDS[1]}'::uuid,
-        'matching_e2e_hash_c1_v1',
-        array[0.68, 0.40, 0.28, 0.10, 0.17, 0.04, 0.80, 0.30, 0.20]::double precision[],
-        array[0.71, 1, 0, 0, 1, 0, 1, 0, 0, 0.58]::double precision[],
-        array[0.60, 0.38, 0.16, 0.26, 0.77, 1, 0, 0]::double precision[],
-        array[1, 0, 1, 0, 1, 0, 1]::double precision[]
-      union all
-      select
-        '${E2E_CANDIDATE_USER_IDS[1]}'::uuid,
-        '${E2E_PROFILE_IDS[2]}'::uuid,
-        'matching_e2e_hash_c2_v1',
-        array[0.59, 0.54, 0.18, 0.30, 0.10, 0.05, 0.70, 0.42, 0.28]::double precision[],
-        array[0.66, 1, 0, 0, 0, 1, 0, 1, 0, 0.60]::double precision[],
-        array[0.56, 0.49, 0.22, 0.22, 0.71, 1, 0, 0]::double precision[],
-        array[1, 0, 0, 1, 0, 0, 1]::double precision[]
-      union all
-      select
-        '${E2E_CANDIDATE_USER_IDS[2]}'::uuid,
-        '${E2E_PROFILE_IDS[3]}'::uuid,
-        'matching_e2e_hash_c3_v1',
-        array[0.49, 0.60, 0.12, 0.38, 0.08, 0.07, 0.62, 0.46, 0.31]::double precision[],
-        array[0.57, 1, 0, 0, 0, 1, 0, 1, 0, 0.56]::double precision[],
-        array[0.52, 0.52, 0.26, 0.20, 0.66, 1, 0, 0]::double precision[],
-        array[1, 0, 0, 1, 0, 0, 1]::double precision[]
-    )
-    insert into public.profile_compatibility_signals (
-      user_id,
-      profile_id,
-      normalization_version,
-      interest_vector,
-      trait_vector,
-      intent_vector,
-      availability_vector,
-      metadata,
-      source_profile_state,
-      source_profile_completed_at,
-      source_profile_updated_at,
-      content_hash
-    )
-    select
-      user_id,
-      profile_id,
-      'v1',
-      interest_vector,
-      trait_vector,
-      intent_vector,
-      availability_vector,
-      jsonb_build_object('seed_source', 'ticket-7-1-matching-e2e'),
-      'complete_mvp'::public.profile_state,
-      now(),
-      now(),
-      content_hash
-    from seeded_signals
-    on conflict (user_id) do update set
-      profile_id = excluded.profile_id,
-      normalization_version = excluded.normalization_version,
-      interest_vector = excluded.interest_vector,
-      trait_vector = excluded.trait_vector,
-      intent_vector = excluded.intent_vector,
-      availability_vector = excluded.availability_vector,
-      metadata = excluded.metadata,
-      source_profile_state = excluded.source_profile_state,
-      source_profile_completed_at = excluded.source_profile_completed_at,
-      source_profile_updated_at = excluded.source_profile_updated_at,
-      content_hash = excluded.content_hash,
-      updated_at = now();
   `;
 }
 
