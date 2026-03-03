@@ -627,8 +627,6 @@ begin
       and s.candidate_user_id <> v_linkup.initiator_user_id
       and u.state = 'active'
       and u.deleted_at is null
-      -- complete_invited hard filter: never relax
-      and p.state <> 'complete_invited'
       and (p.is_complete_mvp = true or p.state = 'complete_full')
       and coalesce(pe.can_participate, false)
       and not exists (
@@ -813,7 +811,6 @@ declare
   v_user_state public.user_state;
   v_profile_state public.profile_state;
   v_profile_complete boolean;
-  v_profile_is_complete_invited boolean := false;
   v_can_initiate boolean := false;
   v_has_active_hold boolean := false;
 begin
@@ -844,7 +841,6 @@ begin
     u.state,
     p.state,
     p.is_complete_mvp,
-    coalesce((p.state)::text = 'complete_invited', false),
     coalesce(pe.can_initiate, false),
     exists (
       select 1
@@ -857,7 +853,6 @@ begin
     v_user_state,
     v_profile_state,
     v_profile_complete,
-    v_profile_is_complete_invited,
     v_can_initiate,
     v_has_active_hold
   from public.users u
@@ -882,11 +877,6 @@ begin
 
   if v_user_state <> 'active' then
     raise exception 'Initiator must be active to create LinkUp';
-  end if;
-
-  if v_profile_is_complete_invited then
-    -- complete_invited hard filter: never relax
-    raise exception 'Initiator with complete_invited profile cannot create LinkUp';
   end if;
 
   if coalesce(v_profile_complete, false) is false
@@ -1000,13 +990,6 @@ begin
     where mc.match_run_id = p_seed_match_run_id
       and mc.source_user_id = p_initiator_user_id
       and mc.candidate_user_id <> p_initiator_user_id
-      and not exists (
-        -- complete_invited hard filter: never relax
-        select 1
-        from public.profiles p_candidate
-        where p_candidate.user_id = mc.candidate_user_id
-          and p_candidate.state = 'complete_invited'
-      )
     on conflict (linkup_id, candidate_user_id) do nothing;
   end if;
 
@@ -1040,13 +1023,6 @@ begin
       where u.user_id is not null
         and u.user_id <> p_initiator_user_id
     ) as seeded
-    where not exists (
-      -- complete_invited hard filter: never relax
-      select 1
-      from public.profiles p_seed_profile
-      where p_seed_profile.user_id = seeded.user_id
-        and p_seed_profile.state = 'complete_invited'
-    )
     on conflict (linkup_id, candidate_user_id) do nothing;
   end if;
 
