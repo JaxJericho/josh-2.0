@@ -3078,6 +3078,31 @@ export type Database = {
           inserted: boolean
         }[]
       }
+      apply_invitation_response: {
+        Args: {
+          p_action: string
+          p_inbound_message_id: string
+          p_inbound_message_sid: string
+          p_invitation_id: string
+          p_now?: string
+          p_outbound_message: string
+          p_sms_encryption_key: string
+          p_user_id: string
+        }
+        Returns: {
+          duplicate: boolean
+          invitation_id: string
+          invitation_type: Database["public"]["Enums"]["invitation_type"]
+          learning_signal_written: boolean
+          next_mode: Database["public"]["Enums"]["conversation_mode"]
+          next_state_token: string
+          outbound_job_id: string
+          processed: boolean
+          reason: string
+          resulting_state: Database["public"]["Enums"]["invitation_state"]
+          user_id: string
+        }[]
+      }
       apply_user_safety_rate_limit: {
         Args: {
           p_now?: string
