@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/reconcile-outbound",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/invitation-expiry-runner",
+      "schedule": "0 */2 * * *"
     }
   ]
 }
