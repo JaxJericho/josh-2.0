@@ -37,8 +37,6 @@ import type {
 export type ConversationMode =
   | "idle"
   | "interviewing"
-  | "awaiting_social_choice"
-  | "pending_plan_confirmation"
   | "pending_contact_invite_confirmation"
   | "linkup_forming"
   | "awaiting_invite_reply"

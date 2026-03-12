@@ -169,6 +169,12 @@ type ClassifyIntentFn = (
   session: IntentClassifierSession,
 ) => IntentClassification;
 
+type RoutedIntent =
+  | IntentClassification["intent"]
+  | "OPEN_INTENT"
+  | "NAMED_PLAN_REQUEST"
+  | "PLAN_SOCIAL_CHOICE";
+
 const ONBOARDING_MODE: ConversationMode = "interviewing";
 const ONBOARDING_STATE_TOKEN = "onboarding:awaiting_opening_response";
 const INVITED_ABBREVIATED_MODE: ConversationMode = "interviewing_abbreviated";
@@ -442,9 +448,10 @@ export async function routeConversationMessage(
     let dispatchRoute: RouterRoute = route;
 
     if (!shouldBypassIntentClassificationForState(state)) {
-      const classification = classifier(params.payload.body_raw, {
-        mode: state.mode,
-      });
+      const classification = classifier(
+        params.payload.body_raw,
+        toIntentClassifierSession(state),
+      );
       routedIntent = classification.intent;
       dispatchRoute = resolveRouteForIntent(classification.intent, state);
     }
@@ -671,8 +678,27 @@ function shouldBypassIntentClassificationForState(state: ConversationState): boo
   );
 }
 
+function toIntentClassifierSession(
+  state: ConversationState,
+): IntentClassifierSession {
+  if (
+    state.mode === "awaiting_social_choice" ||
+    state.mode === "pending_plan_confirmation"
+  ) {
+    return {
+      mode: "idle",
+      state_token: state.state_token,
+    };
+  }
+
+  return {
+    mode: state.mode,
+    state_token: state.state_token,
+  };
+}
+
 function resolveRouteForIntent(
-  intent: IntentClassification["intent"],
+  intent: RoutedIntent,
   state: ConversationState,
 ): RouterRoute {
   switch (intent) {
@@ -680,6 +706,8 @@ function resolveRouteForIntent(
       return "contact_invite_response_handler";
     case "POST_ACTIVITY_CHECKIN":
       return "post_activity_checkin_handler";
+    case "HELP":
+      return "system_command_handler";
     case "OPEN_INTENT":
       return "open_intent_handler";
     case "NAMED_PLAN_REQUEST":
@@ -690,8 +718,16 @@ function resolveRouteForIntent(
       return resolveRouteForState(state);
     case "INTERVIEW_ANSWER_ABBREVIATED":
       return "interview_answer_abbreviated_handler";
-    case "SYSTEM_COMMAND":
-      return "system_command_handler";
+    case "INVITE_RESPONSE":
+    case "INVITATION_RESPONSE":
+    case "PROFILE_UPDATE":
+    case "UNKNOWN":
+      return resolveRouteForState(state);
+    default:
+      throw new ConversationRouterError(
+        "INVALID_ROUTE",
+        `Unsupported intent '${intent}'.`,
+      );
   }
 }
 
@@ -2062,7 +2098,7 @@ async function runPostActivityCheckinHandler(
     input.decision.user_id,
     input.payload.body_raw,
     {
-      mode: input.decision.state.mode,
+      mode: "post_activity_checkin",
       state_token: input.decision.state.state_token,
       has_user_record: true,
       has_pending_contact_invitation: false,
