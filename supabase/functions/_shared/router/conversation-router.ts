@@ -111,11 +111,6 @@ export type EngineDispatchResult = {
   reply_message: string | null;
 };
 
-type LegacyRetiredIntent =
-  | "OPEN_INTENT"
-  | "NAMED_PLAN_REQUEST"
-  | "PLAN_SOCIAL_CHOICE";
-
 type SupabaseClientLike = {
   from: (table: string) => any;
   rpc?: (fn: string, args?: Record<string, unknown>) => Promise<any>;
@@ -677,7 +672,7 @@ function shouldBypassIntentClassificationForState(state: ConversationState): boo
 }
 
 function resolveRouteForIntent(
-  intent: IntentClassification["intent"] | LegacyRetiredIntent,
+  intent: string,
   state: ConversationState,
 ): RouterRoute {
   switch (intent) {
@@ -704,6 +699,11 @@ function resolveRouteForIntent(
     case "SYSTEM_COMMAND":
       return "system_command_handler";
   }
+
+  throw new ConversationRouterError(
+    "INVALID_ROUTE",
+    `Unsupported intent '${intent}'.`,
+  );
 }
 
 function isIntentHandlerRoute(route: RouterRoute): boolean {
