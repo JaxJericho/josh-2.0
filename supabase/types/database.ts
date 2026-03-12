@@ -3385,6 +3385,7 @@ export type Database = {
         | "awaiting_social_choice"
         | "post_activity_checkin"
         | "pending_plan_confirmation"
+        | "awaiting_invitation_response"
       conversation_mode__old_version_to_be_dropped:
         | "idle"
         | "interviewing"
@@ -3422,6 +3423,9 @@ export type Database = {
         | "solo_do_again_yes"
         | "solo_do_again_no"
         | "solo_bridge_accepted"
+        | "invitation_accepted"
+        | "invitation_passed"
+        | "invitation_expired"
       linkup_member_role: "initiator" | "participant"
       linkup_member_status:
         | "confirmed"
@@ -3616,6 +3620,7 @@ export const Constants = {
         "awaiting_social_choice",
         "post_activity_checkin",
         "pending_plan_confirmation",
+        "awaiting_invitation_response",
       ],
       conversation_mode__old_version_to_be_dropped: [
         "idle",
@@ -3655,6 +3660,9 @@ export const Constants = {
         "solo_do_again_yes",
         "solo_do_again_no",
         "solo_bridge_accepted",
+        "invitation_accepted",
+        "invitation_passed",
+        "invitation_expired",
       ],
       linkup_member_role: ["initiator", "participant"],
       linkup_member_status: [
