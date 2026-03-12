@@ -48,7 +48,6 @@ export default async function AdminUserDetailPage(props: AdminUserDetailPageProp
             <p style={pStyle}>Completeness: {detail.profile.completeness_percent}%</p>
             <p style={pStyle}>MVP complete: {detail.profile.is_complete_mvp ? "yes" : "no"}</p>
             <p style={pStyle}>Last interview step: {detail.profile.last_interview_step ?? "none"}</p>
-            <p style={pStyle}>Fingerprint: {stringifyJson(detail.profile.fingerprint)}</p>
             <p style={pStyle}>Activity patterns: {stringifyJson(detail.profile.activity_patterns)}</p>
           </>
         ) : (

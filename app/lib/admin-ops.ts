@@ -172,7 +172,6 @@ export type AdminUserDetailResult = {
     completeness_percent: number;
     is_complete_mvp: boolean;
     last_interview_step: string | null;
-    fingerprint: unknown;
     activity_patterns: unknown;
     preferences: unknown;
     updated_at: string;
@@ -363,7 +362,7 @@ export async function getAdminUserDetail(userId: string): Promise<AdminUserDetai
   ] = await Promise.all([
     db
       .from("profiles")
-      .select("id,state,completeness_percent,is_complete_mvp,last_interview_step,fingerprint,activity_patterns,preferences,updated_at")
+      .select("id,state,completeness_percent,is_complete_mvp,last_interview_step,activity_patterns,preferences,updated_at")
       .eq("user_id", userId)
       .maybeSingle(),
     db
@@ -494,7 +493,6 @@ export async function getAdminUserDetail(userId: string): Promise<AdminUserDetai
         completeness_percent: profileResult.data.completeness_percent,
         is_complete_mvp: profileResult.data.is_complete_mvp,
         last_interview_step: profileResult.data.last_interview_step,
-        fingerprint: profileResult.data.fingerprint,
         activity_patterns: profileResult.data.activity_patterns,
         preferences: profileResult.data.preferences,
         updated_at: profileResult.data.updated_at,
