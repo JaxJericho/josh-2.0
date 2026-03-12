@@ -16,6 +16,7 @@ export type ConversationSessionMode =
   | "pending_plan_confirmation"
   | "pending_contact_invite_confirmation"
   | "awaiting_invite_reply"
+  | "awaiting_invitation_response"
   | "post_activity_checkin"
   | "post_event"
   | "linkup_forming"

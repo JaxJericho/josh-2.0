@@ -42,6 +42,7 @@ export type ConversationMode =
   | "pending_contact_invite_confirmation"
   | "linkup_forming"
   | "awaiting_invite_reply"
+  | "awaiting_invitation_response"
   | "post_event"
   | "safety_hold";
 

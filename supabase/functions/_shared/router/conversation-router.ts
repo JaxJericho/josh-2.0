@@ -73,6 +73,7 @@ export type ConversationMode =
   | "pending_contact_invite_confirmation"
   | "linkup_forming"
   | "awaiting_invite_reply"
+  | "awaiting_invitation_response"
   | "post_activity_checkin"
   | "post_event"
   | "safety_hold";
@@ -303,6 +304,7 @@ const CONVERSATION_MODES: readonly ConversationMode[] = [
   "pending_contact_invite_confirmation",
   "linkup_forming",
   "awaiting_invite_reply",
+  "awaiting_invitation_response",
   "post_activity_checkin",
   "post_event",
   "safety_hold",
@@ -319,6 +321,7 @@ const STATE_TOKEN_PATTERN_BY_MODE: Record<ConversationMode, RegExp> = {
   pending_contact_invite_confirmation: /^[a-z0-9:_-]+$/i,
   linkup_forming: /^[a-z0-9:_-]+$/i,
   awaiting_invite_reply: /^[a-z0-9:_-]+$/i,
+  awaiting_invitation_response: /^[a-z0-9:_-]+$/i,
   post_activity_checkin: /^checkin:awaiting_(attendance|do_again|bridge):[a-z0-9-]*$/i,
   post_event: POST_EVENT_TOKEN_PATTERN,
   safety_hold: /^[a-z0-9:_-]+$/i,
@@ -333,6 +336,7 @@ const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
   pending_contact_invite_confirmation: "default_engine",
   linkup_forming: "default_engine",
   awaiting_invite_reply: "default_engine",
+  awaiting_invitation_response: "default_engine",
   post_activity_checkin: "post_activity_checkin_handler",
   post_event: "post_event_engine",
   safety_hold: "default_engine",
@@ -347,6 +351,7 @@ const NEXT_TRANSITION_BY_MODE: Record<ConversationMode, string> = {
   pending_contact_invite_confirmation: "invite_confirm:awaiting_reply",
   linkup_forming: "linkup:awaiting_details",
   awaiting_invite_reply: "invite:awaiting_reply",
+  awaiting_invitation_response: "invitation:awaiting_response",
   post_activity_checkin: "checkin:awaiting_attendance",
   post_event: "post_event:attendance",
   safety_hold: "safety:hold_enforced",
@@ -361,6 +366,7 @@ const LEGAL_TRANSITIONS_BY_MODE: Record<ConversationMode, ReadonlySet<string>> =
   pending_contact_invite_confirmation: new Set(["invite_confirm:create:v1"]),
   linkup_forming: new Set(["linkup:awaiting_details"]),
   awaiting_invite_reply: new Set(["invite:awaiting_reply"]),
+  awaiting_invitation_response: new Set(["invitation:awaiting_response"]),
   post_activity_checkin: new Set(["checkin:awaiting_attendance"]),
   post_event: new Set(POST_EVENT_STATE_TOKENS),
   safety_hold: new Set(["safety:hold_enforced"]),
@@ -694,6 +700,7 @@ function shouldBypassIntentClassificationForState(state: ConversationState): boo
     state.mode === "pending_contact_invite_confirmation" ||
     state.mode === "linkup_forming" ||
     state.mode === "awaiting_invite_reply" ||
+    state.mode === "awaiting_invitation_response" ||
     state.mode === "post_activity_checkin" ||
     state.mode === "post_event" ||
     state.mode === "safety_hold"
