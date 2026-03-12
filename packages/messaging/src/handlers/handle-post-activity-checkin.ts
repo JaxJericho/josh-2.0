@@ -27,7 +27,7 @@ type BinaryResponse = "positive" | "negative" | "ambiguous";
 type BridgeResponse = "positive" | "non_positive";
 
 export type HandlePostActivityCheckinDependencies = {
-  fetchPlanBriefActivityKey: (input: { planBriefId: string }) => Promise<string | null>;
+  fetchCheckinActivityKey: (input: { checkinSubjectId: string }) => Promise<string | null>;
   insertLearningSignal: (input: {
     id: string;
     user_id: string;
@@ -96,11 +96,11 @@ export async function handlePostActivityCheckin(
 ): Promise<void> {
   const dependencies = resolveDependencies(overrides);
   const stateToken = session.state_token ?? "";
-  const planBriefId = extractPlanBriefId(stateToken);
-  if (!planBriefId) {
+  const checkinSubjectId = extractCheckinSubjectId(stateToken);
+  if (!checkinSubjectId) {
     dependencies.log({
       level: "error",
-      event: "handle_post_activity_checkin.missing_plan_brief_id",
+      event: "handle_post_activity_checkin.missing_checkin_subject_id",
       payload: {
         userId,
         correlationId,
@@ -115,7 +115,7 @@ export async function handlePostActivityCheckin(
     await setSessionIdle({
       userId,
       correlationId,
-      finalStep: "missing_plan_brief_id",
+      finalStep: "missing_checkin_subject_id",
       dependencies,
     });
     return;
@@ -129,21 +129,21 @@ export async function handlePostActivityCheckin(
       userId,
       correlationId,
       step: step ?? "unknown",
-      planBriefId,
+      checkinSubjectId,
     },
   });
 
-  const activityKey = await dependencies.fetchPlanBriefActivityKey({
-    planBriefId,
+  const activityKey = await dependencies.fetchCheckinActivityKey({
+    checkinSubjectId,
   });
   if (activityKey === null) {
     dependencies.log({
       level: "warn",
-      event: "handle_post_activity_checkin.plan_brief_not_found",
+      event: "handle_post_activity_checkin.checkin_activity_not_found",
       payload: {
         userId,
         correlationId,
-        planBriefId,
+        checkinSubjectId,
       },
     });
   }
@@ -153,7 +153,7 @@ export async function handlePostActivityCheckin(
       await handleAttendanceStep({
         userId,
         message,
-        planBriefId,
+        checkinSubjectId,
         activityKey,
         correlationId,
         dependencies,
@@ -163,7 +163,7 @@ export async function handlePostActivityCheckin(
       await handleDoAgainStep({
         userId,
         message,
-        planBriefId,
+        checkinSubjectId,
         activityKey,
         correlationId,
         dependencies,
@@ -173,7 +173,7 @@ export async function handlePostActivityCheckin(
       await handleBridgeStep({
         userId,
         message,
-        planBriefId,
+        checkinSubjectId,
         activityKey,
         correlationId,
         dependencies,
@@ -201,7 +201,7 @@ export async function handlePostActivityCheckin(
 async function handleAttendanceStep(input: {
   userId: string;
   message: string;
-  planBriefId: string;
+  checkinSubjectId: string;
   activityKey: string | null;
   correlationId: string;
   dependencies: HandlePostActivityCheckinDependencies;
@@ -230,7 +230,7 @@ async function handleAttendanceStep(input: {
     await writeSoloSignal({
       userId: input.userId,
       signalType: "solo_activity_attended",
-      planBriefId: input.planBriefId,
+      checkinSubjectId: input.checkinSubjectId,
       activityKey: input.activityKey,
       correlationId: input.correlationId,
       dependencies: input.dependencies,
@@ -238,7 +238,7 @@ async function handleAttendanceStep(input: {
     await input.dependencies.updateConversationSession({
       userId: input.userId,
       mode: "post_activity_checkin",
-      state_token: buildStateToken("awaiting_do_again", input.planBriefId),
+      state_token: buildStateToken("awaiting_do_again", input.checkinSubjectId),
       updated_at: input.dependencies.nowIso(),
     });
     await input.dependencies.sendSms({
@@ -252,7 +252,7 @@ async function handleAttendanceStep(input: {
   await writeSoloSignal({
     userId: input.userId,
     signalType: "solo_activity_skipped",
-    planBriefId: input.planBriefId,
+    checkinSubjectId: input.checkinSubjectId,
     activityKey: input.activityKey,
     correlationId: input.correlationId,
     dependencies: input.dependencies,
@@ -273,7 +273,7 @@ async function handleAttendanceStep(input: {
 async function handleDoAgainStep(input: {
   userId: string;
   message: string;
-  planBriefId: string;
+  checkinSubjectId: string;
   activityKey: string | null;
   correlationId: string;
   dependencies: HandlePostActivityCheckinDependencies;
@@ -302,7 +302,7 @@ async function handleDoAgainStep(input: {
     await writeSoloSignal({
       userId: input.userId,
       signalType: "solo_do_again_yes",
-      planBriefId: input.planBriefId,
+      checkinSubjectId: input.checkinSubjectId,
       activityKey: input.activityKey,
       correlationId: input.correlationId,
       dependencies: input.dependencies,
@@ -310,7 +310,7 @@ async function handleDoAgainStep(input: {
     await input.dependencies.updateConversationSession({
       userId: input.userId,
       mode: "post_activity_checkin",
-      state_token: buildStateToken("awaiting_bridge", input.planBriefId),
+      state_token: buildStateToken("awaiting_bridge", input.checkinSubjectId),
       updated_at: input.dependencies.nowIso(),
     });
     await input.dependencies.sendSms({
@@ -324,7 +324,7 @@ async function handleDoAgainStep(input: {
   await writeSoloSignal({
     userId: input.userId,
     signalType: "solo_do_again_no",
-    planBriefId: input.planBriefId,
+    checkinSubjectId: input.checkinSubjectId,
     activityKey: input.activityKey,
     correlationId: input.correlationId,
     dependencies: input.dependencies,
@@ -345,7 +345,7 @@ async function handleDoAgainStep(input: {
 async function handleBridgeStep(input: {
   userId: string;
   message: string;
-  planBriefId: string;
+  checkinSubjectId: string;
   activityKey: string | null;
   correlationId: string;
   dependencies: HandlePostActivityCheckinDependencies;
@@ -355,7 +355,7 @@ async function handleBridgeStep(input: {
     await writeSoloSignal({
       userId: input.userId,
       signalType: "solo_bridge_accepted",
-      planBriefId: input.planBriefId,
+      checkinSubjectId: input.checkinSubjectId,
       activityKey: input.activityKey,
       correlationId: input.correlationId,
       dependencies: input.dependencies,
@@ -413,20 +413,20 @@ async function setSessionIdle(input: {
 async function writeSoloSignal(input: {
   userId: string;
   signalType: SoloSignalType;
-  planBriefId: string;
+  checkinSubjectId: string;
   activityKey: string | null;
   correlationId: string;
   dependencies: HandlePostActivityCheckinDependencies;
 }): Promise<void> {
   const idempotencySegment = IDEMPOTENCY_SEGMENT_BY_SIGNAL[input.signalType];
   const idempotencyKey =
-    `ls:solo_checkin:${idempotencySegment}:${input.planBriefId}:${input.userId}`;
+    `ls:solo_checkin:${idempotencySegment}:${input.checkinSubjectId}:${input.userId}`;
   const timestamp = input.dependencies.nowIso();
   const { error } = await input.dependencies.insertLearningSignal({
     id: input.dependencies.generateUuid(),
     user_id: input.userId,
     signal_type: input.signalType,
-    subject_id: input.planBriefId,
+    subject_id: input.checkinSubjectId,
     value_bool: true,
     meta: { activity_key: input.activityKey },
     occurred_at: timestamp,
@@ -463,16 +463,16 @@ async function writeSoloSignal(input: {
   });
 }
 
-function buildStateToken(step: SoloCheckinStep, planBriefId: string): string {
-  return `checkin:${step}:${planBriefId}`;
+function buildStateToken(step: SoloCheckinStep, checkinSubjectId: string): string {
+  return `checkin:${step}:${checkinSubjectId}`;
 }
 
 function resolveDependencies(
   overrides?: HandlePostActivityCheckinDependencyOverrides,
 ): HandlePostActivityCheckinDependencies {
   return {
-    fetchPlanBriefActivityKey: overrides?.fetchPlanBriefActivityKey ??
-      missingDependencyFn("fetchPlanBriefActivityKey"),
+    fetchCheckinActivityKey: overrides?.fetchCheckinActivityKey ??
+      missingDependencyFn("fetchCheckinActivityKey"),
     insertLearningSignal: overrides?.insertLearningSignal ??
       missingDependencyFn("insertLearningSignal"),
     updateConversationSession: overrides?.updateConversationSession ??
@@ -490,13 +490,13 @@ function missingDependencyFn<T extends (...args: any[]) => unknown>(name: string
   }) as unknown as T;
 }
 
-export function extractPlanBriefId(stateToken: string): string | null {
+export function extractCheckinSubjectId(stateToken: string): string | null {
   const segments = stateToken.trim().split(":");
   if (segments.length < 3 || segments[0] !== "checkin") {
     return null;
   }
-  const planBriefId = segments[segments.length - 1]?.trim() ?? "";
-  return planBriefId.length > 0 ? planBriefId : null;
+  const checkinSubjectId = segments[segments.length - 1]?.trim() ?? "";
+  return checkinSubjectId.length > 0 ? checkinSubjectId : null;
 }
 
 export function extractStep(stateToken: string): SoloCheckinStep | null {

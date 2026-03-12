@@ -2,7 +2,6 @@ const CONTACT_INVITATION_PENDING_STATUS = "pending";
 const CONTACT_INVITATION_JOB_PURPOSE = "contact_invitation_invite_v1";
 const CONTACT_INVITATION_TEMPLATE_KEY = "contact_invitation_sms_v1";
 const CONTACT_INVITATION_FALLBACK_NAME = "A friend";
-const CONTACT_CIRCLE_FALLBACK_NAME = "Friend";
 const A2P_BLOCKED_RUN_AT = "2099-01-01T00:00:00.000Z";
 const HASH_ENCODER = new TextEncoder();
 
@@ -54,22 +53,10 @@ export async function createContactInvitationWithSupabase(
     input.inviter_display_name,
     CONTACT_INVITATION_FALLBACK_NAME,
   );
-  const inviteeDisplayName = normalizeDisplayName(
-    input.invitee_display_name,
-    CONTACT_CIRCLE_FALLBACK_NAME,
-  );
   const invitationContext = normalizeOptionalText(input.invitation_context);
   const invitationContextHash = invitationContext
     ? await sha256Hex(invitationContext)
     : null;
-
-  await ensureContactCircleEntry({
-    supabase: input.supabase,
-    inviterUserId: input.inviter_user_id,
-    inviteePhoneHash,
-    inviteePhoneE164: normalizedInviteePhone,
-    inviteeDisplayName,
-  });
 
   const invitationResult = await createOrReusePendingInvitation({
     supabase: input.supabase,
@@ -112,33 +99,6 @@ export async function createContactInvitationWithSupabase(
   };
 }
 
-async function ensureContactCircleEntry(input: {
-  supabase: SupabaseClientLike;
-  inviterUserId: string;
-  inviteePhoneHash: string;
-  inviteePhoneE164: string;
-  inviteeDisplayName: string;
-}): Promise<void> {
-  const { error } = await input.supabase
-    .from("contact_circle")
-    .insert(
-      {
-        user_id: input.inviterUserId,
-        contact_name: input.inviteeDisplayName,
-        contact_phone_hash: input.inviteePhoneHash,
-        contact_phone_e164: input.inviteePhoneE164,
-      },
-      {
-        onConflict: "user_id,contact_phone_hash",
-        ignoreDuplicates: true,
-      },
-    );
-
-  if (error && !isDuplicateKeyError(error)) {
-    throw new Error("Unable to persist contact circle entry for invitation.");
-  }
-}
-
 async function createOrReusePendingInvitation(input: {
   supabase: SupabaseClientLike;
   inviterUserId: string;
@@ -162,7 +122,6 @@ async function createOrReusePendingInvitation(input: {
       inviter_user_id: input.inviterUserId,
       invitee_phone_hash: input.inviteePhoneHash,
       status: CONTACT_INVITATION_PENDING_STATUS,
-      plan_brief_id: null,
     })
     .select("id,status")
     .single();

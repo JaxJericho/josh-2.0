@@ -39,7 +39,6 @@ describe("handleOpenIntent", () => {
         .fn()
         .mockResolvedValueOnce({ allowed: false })
         .mockResolvedValueOnce({ allowed: true }),
-      hasContactCircleEntries: vi.fn().mockResolvedValue(true),
       handoffToNamedPlanFlow: vi.fn().mockResolvedValue({ took_over: false }),
     });
 
@@ -66,10 +65,12 @@ describe("handleOpenIntent", () => {
     });
   });
 
-  it("falls back to solo immediately when no named-plan path is available", async () => {
+  it("falls back to solo immediately when named-plan is not eligible", async () => {
     const deps = buildDependencies({
-      evaluateEligibility: vi.fn().mockResolvedValue({ allowed: false }),
-      hasContactCircleEntries: vi.fn().mockResolvedValue(false),
+      evaluateEligibility: vi
+        .fn()
+        .mockResolvedValueOnce({ allowed: false })
+        .mockResolvedValueOnce({ allowed: false }),
     });
 
     await handleOpenIntent("usr_123", "what should i do", BASE_SESSION, deps);
@@ -125,8 +126,10 @@ function buildDependencies(
   overrides: Partial<HandleOpenIntentDependencies> = {},
 ): HandleOpenIntentDependencies {
   return {
-    evaluateEligibility: vi.fn().mockResolvedValue({ allowed: false }),
-    hasContactCircleEntries: vi.fn().mockResolvedValue(false),
+    evaluateEligibility: vi
+      .fn()
+      .mockResolvedValueOnce({ allowed: false })
+      .mockResolvedValueOnce({ allowed: false }),
     handoffToLinkupFlow: vi.fn().mockResolvedValue({ took_over: false }),
     handoffToNamedPlanFlow: vi.fn().mockResolvedValue({ took_over: false }),
     suggestSoloActivity: vi.fn().mockResolvedValue({

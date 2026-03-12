@@ -18,7 +18,6 @@ describe("3.0 db type definitions", () => {
       id: "inv_123",
       inviter_user_id: "user_123",
       invitee_phone_hash: "hash_123",
-      plan_brief_id: "brief_123",
       status: "pending",
       created_at: "2026-02-28T00:00:00.000Z",
       updated_at: "2026-02-28T00:00:00.000Z",
