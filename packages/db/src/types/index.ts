@@ -4,3 +4,4 @@ export * from "./coordination-dimensions";
 export * from "./coordination-signals";
 export * from "./dimension-coverage-summary";
 export * from "./holistic-extraction";
+export * from "./invitation";
