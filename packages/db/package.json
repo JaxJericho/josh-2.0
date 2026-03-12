@@ -10,6 +10,7 @@
     "./errors": "./src/errors.mjs"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.95.3"
+    "@supabase/supabase-js": "^2.95.3",
+    "zod": "^3.24.2"
   }
 }

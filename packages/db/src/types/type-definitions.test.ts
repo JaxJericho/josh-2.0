@@ -8,7 +8,9 @@ import type {
   DimensionCoverageSummary,
   HolisticExtractInput,
   HolisticExtractOutput,
+  Invitation,
 } from "../index";
+import { InvitationSchema } from "../index";
 
 describe("3.0 db type definitions", () => {
   it("imports and instantiates all new type contracts", () => {
@@ -50,6 +52,23 @@ describe("3.0 db type definitions", () => {
       group_size_fit: ["solo", "small"],
       tags: ["low-bar", "outdoor"],
       created_at: "2026-02-28T00:00:00.000Z",
+    };
+
+    const invitationRecord: Invitation = {
+      id: "7aa85f3b-a6f5-4e94-8080-7b9c8fdc8d7d",
+      user_id: "fbff2aa8-b86f-40d7-9ea5-8115ebf8342a",
+      invitation_type: "solo",
+      linkup_id: null,
+      activity_key: "coffee_walk",
+      time_window: "weekend_morning",
+      state: "pending",
+      expires_at: "2026-03-14T00:00:00.000Z",
+      responded_at: null,
+      response_message_sid: null,
+      idempotency_key: "invitation:user_123:coffee_walk:2026-W11",
+      correlation_id: null,
+      created_at: "2026-03-12T00:00:00.000Z",
+      updated_at: "2026-03-12T00:00:00.000Z",
     };
 
     const dimensions: CoordinationDimensions = {
@@ -106,6 +125,7 @@ describe("3.0 db type definitions", () => {
     };
 
     expect(invitation.status).toBe("pending");
+    expect(InvitationSchema.parse(invitationRecord).state).toBe("pending");
     expect(activityCatalogEntry.activity_key).toBe("coffee_walk");
     expect(coverageSummary.dimensions.social_energy.covered).toBe(true);
     expect(holisticInput.sessionId).toBe("session_123");
