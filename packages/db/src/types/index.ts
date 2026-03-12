@@ -6,4 +6,5 @@ export * from "./dimension-coverage-summary";
 export * from "./holistic-extraction";
 export * from "./invitation";
 export * from "./linkup";
+export * from "./profile";
 export * from "./user";

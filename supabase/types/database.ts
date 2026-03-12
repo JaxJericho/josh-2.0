@@ -1968,6 +1968,7 @@ export type Database = {
           coordination_style: string | null
           country_code: string | null
           created_at: string
+          group_size_preference: Json | null
           id: string
           is_complete_mvp: boolean
           last_interview_step: string | null
@@ -1995,6 +1996,7 @@ export type Database = {
           coordination_style?: string | null
           country_code?: string | null
           created_at?: string
+          group_size_preference?: Json | null
           id?: string
           is_complete_mvp?: boolean
           last_interview_step?: string | null
@@ -2022,6 +2024,7 @@ export type Database = {
           coordination_style?: string | null
           country_code?: string | null
           created_at?: string
+          group_size_preference?: Json | null
           id?: string
           is_complete_mvp?: boolean
           last_interview_step?: string | null

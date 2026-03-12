@@ -6,13 +6,21 @@ import type {
   CoordinationDimensions,
   CoordinationSignals,
   DimensionCoverageSummary,
+  GroupSizePreference,
   HolisticExtractInput,
   HolisticExtractOutput,
   Invitation,
   Linkup,
+  Profile,
   User,
 } from "../index";
-import { InvitationSchema, LinkupSchema, UserSchema } from "../index";
+import {
+  GroupSizePreferenceSchema,
+  InvitationSchema,
+  LinkupSchema,
+  ProfileSchema,
+  UserSchema,
+} from "../index";
 
 describe("3.0 db type definitions", () => {
   it("imports and instantiates all new type contracts", () => {
@@ -128,6 +136,51 @@ describe("3.0 db type definitions", () => {
       updated_at: "2026-03-12T00:00:00.000Z",
     };
 
+    const profileRecord: Profile = {
+      active_intent: null,
+      activity_patterns: {
+        habits: ["coffee_walks"],
+      },
+      boundaries: {
+        pace: "low_key",
+      },
+      completed_at: null,
+      completeness_percent: 72,
+      coordination_dimensions: {
+        group_dynamic: {
+          value: 0.3,
+          confidence: 0.6,
+        },
+      },
+      coordination_style: "direct",
+      country_code: "US",
+      created_at: "2026-03-12T00:00:00.000Z",
+      group_size_preference: {
+        min: 2,
+        max: 6,
+      },
+      id: "f62ab199-88c6-4f8e-b1d9-b9fd7038c1f8",
+      is_complete_mvp: true,
+      last_interview_step: "group_01",
+      notice_preference: "24_hours",
+      personality_substrate: null,
+      preferences: {
+        group_size_pref: "4-6",
+      },
+      relational_style: null,
+      scheduling_availability: {
+        weekends: ["morning"],
+      },
+      stale_at: null,
+      state: "complete_mvp",
+      state_changed_at: "2026-03-12T00:00:00.000Z",
+      state_code: "CA",
+      status_reason: null,
+      updated_at: "2026-03-12T00:00:00.000Z",
+      user_id: "c7af95e7-2370-4f99-b4b2-458b4cfe6958",
+      values_orientation: null,
+    };
+
     const dimensions: CoordinationDimensions = {
       social_energy: { value: 0.6, confidence: 0.7 },
       social_pace: { value: 0.4, confidence: 0.8 },
@@ -184,6 +237,10 @@ describe("3.0 db type definitions", () => {
     expect(invitation.status).toBe("pending");
     expect(InvitationSchema.parse(invitationRecord).state).toBe("pending");
     expect(LinkupSchema.parse(linkupRecord).system_created).toBe(false);
+    expect(ProfileSchema.parse(profileRecord).group_size_preference).toEqual({
+      min: 2,
+      max: 6,
+    });
     expect(UserSchema.parse(userRecord).invitation_count_this_week).toBe(0);
     expect(activityCatalogEntry.activity_key).toBe("coffee_walk");
     expect(coverageSummary.dimensions.social_energy.covered).toBe(true);
@@ -203,5 +260,15 @@ describe("3.0 db type definitions", () => {
     };
 
     expect(invalidInput).toBeDefined();
+  });
+
+  it("validates group size preference bounds", () => {
+    expect(() => GroupSizePreferenceSchema.parse({ min: 1, max: 6 })).toThrow();
+    expect(() => GroupSizePreferenceSchema.parse({ min: 3, max: 11 })).toThrow();
+    expect(() => GroupSizePreferenceSchema.parse({ min: 5, max: 3 })).toThrow();
+
+    const validPreference: GroupSizePreference = { min: 2, max: 6 };
+
+    expect(GroupSizePreferenceSchema.parse(validPreference)).toEqual(validPreference);
   });
 });
