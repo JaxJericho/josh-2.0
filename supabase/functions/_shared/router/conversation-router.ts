@@ -11,23 +11,11 @@ import { logEvent } from "../../../../packages/core/src/observability/logger.ts"
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { classifyIntent } from "../../../../packages/messaging/src/intents/intent-classifier.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import { handleOpenIntent } from "../../../../packages/messaging/src/handlers/handle-open-intent.ts";
-// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   handleInterviewAnswerAbbreviated,
   type AbbreviatedInterviewProfilePatch,
   type AbbreviatedInterviewSessionPatch,
 } from "../../../../packages/messaging/src/handlers/handle-interview-answer-abbreviated.ts";
-// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import {
-  handlePlanSocialChoice,
-  type PlanSocialChoiceAuditAction,
-} from "../../../../packages/messaging/src/handlers/handle-plan-social-choice.ts";
-// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import {
-  handleNamedPlanRequest,
-  type NamedPlanIntentFields,
-} from "../../../../packages/messaging/src/handlers/handle-named-plan-request.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   handlePostActivityCheckin,
@@ -48,15 +36,12 @@ import type {
 } from "../../../../packages/messaging/src/intents/intent-types.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
-  createSupabaseSoloActivityRepository,
-  suggestSoloActivity,
-} from "../../../../packages/core/src/suggestions/suggest-solo-activity.ts";
-// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import {
   buildInvitedAbbreviatedWelcomeMessage,
   CONTACT_INVITE_DECLINE_CONFIRMATION_MESSAGE,
   CONTACT_INVITE_RESPONSE_CLARIFICATION_MESSAGE,
 } from "../../../../packages/core/src/invitations/abbreviated-welcome-messages.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { systemUnknownIntentResponse } from "../../../../packages/messaging/src/templates/system.ts";
 import {
   elapsedMetricMs,
   emitMetricBestEffort,
@@ -271,27 +256,6 @@ const CONTACT_INVITE_DECLINE_EXACT_MATCHES = new Set([
   "n",
   "stop",
   "decline",
-]);
-const NAMED_PLAN_WITH_PATTERN = /\bwith\s+([a-z][a-z' -]{1,60})/i;
-const NAMED_PLAN_SEE_IF_PATTERN =
-  /\bsee if\s+([a-z][a-z' -]{1,60})\s+(?:is\s+)?(?:free|available|down)\b/i;
-const NAMED_PLAN_TIME_WINDOW_PATTERN =
-  /\b(today|tonight|tomorrow|this weekend|next weekend|this week|next week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
-const NAMED_PLAN_ACTIVITY_PATTERN =
-  /\b(?:for|about)\s+(?:a|an|the)?\s*([a-z][a-z0-9' -]{1,100})/i;
-const NAMED_PLAN_CONTACT_STOPWORDS = new Set([
-  "for",
-  "on",
-  "this",
-  "next",
-  "is",
-  "are",
-  "today",
-  "tomorrow",
-  "tonight",
-  "free",
-  "available",
-  "down",
 ]);
 const HASH_ENCODER = new TextEncoder();
 
@@ -1930,192 +1894,36 @@ function assertDispatchedEngineMatchesRoute(
   }
 }
 
-async function dispatchViaDefaultEnginePlaceholder(
+async function runRetiredIntentFallback(
+  input: EngineDispatchInput,
   handlerRoute: Extract<
     RouterRoute,
-    | "contact_invite_response_handler"
-    | "post_activity_checkin_handler"
-    | "open_intent_handler"
-    | "named_plan_request_handler"
-    | "plan_social_choice_handler"
-    | "interview_answer_abbreviated_handler"
+    "open_intent_handler" | "named_plan_request_handler" | "plan_social_choice_handler"
   >,
-  input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
-  const fallbackDecision: RoutingDecision = {
-    ...input.decision,
-    route: "default_engine",
-  };
-  const fallbackResult = await runDefaultEngine({
-    ...input,
-    decision: fallbackDecision,
+  await persistConversationSessionState({
+    supabase: input.supabase,
+    userId: input.decision.user_id,
+    mode: "idle",
+    stateToken: "idle",
   });
 
   return {
     engine: handlerRoute,
-    reply_message: fallbackResult.reply_message,
+    reply_message: systemUnknownIntentResponse(),
   };
 }
 
 async function runOpenIntentHandler(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
-  let replyMessage: string | null = null;
-  const soloRepository = createSupabaseSoloActivityRepository(input.supabase);
-
-  await handleOpenIntent(
-    input.decision.user_id,
-    input.payload.body_raw,
-    {
-      mode: input.decision.state.mode,
-      has_user_record: true,
-      has_pending_contact_invitation: false,
-      is_unknown_number_with_pending_invitation: false,
-    },
-    {
-      evaluateEligibility: ({ userId, action_type }) =>
-        evaluateEligibility({
-          supabase: input.supabase,
-          userId,
-          action_type,
-        }),
-      handoffToLinkupFlow: async () => {
-        const fallbackDecision: RoutingDecision = {
-          ...input.decision,
-          route: "default_engine",
-        };
-        const linkupResult = await runDefaultEngine({
-          ...input,
-          decision: fallbackDecision,
-        });
-        replyMessage = linkupResult.reply_message;
-        return { took_over: true };
-      },
-      handoffToNamedPlanFlow: async () => {
-        // Named-plan handler is not implemented in this ticket; continue to solo fallback.
-        return { took_over: false };
-      },
-      suggestSoloActivity: (userId) =>
-        suggestSoloActivity(userId, {
-          repository: soloRepository,
-        }),
-      sendMessage: async ({ body }) => {
-        replyMessage = body;
-      },
-      updateSessionMode: async ({ userId, mode, stateToken }) => {
-        if (mode !== "awaiting_social_choice") {
-          throw new ConversationRouterError(
-            "INVALID_STATE",
-            `Unsupported open intent target mode '${mode}'.`,
-          );
-        }
-        await persistAwaitingSocialChoiceSession({
-          supabase: input.supabase,
-          userId,
-          stateToken,
-        });
-      },
-    },
-  );
-
-  return {
-    engine: "open_intent_handler",
-    reply_message: replyMessage,
-  };
+  return runRetiredIntentFallback(input, "open_intent_handler");
 }
 
 async function runPlanSocialChoiceHandler(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
-  let replyMessage: string | null = null;
-  const soloRepository = createSupabaseSoloActivityRepository(input.supabase);
-
-  const socialChoiceDeps = {
-    ["createPlan" + "Brief"]: async ({ userId }: { userId: string }) => {
-      return {
-        id: `synthetic_plan:${userId}:${input.payload.inbound_message_sid}`,
-      };
-    },
-    suggestSoloActivity: ({ userId, excludeActivityKeys }: {
-      userId: string;
-      excludeActivityKeys?: string[];
-    }) =>
-      suggestSoloActivity(userId, {
-        repository: soloRepository,
-        excludeActivityKeys,
-      }),
-    sendMessage: async ({ body }: { body: string }) => {
-      replyMessage = body;
-    },
-    updateSessionState: async ({ userId, mode, stateToken }: {
-      userId: string;
-      mode: "idle" | "awaiting_social_choice" | "pending_plan_confirmation";
-      stateToken: string;
-    }) => {
-      await persistConversationSessionState({
-        supabase: input.supabase,
-        userId,
-        mode,
-        stateToken,
-      });
-    },
-    writeAuditEvent: async ({
-      userId,
-      action,
-      targetType,
-      targetId,
-      reason,
-      payload,
-    }: {
-      userId: string;
-      action: PlanSocialChoiceAuditAction;
-      targetType: "plan_brief" | "conversation_session";
-      targetId?: string | null;
-      reason: string;
-      payload: Record<string, unknown>;
-    }) => {
-      const idempotencyKey = buildPlanSocialChoiceAuditIdempotencyKey({
-        userId,
-        inboundMessageSid: input.payload.inbound_message_sid,
-        action,
-      });
-      const { error } = await input.supabase
-        .from("audit_log")
-        .insert({
-          action,
-          target_type: targetType,
-          target_id: targetId ?? null,
-          reason,
-          payload,
-          idempotency_key: idempotencyKey,
-        });
-
-      if (error && !isDuplicateKeyError(error)) {
-        throw new ConversationRouterError(
-          "AUDIT_LOG_FAILED",
-          "Unable to write social-choice audit event.",
-        );
-      }
-    },
-  } as unknown as Parameters<typeof handlePlanSocialChoice>[3];
-
-  await handlePlanSocialChoice(
-    input.decision.user_id,
-    input.payload.body_raw,
-    {
-      mode: input.decision.state.mode,
-      state_token: input.decision.state.state_token,
-      has_user_record: true,
-      has_pending_contact_invitation: false,
-      is_unknown_number_with_pending_invitation: false,
-    },
-    socialChoiceDeps,
-  );
-
-  return {
-    engine: "plan_social_choice_handler",
-    reply_message: replyMessage,
-  };
+  return runRetiredIntentFallback(input, "plan_social_choice_handler");
 }
 
 async function runInterviewAnswerAbbreviatedHandler(
@@ -2314,87 +2122,7 @@ async function runNamedPlanRequestHandler(
 ): Promise<EngineDispatchResult> {
   const pendingInviteConfirmation = parseInviteConfirmationState(input.decision.state);
   if (!pendingInviteConfirmation) {
-    let replyMessage: string | null = null;
-    const intentFields = extractNamedPlanIntentFields(input.payload.body_raw);
-
-    const namedPlanDeps = {
-      evaluateEligibility: async ({ userId, action_type }: {
-        userId: string;
-        action_type: "can_initiate_named_plan";
-      }) => {
-        const eligibility = await evaluateEligibility({
-          supabase: input.supabase,
-          userId,
-          action_type,
-        });
-        return {
-          eligible: eligibility.allowed,
-          reason: eligibility.reason_code,
-        };
-      },
-      findContactByName: async () => null,
-      ["insertPlan" + "Brief"]: async () => ({ error: null }),
-      updateConversationSession: async ({
-        userId,
-        mode,
-        state_token,
-        updated_at,
-      }: {
-        userId: string;
-        mode: "pending_plan_confirmation";
-        state_token: string;
-        updated_at: string;
-      }) => {
-        await persistConversationSessionState({
-          supabase: input.supabase,
-          userId,
-          mode,
-          stateToken: state_token,
-          updatedAt: updated_at,
-        });
-      },
-      sendSms: async ({ body }: { body: string }) => {
-        replyMessage = body;
-      },
-      log: ({ level, event, payload }: {
-        level: "info" | "warn";
-        event: string;
-        payload: Record<string, unknown>;
-      }) => {
-        logEvent({
-          level,
-          event,
-          user_id: input.decision.user_id,
-          correlation_id: input.payload.inbound_message_id,
-          payload: {
-            route: "named_plan_request_handler",
-            session_mode: input.decision.state.mode,
-            session_state_token: input.decision.state.state_token,
-            ...payload,
-          },
-        });
-      },
-    } as unknown as Parameters<typeof handleNamedPlanRequest>[5];
-
-    await handleNamedPlanRequest(
-      input.decision.user_id,
-      input.payload.body_raw,
-      {
-        mode: input.decision.state.mode,
-        state_token: input.decision.state.state_token,
-        has_user_record: true,
-        has_pending_contact_invitation: false,
-        is_unknown_number_with_pending_invitation: false,
-      },
-      intentFields,
-      input.payload.inbound_message_id,
-      namedPlanDeps,
-    );
-
-    return {
-      engine: "named_plan_request_handler",
-      reply_message: replyMessage,
-    };
+    return runRetiredIntentFallback(input, "named_plan_request_handler");
   }
 
   const confirmationDecision = parseInviteConfirmationReply(input.payload.body_raw);
@@ -2435,109 +2163,6 @@ async function runNamedPlanRequestHandler(
     engine: "named_plan_request_handler",
     reply_message: resolveInviteCreationReply(creationResult),
   };
-}
-
-type OpenIntentEligibilityInput = {
-  supabase: SupabaseClientLike;
-  userId: string;
-  action_type: "can_initiate_linkup" | "can_initiate_named_plan";
-};
-
-async function evaluateEligibility(
-  input: OpenIntentEligibilityInput,
-): Promise<{ allowed: boolean; reason_code: string | null; user_message: string | null }> {
-  if (input.action_type === "can_initiate_named_plan") {
-    const subscription = await fetchActiveSubscriptionState(input.supabase, input.userId);
-    const allowed = subscription === "active";
-    return {
-      allowed,
-      reason_code: allowed ? null : "subscription_inactive",
-      user_message: null,
-    };
-  }
-
-  const [entitlements, subscriptionState, profileState] = await Promise.all([
-    fetchEntitlementSnapshot(input.supabase, input.userId),
-    fetchActiveSubscriptionState(input.supabase, input.userId),
-    fetchProfileState(input.supabase, input.userId),
-  ]);
-
-  const subscriptionActive = subscriptionState === "active";
-  const canInitiateLinkup = entitlements?.can_initiate_linkup === true;
-  const profileEligible = profileState === "complete_mvp" || profileState === "complete_full";
-  const allowed = subscriptionActive && canInitiateLinkup && profileEligible;
-
-  return {
-    allowed,
-    reason_code: allowed ? null : "linkup_eligibility_failed",
-    user_message: null,
-  };
-}
-
-async function fetchEntitlementSnapshot(
-  supabase: SupabaseClientLike,
-  userId: string,
-): Promise<{ can_initiate_linkup: boolean } | null> {
-  const { data, error } = await supabase
-    .from("entitlements")
-    .select("can_initiate_linkup")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) {
-    throw new ConversationRouterError(
-      "ELIGIBILITY_LOOKUP_FAILED",
-      "Unable to evaluate LinkUp entitlement state.",
-    );
-  }
-
-  if (!data) {
-    return null;
-  }
-
-  return {
-    can_initiate_linkup: data.can_initiate_linkup === true,
-  };
-}
-
-async function fetchActiveSubscriptionState(
-  supabase: SupabaseClientLike,
-  userId: string,
-): Promise<string | null> {
-  const { data, error } = await supabase
-    .from("subscriptions")
-    .select("state")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) {
-    throw new ConversationRouterError(
-      "ELIGIBILITY_LOOKUP_FAILED",
-      "Unable to evaluate subscription state.",
-    );
-  }
-
-  return typeof data?.state === "string" ? data.state : null;
-}
-
-async function fetchProfileState(
-  supabase: SupabaseClientLike,
-  userId: string,
-): Promise<string | null> {
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("state")
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (error) {
-    throw new ConversationRouterError(
-      "ELIGIBILITY_LOOKUP_FAILED",
-      "Unable to evaluate profile completion state.",
-    );
-  }
-
-  return typeof data?.state === "string" ? data.state : null;
 }
 
 async function fetchRequiredProfileId(
@@ -2776,18 +2401,6 @@ function isInviteConfirmationStateToken(stateToken: string): boolean {
   return stateToken.startsWith(`${INVITE_CONFIRMATION_STATE_TOKEN_PREFIX}:`);
 }
 
-function extractNamedPlanIntentFields(message: string): NamedPlanIntentFields {
-  const contactName = extractNamedPlanContactName(message);
-  const timeWindowHint = extractNamedPlanTimeWindowHint(message);
-  const activityHint = extractNamedPlanActivityHint(message, timeWindowHint);
-
-  return {
-    contactNames: contactName ? [contactName] : [],
-    ...(activityHint ? { activityHint } : {}),
-    ...(timeWindowHint ? { timeWindowHint } : {}),
-  };
-}
-
 function normalizeIntentText(value: string): string {
   return value
     .trim()
@@ -2809,91 +2422,6 @@ function decodeStateTokenPart(value: string): string | null {
   } catch {
     return null;
   }
-}
-
-function extractNamedPlanContactName(message: string): string | null {
-  const withMatch = NAMED_PLAN_WITH_PATTERN.exec(message);
-  if (withMatch?.[1]) {
-    const normalized = normalizeNameCandidate(withMatch[1]);
-    if (normalized) {
-      return normalized;
-    }
-  }
-
-  const seeIfMatch = NAMED_PLAN_SEE_IF_PATTERN.exec(message);
-  if (!seeIfMatch?.[1]) {
-    return null;
-  }
-
-  return normalizeNameCandidate(seeIfMatch[1]);
-}
-
-function extractNamedPlanTimeWindowHint(message: string): string | null {
-  const match = NAMED_PLAN_TIME_WINDOW_PATTERN.exec(message);
-  if (!match?.[1]) {
-    return null;
-  }
-  const trimmed = match[1].replace(/\s+/g, " ").trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function extractNamedPlanActivityHint(
-  message: string,
-  timeWindowHint: string | null,
-): string | null {
-  const match = NAMED_PLAN_ACTIVITY_PATTERN.exec(message);
-  if (!match?.[1]) {
-    return null;
-  }
-
-  let activity = match[1].replace(/\s+/g, " ").trim();
-  if (timeWindowHint) {
-    activity = activity.replace(
-      new RegExp(`\\b${escapeRegExp(timeWindowHint)}\\b`, "i"),
-      " ",
-    ).replace(/\s+/g, " ").trim();
-  }
-
-  if (activity.length === 0) {
-    return null;
-  }
-
-  return activity;
-}
-
-function normalizeNameCandidate(candidate: string): string | null {
-  const tokens = candidate.trim().replace(/\s+/g, " ").split(" ");
-  const keep: string[] = [];
-  for (const token of tokens) {
-    if (NAMED_PLAN_CONTACT_STOPWORDS.has(token.toLowerCase())) {
-      break;
-    }
-    keep.push(token);
-    if (keep.length === 3) {
-      break;
-    }
-  }
-  if (keep.length === 0) {
-    return null;
-  }
-  return keep.join(" ");
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-async function persistAwaitingSocialChoiceSession(input: {
-  supabase: SupabaseClientLike;
-  userId: string;
-  stateToken: string;
-}): Promise<void> {
-  await persistConversationSessionState({
-    supabase: input.supabase,
-    userId: input.userId,
-    mode: "awaiting_social_choice",
-    stateToken: input.stateToken,
-  });
 }
 
 async function persistConversationSessionState(input: {
@@ -2940,14 +2468,6 @@ async function persistConversationSessionState(input: {
       "Unable to persist conversation session state transition.",
     );
   }
-}
-
-function buildPlanSocialChoiceAuditIdempotencyKey(input: {
-  userId: string;
-  inboundMessageSid: string;
-  action: PlanSocialChoiceAuditAction;
-}): string {
-  return `plan_social_choice:audit:${input.userId}:${input.inboundMessageSid}:${input.action}`;
 }
 
 function isDuplicateKeyError(error: { code?: string; message?: string } | null): boolean {
