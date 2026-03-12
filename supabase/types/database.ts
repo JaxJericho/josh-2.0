@@ -2843,6 +2843,10 @@ export type Database = {
           email: string | null
           first_name: string
           id: string
+          invitation_backoff_count: number
+          invitation_count_this_week: number
+          invitation_week_start: string | null
+          last_invited_at: string | null
           last_name: string
           phone_e164: string
           phone_hash: string
@@ -2863,6 +2867,10 @@ export type Database = {
           email?: string | null
           first_name: string
           id?: string
+          invitation_backoff_count?: number
+          invitation_count_this_week?: number
+          invitation_week_start?: string | null
+          last_invited_at?: string | null
           last_name: string
           phone_e164: string
           phone_hash: string
@@ -2883,6 +2891,10 @@ export type Database = {
           email?: string | null
           first_name?: string
           id?: string
+          invitation_backoff_count?: number
+          invitation_count_this_week?: number
+          invitation_week_start?: string | null
+          last_invited_at?: string | null
           last_name?: string
           phone_e164?: string
           phone_hash?: string
