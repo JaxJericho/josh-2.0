@@ -1,19 +1,17 @@
 export type IntentType =
-  | "OPEN_INTENT"
-  | "NAMED_PLAN_REQUEST"
-  | "PLAN_SOCIAL_CHOICE"
   | "CONTACT_INVITE_RESPONSE"
   | "POST_ACTIVITY_CHECKIN"
+  | "INVITE_RESPONSE"
+  | "INVITATION_RESPONSE"
   | "INTERVIEW_ANSWER"
   | "INTERVIEW_ANSWER_ABBREVIATED"
+  | "UNKNOWN"
   | "SYSTEM_COMMAND";
 
 export type ConversationSessionMode =
   | "idle"
   | "interviewing"
   | "interviewing_abbreviated"
-  | "awaiting_social_choice"
-  | "pending_plan_confirmation"
   | "pending_contact_invite_confirmation"
   | "awaiting_invite_reply"
   | "awaiting_invitation_response"
@@ -34,8 +32,3 @@ export type IntentClassification = {
   intent: IntentType;
   confidence: number;
 };
-
-export type OpenVsNamedIntent = Extract<
-  IntentType,
-  "OPEN_INTENT" | "NAMED_PLAN_REQUEST"
->;

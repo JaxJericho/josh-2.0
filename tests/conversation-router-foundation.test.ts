@@ -135,8 +135,8 @@ describe("conversation router foundation", () => {
 
   it("short-circuits pending invitation lookup before user resolution", async () => {
     const classifySpy = vi.fn(() => ({
-      intent: "OPEN_INTENT" as const,
-      confidence: 0.9,
+      intent: "UNKNOWN" as const,
+      confidence: 0.35,
     }));
     const inviteePhoneHash = "hash_invitee_123";
     const supabase = buildSupabaseMock({
@@ -164,8 +164,8 @@ describe("conversation router foundation", () => {
 
   it("bypasses classifier and all lookups for STOP/HELP system commands", async () => {
     const classifySpy = vi.fn(() => ({
-      intent: "OPEN_INTENT" as const,
-      confidence: 0.9,
+      intent: "UNKNOWN" as const,
+      confidence: 0.35,
     }));
     const supabase = buildSupabaseMock({
       user: { id: "usr_123" },
@@ -191,8 +191,8 @@ describe("conversation router foundation", () => {
 
   it("keeps interviewing mode on engine routing without classifier call", async () => {
     const classifySpy = vi.fn(() => ({
-      intent: "OPEN_INTENT" as const,
-      confidence: 0.9,
+      intent: "UNKNOWN" as const,
+      confidence: 0.35,
     }));
     const supabase = buildSupabaseMock({
       user: { id: "usr_123" },
@@ -212,8 +212,8 @@ describe("conversation router foundation", () => {
 
   it("keeps interviewing_abbreviated mode on abbreviated handler routing without classifier call", async () => {
     const classifySpy = vi.fn(() => ({
-      intent: "OPEN_INTENT" as const,
-      confidence: 0.9,
+      intent: "UNKNOWN" as const,
+      confidence: 0.35,
     }));
     const supabase = buildSupabaseMock({
       user: { id: "usr_123" },
@@ -261,7 +261,7 @@ describe("conversation router foundation", () => {
       payload: samplePayload(),
     });
 
-    expect(decision.route).toBe("open_intent_handler");
+    expect(decision.route).toBe("default_engine");
     expect(decision.state.mode).toBe("idle");
     expect(decision.state.state_token).toBe("idle");
   });

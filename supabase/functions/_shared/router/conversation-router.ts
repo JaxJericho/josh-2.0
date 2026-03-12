@@ -111,6 +111,11 @@ export type EngineDispatchResult = {
   reply_message: string | null;
 };
 
+type LegacyRetiredIntent =
+  | "OPEN_INTENT"
+  | "NAMED_PLAN_REQUEST"
+  | "PLAN_SOCIAL_CHOICE";
+
 type SupabaseClientLike = {
   from: (table: string) => any;
   rpc?: (fn: string, args?: Record<string, unknown>) => Promise<any>;
@@ -443,7 +448,7 @@ export async function routeConversationMessage(
 
     if (!shouldBypassIntentClassificationForState(state)) {
       const classification = classifier(params.payload.body_raw, {
-        mode: state.mode,
+        mode: toIntentClassifierSessionMode(state.mode),
       });
       routedIntent = classification.intent;
       dispatchRoute = resolveRouteForIntent(classification.intent, state);
@@ -672,7 +677,7 @@ function shouldBypassIntentClassificationForState(state: ConversationState): boo
 }
 
 function resolveRouteForIntent(
-  intent: IntentClassification["intent"],
+  intent: IntentClassification["intent"] | LegacyRetiredIntent,
   state: ConversationState,
 ): RouterRoute {
   switch (intent) {
@@ -680,6 +685,10 @@ function resolveRouteForIntent(
       return "contact_invite_response_handler";
     case "POST_ACTIVITY_CHECKIN":
       return "post_activity_checkin_handler";
+    case "INVITE_RESPONSE":
+      return resolveRouteForState(state);
+    case "INVITATION_RESPONSE":
+      return resolveRouteForState(state);
     case "OPEN_INTENT":
       return "open_intent_handler";
     case "NAMED_PLAN_REQUEST":
@@ -690,6 +699,8 @@ function resolveRouteForIntent(
       return resolveRouteForState(state);
     case "INTERVIEW_ANSWER_ABBREVIATED":
       return "interview_answer_abbreviated_handler";
+    case "UNKNOWN":
+      return resolveRouteForState(state);
     case "SYSTEM_COMMAND":
       return "system_command_handler";
   }
@@ -2062,7 +2073,7 @@ async function runPostActivityCheckinHandler(
     input.decision.user_id,
     input.payload.body_raw,
     {
-      mode: input.decision.state.mode,
+      mode: "post_activity_checkin",
       state_token: input.decision.state.state_token,
       has_user_record: true,
       has_pending_contact_invitation: false,
@@ -2407,6 +2418,15 @@ function normalizeIntentText(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9\s']/g, " ")
     .replace(/\s+/g, " ");
+}
+
+function toIntentClassifierSessionMode(
+  mode: ConversationMode,
+): IntentClassifierSession["mode"] {
+  if (mode === "awaiting_social_choice" || mode === "pending_plan_confirmation") {
+    return "idle";
+  }
+  return mode;
 }
 
 function decodeStateTokenPart(value: string): string | null {

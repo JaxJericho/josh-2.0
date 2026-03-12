@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { classifyIntent } from "./intent-classifier";
 import type { ConversationSession } from "./intent-types";
 
@@ -19,70 +19,78 @@ function buildSession(
 
 describe("classifyIntent", () => {
   it("classifies unknown-number pending invitations before any other path", () => {
-    const disambiguator = vi.fn((): "OPEN_INTENT" => "OPEN_INTENT");
-
     const classification = classifyIntent(
       "STOP",
       buildSession({
         has_user_record: false,
         has_pending_contact_invitation: true,
       }),
-      { resolveAmbiguousIntent: disambiguator },
     );
 
     expect(classification).toEqual({
       intent: "CONTACT_INVITE_RESPONSE",
       confidence: 1,
     });
-    expect(disambiguator).not.toHaveBeenCalled();
   });
 
-  it("classifies awaiting_social_choice as PLAN_SOCIAL_CHOICE without LLM", () => {
-    const disambiguator = vi.fn((): "OPEN_INTENT" => "OPEN_INTENT");
-
+  it("classifies awaiting_invitation_response as INVITATION_RESPONSE", () => {
     const classification = classifyIntent(
-      "I will take option B",
-      buildSession({ mode: "awaiting_social_choice" }),
-      { resolveAmbiguousIntent: disambiguator },
+      "yes",
+      buildSession({ mode: "awaiting_invitation_response" }),
     );
 
     expect(classification).toEqual({
-      intent: "PLAN_SOCIAL_CHOICE",
+      intent: "INVITATION_RESPONSE",
       confidence: 1,
     });
-    expect(disambiguator).not.toHaveBeenCalled();
   });
 
-  it("classifies interviewing mode as INTERVIEW_ANSWER without LLM", () => {
-    const disambiguator = vi.fn((): "OPEN_INTENT" => "OPEN_INTENT");
+  it("classifies awaiting_invite_reply as INVITE_RESPONSE", () => {
+    const classification = classifyIntent(
+      "yes",
+      buildSession({ mode: "awaiting_invite_reply" }),
+    );
 
+    expect(classification).toEqual({
+      intent: "INVITE_RESPONSE",
+      confidence: 1,
+    });
+  });
+
+  it("classifies interviewing mode as INTERVIEW_ANSWER", () => {
     const classification = classifyIntent(
       "I like low-key coffee shops",
       buildSession({ mode: "interviewing" }),
-      { resolveAmbiguousIntent: disambiguator },
     );
 
     expect(classification).toEqual({
       intent: "INTERVIEW_ANSWER",
       confidence: 1,
     });
-    expect(disambiguator).not.toHaveBeenCalled();
   });
 
-  it("classifies interviewing_abbreviated mode as INTERVIEW_ANSWER_ABBREVIATED without LLM", () => {
-    const disambiguator = vi.fn((): "OPEN_INTENT" => "OPEN_INTENT");
-
+  it("classifies interviewing_abbreviated mode as INTERVIEW_ANSWER_ABBREVIATED", () => {
     const classification = classifyIntent(
       "Weeknights are best for me",
       buildSession({ mode: "interviewing_abbreviated" }),
-      { resolveAmbiguousIntent: disambiguator },
     );
 
     expect(classification).toEqual({
       intent: "INTERVIEW_ANSWER_ABBREVIATED",
       confidence: 1,
     });
-    expect(disambiguator).not.toHaveBeenCalled();
+  });
+
+  it("classifies post_activity_checkin mode as POST_ACTIVITY_CHECKIN", () => {
+    const classification = classifyIntent(
+      "I went",
+      buildSession({ mode: "post_activity_checkin" }),
+    );
+
+    expect(classification).toEqual({
+      intent: "POST_ACTIVITY_CHECKIN",
+      confidence: 1,
+    });
   });
 
   it("classifies STOP and HELP as SYSTEM_COMMAND from any mode", () => {
@@ -92,7 +100,7 @@ describe("classifyIntent", () => {
     );
     const helpClassification = classifyIntent(
       "HELP",
-      buildSession({ mode: "awaiting_social_choice" }),
+      buildSession({ mode: "awaiting_invitation_response" }),
     );
 
     expect(stopClassification).toEqual({
@@ -105,61 +113,24 @@ describe("classifyIntent", () => {
     });
   });
 
-  it("uses disambiguator only for ambiguous OPEN_INTENT vs NAMED_PLAN_REQUEST", () => {
-    const disambiguator = vi.fn(
-      (): "NAMED_PLAN_REQUEST" => "NAMED_PLAN_REQUEST",
-    );
-
+  it("classifies non-special idle messages as UNKNOWN", () => {
     const classification = classifyIntent(
       "Let's make a plan",
       buildSession(),
-      { resolveAmbiguousIntent: disambiguator },
     );
 
     expect(classification).toEqual({
-      intent: "NAMED_PLAN_REQUEST",
-      confidence: 0.7,
+      intent: "UNKNOWN",
+      confidence: 0.35,
     });
-    expect(disambiguator).toHaveBeenCalledTimes(1);
-    expect(disambiguator).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "Let's make a plan",
-        normalizedMessage: "let's make a plan",
-      }),
-    );
-  });
-
-  it("does not call disambiguator for clear OPEN_INTENT and NAMED_PLAN_REQUEST", () => {
-    const disambiguator = vi.fn((): "OPEN_INTENT" => "OPEN_INTENT");
-
-    const openIntent = classifyIntent(
-      "I want to do something this weekend",
-      buildSession(),
-      { resolveAmbiguousIntent: disambiguator },
-    );
-    const namedIntent = classifyIntent(
-      "I want to go hiking with Sarah",
-      buildSession(),
-      { resolveAmbiguousIntent: disambiguator },
-    );
-
-    expect(openIntent.intent).toBe("OPEN_INTENT");
-    expect(namedIntent.intent).toBe("NAMED_PLAN_REQUEST");
-    expect(disambiguator).not.toHaveBeenCalled();
   });
 
   it("always returns confidence in the [0, 1] range", () => {
     const classifications = [
       classifyIntent("HELP", buildSession()),
-      classifyIntent(
-        "I want to do something this weekend",
-        buildSession(),
-      ),
-      classifyIntent(
-        "I want to go hiking with Sarah",
-        buildSession(),
-      ),
-      classifyIntent("Let's make a plan", buildSession()),
+      classifyIntent("yes", buildSession({ mode: "awaiting_invitation_response" })),
+      classifyIntent("yes", buildSession({ mode: "awaiting_invite_reply" })),
+      classifyIntent("hello", buildSession()),
     ];
 
     for (const classification of classifications) {

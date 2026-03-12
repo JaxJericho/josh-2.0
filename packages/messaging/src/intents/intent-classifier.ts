@@ -1,55 +1,14 @@
 import type {
   ConversationSession,
   IntentClassification,
-  OpenVsNamedIntent,
 } from "./intent-types";
 
 const STOP_KEYWORDS = new Set(["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
 const HELP_KEYWORDS = new Set(["HELP", "INFO"]);
-const OPEN_INTENT_HINT_PATTERN =
-  /\b(something|anything|idea|ideas|suggestion|suggestions|today|tomorrow|tonight)\b|\b(this|next)\s+weekend\b|\b(get\s+out|hang\s*out|go\s*out)\b/i;
-const GROUP_REFERENCE_PATTERN =
-  /\b(my|our)\s+(friend|friends|family|crew|group|coworker|coworkers|team|partner|roommate|siblings?|parents?|kids?|neighbors?)\b/i;
-const ACTION_PHRASE_PATTERN =
-  /\b(want|wanna|would\s+like|looking|feel\s+like|hoping)\b/i;
-const GENERIC_WITH_TARGETS = new Set([
-  "someone",
-  "somebody",
-  "anyone",
-  "anybody",
-  "person",
-  "people",
-  "everyone",
-  "everybody",
-  "nobody",
-  "them",
-  "him",
-  "her",
-  "you",
-  "me",
-  "us",
-  "myself",
-]);
-
-export type IntentDisambiguationInput = {
-  message: string;
-  normalizedMessage: string;
-  session: ConversationSession;
-  candidates: readonly ["OPEN_INTENT", "NAMED_PLAN_REQUEST"];
-};
-
-export type IntentDisambiguator = (
-  input: IntentDisambiguationInput,
-) => OpenVsNamedIntent | null | undefined;
-
-export type ClassifyIntentOptions = {
-  resolveAmbiguousIntent?: IntentDisambiguator;
-};
 
 export function classifyIntent(
   message: string,
   session: ConversationSession,
-  options: ClassifyIntentOptions = {},
 ): IntentClassification {
   if (hasPendingInvitationForUnknownSender(session)) {
     return buildClassification("CONTACT_INVITE_RESPONSE", 1);
@@ -60,8 +19,12 @@ export function classifyIntent(
     return buildClassification("SYSTEM_COMMAND", 1);
   }
 
-  if (session.mode === "awaiting_social_choice") {
-    return buildClassification("PLAN_SOCIAL_CHOICE", 1);
+  if (session.mode === "awaiting_invitation_response") {
+    return buildClassification("INVITATION_RESPONSE", 1);
+  }
+
+  if (session.mode === "awaiting_invite_reply") {
+    return buildClassification("INVITE_RESPONSE", 1);
   }
 
   if (session.mode === "interviewing") {
@@ -76,34 +39,11 @@ export function classifyIntent(
     return buildClassification("POST_ACTIVITY_CHECKIN", 1);
   }
 
-  const normalizedForIntent = normalizeForIntentParse(message);
-  if (looksLikeNamedPlanRequest(normalizedForIntent)) {
-    return buildClassification("NAMED_PLAN_REQUEST", 0.92);
-  }
-
-  if (looksLikeOpenIntent(normalizedForIntent)) {
-    return buildClassification("OPEN_INTENT", 0.9);
-  }
-
-  const resolvedByDisambiguator = options.resolveAmbiguousIntent?.({
-    message,
-    normalizedMessage: normalizedForIntent,
-    session,
-    candidates: ["OPEN_INTENT", "NAMED_PLAN_REQUEST"] as const,
-  });
-  if (resolvedByDisambiguator) {
-    return buildClassification(resolvedByDisambiguator, 0.7);
-  }
-
-  return buildClassification("OPEN_INTENT", 0.35);
+  return buildClassification("UNKNOWN", 0.35);
 }
 
 function normalizeForKeywordMatch(message: string): string {
   return message.trim().replace(/\s+/g, " ").toUpperCase();
-}
-
-function normalizeForIntentParse(message: string): string {
-  return message.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function isSystemKeyword(normalizedMessage: string): boolean {
@@ -116,32 +56,6 @@ function hasPendingInvitationForUnknownSender(session: ConversationSession): boo
   }
   return session.has_user_record === false &&
     session.has_pending_contact_invitation === true;
-}
-
-function looksLikeNamedPlanRequest(normalizedMessage: string): boolean {
-  if (GROUP_REFERENCE_PATTERN.test(normalizedMessage)) {
-    return true;
-  }
-
-  const withMatch = /\bwith\s+([a-z][a-z'-]{1,})(?:\s+([a-z][a-z'-]{1,}))?/i.exec(
-    normalizedMessage,
-  );
-  if (!withMatch) {
-    return false;
-  }
-
-  const firstToken = withMatch[1]?.toLowerCase() ?? "";
-  if (!firstToken || GENERIC_WITH_TARGETS.has(firstToken)) {
-    return false;
-  }
-
-  return true;
-}
-
-function looksLikeOpenIntent(normalizedMessage: string): boolean {
-  return OPEN_INTENT_HINT_PATTERN.test(normalizedMessage) ||
-    (ACTION_PHRASE_PATTERN.test(normalizedMessage) &&
-      /\b(do|plan|hang|go)\b/.test(normalizedMessage));
 }
 
 function buildClassification(
