@@ -1970,11 +1970,13 @@ export type Database = {
           created_at: string
           group_size_preference: Json | null
           id: string
+          interest_signatures: Json | null
           is_complete_mvp: boolean
           last_interview_step: string | null
           notice_preference: string | null
           personality_substrate: Json | null
           preferences: Json
+          relational_context: Json | null
           relational_style: Json | null
           scheduling_availability: Json | null
           stale_at: string | null
@@ -1998,11 +2000,13 @@ export type Database = {
           created_at?: string
           group_size_preference?: Json | null
           id?: string
+          interest_signatures?: Json | null
           is_complete_mvp?: boolean
           last_interview_step?: string | null
           notice_preference?: string | null
           personality_substrate?: Json | null
           preferences?: Json
+          relational_context?: Json | null
           relational_style?: Json | null
           scheduling_availability?: Json | null
           stale_at?: string | null
@@ -2026,11 +2030,13 @@ export type Database = {
           created_at?: string
           group_size_preference?: Json | null
           id?: string
+          interest_signatures?: Json | null
           is_complete_mvp?: boolean
           last_interview_step?: string | null
           notice_preference?: string | null
           personality_substrate?: Json | null
           preferences?: Json
+          relational_context?: Json | null
           relational_style?: Json | null
           scheduling_availability?: Json | null
           stale_at?: string | null
