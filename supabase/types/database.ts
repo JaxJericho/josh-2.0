@@ -34,30 +34,48 @@ export type Database = {
   }
   public: {
     Tables: {
-      admin_users: {
+      activity_catalog: {
         Row: {
+          activity_key: string
+          category: string
+          constraints: Json
           created_at: string
-          email: string | null
+          display_name: string
+          group_size_fit: string[]
           id: string
-          role: Database["public"]["Enums"]["admin_role"]
-          updated_at: string
-          user_id: string
+          motive_weights: Json
+          preferred_windows: string[]
+          regional_availability: string
+          short_description: string
+          tags: string[] | null
         }
         Insert: {
+          activity_key: string
+          category: string
+          constraints: Json
           created_at?: string
-          email?: string | null
+          display_name: string
+          group_size_fit: string[]
           id?: string
-          role: Database["public"]["Enums"]["admin_role"]
-          updated_at?: string
-          user_id: string
+          motive_weights: Json
+          preferred_windows: string[]
+          regional_availability: string
+          short_description: string
+          tags?: string[] | null
         }
         Update: {
+          activity_key?: string
+          category?: string
+          constraints?: Json
           created_at?: string
-          email?: string | null
+          display_name?: string
+          group_size_fit?: string[]
           id?: string
-          role?: Database["public"]["Enums"]["admin_role"]
-          updated_at?: string
-          user_id?: string
+          motive_weights?: Json
+          preferred_windows?: string[]
+          regional_availability?: string
+          short_description?: string
+          tags?: string[] | null
         }
         Relationships: []
       }
@@ -98,6 +116,33 @@ export type Database = {
             referencedColumns: ["user_id"]
           },
         ]
+      }
+      admin_users: {
+        Row: {
+          created_at: string
+          email: string | null
+          id: string
+          role: Database["public"]["Enums"]["admin_role"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          id?: string
+          role: Database["public"]["Enums"]["admin_role"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          id?: string
+          role?: Database["public"]["Enums"]["admin_role"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       audit_log: {
         Row: {
@@ -288,6 +333,41 @@ export type Database = {
           {
             foreignKeyName: "contact_exchanges_user_b_id_fkey"
             columns: ["user_b_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      contact_invitations: {
+        Row: {
+          created_at: string
+          id: string
+          invitee_phone_hash: string
+          inviter_user_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          invitee_phone_hash: string
+          inviter_user_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          invitee_phone_hash?: string
+          inviter_user_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_invitations_inviter_user_id_fkey"
+            columns: ["inviter_user_id"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -618,6 +698,72 @@ export type Database = {
           },
         ]
       }
+      invitations: {
+        Row: {
+          activity_key: string
+          correlation_id: string | null
+          created_at: string
+          expires_at: string
+          id: string
+          idempotency_key: string
+          invitation_type: Database["public"]["Enums"]["invitation_type"]
+          linkup_id: string | null
+          responded_at: string | null
+          response_message_sid: string | null
+          state: Database["public"]["Enums"]["invitation_state"]
+          time_window: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          activity_key: string
+          correlation_id?: string | null
+          created_at?: string
+          expires_at: string
+          id?: string
+          idempotency_key: string
+          invitation_type: Database["public"]["Enums"]["invitation_type"]
+          linkup_id?: string | null
+          responded_at?: string | null
+          response_message_sid?: string | null
+          state?: Database["public"]["Enums"]["invitation_state"]
+          time_window: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          activity_key?: string
+          correlation_id?: string | null
+          created_at?: string
+          expires_at?: string
+          id?: string
+          idempotency_key?: string
+          invitation_type?: Database["public"]["Enums"]["invitation_type"]
+          linkup_id?: string | null
+          responded_at?: string | null
+          response_message_sid?: string | null
+          state?: Database["public"]["Enums"]["invitation_state"]
+          time_window?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invitations_linkup_id_fkey"
+            columns: ["linkup_id"]
+            isOneToOne: false
+            referencedRelation: "linkups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invitations_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       keyword_rules: {
         Row: {
           action: Database["public"]["Enums"]["keyword_rule_action"]
@@ -756,6 +902,162 @@ export type Database = {
           },
         ]
       }
+      linkup_candidate_seeds: {
+        Row: {
+          candidate_user_id: string
+          created_at: string
+          id: string
+          ineligible_reason: string | null
+          invited_at: string | null
+          invited_wave: number | null
+          is_eligible: boolean
+          linkup_id: string
+          rank_position: number | null
+          rank_score: number | null
+          seed_source: string
+          source_match_run_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          candidate_user_id: string
+          created_at?: string
+          id?: string
+          ineligible_reason?: string | null
+          invited_at?: string | null
+          invited_wave?: number | null
+          is_eligible?: boolean
+          linkup_id: string
+          rank_position?: number | null
+          rank_score?: number | null
+          seed_source: string
+          source_match_run_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          candidate_user_id?: string
+          created_at?: string
+          id?: string
+          ineligible_reason?: string | null
+          invited_at?: string | null
+          invited_wave?: number | null
+          is_eligible?: boolean
+          linkup_id?: string
+          rank_position?: number | null
+          rank_score?: number | null
+          seed_source?: string
+          source_match_run_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "linkup_candidate_seeds_candidate_user_id_fkey"
+            columns: ["candidate_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "linkup_candidate_seeds_linkup_id_fkey"
+            columns: ["linkup_id"]
+            isOneToOne: false
+            referencedRelation: "linkups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "linkup_candidate_seeds_source_match_run_id_fkey"
+            columns: ["source_match_run_id"]
+            isOneToOne: false
+            referencedRelation: "match_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      linkup_coordination_messages: {
+        Row: {
+          created_at: string
+          enqueued_at: string | null
+          failed_at: string | null
+          id: string
+          idempotency_key: string
+          last_error: string | null
+          linkup_id: string
+          lock_version: number
+          message_text: string
+          sent_at: string | null
+          sms_message_id: string | null
+          sms_outbound_job_id: string | null
+          status: string
+          suppress_reason: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          enqueued_at?: string | null
+          failed_at?: string | null
+          id?: string
+          idempotency_key: string
+          last_error?: string | null
+          linkup_id: string
+          lock_version: number
+          message_text: string
+          sent_at?: string | null
+          sms_message_id?: string | null
+          sms_outbound_job_id?: string | null
+          status?: string
+          suppress_reason?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          enqueued_at?: string | null
+          failed_at?: string | null
+          id?: string
+          idempotency_key?: string
+          last_error?: string | null
+          linkup_id?: string
+          lock_version?: number
+          message_text?: string
+          sent_at?: string | null
+          sms_message_id?: string | null
+          sms_outbound_job_id?: string | null
+          status?: string
+          suppress_reason?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "linkup_coordination_messages_linkup_id_fkey"
+            columns: ["linkup_id"]
+            isOneToOne: false
+            referencedRelation: "linkups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "linkup_coordination_messages_sms_message_id_fkey"
+            columns: ["sms_message_id"]
+            isOneToOne: false
+            referencedRelation: "sms_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "linkup_coordination_messages_sms_outbound_job_id_fkey"
+            columns: ["sms_outbound_job_id"]
+            isOneToOne: false
+            referencedRelation: "sms_outbound_jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "linkup_coordination_messages_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       linkup_events: {
         Row: {
           correlation_id: string | null
@@ -803,6 +1105,77 @@ export type Database = {
           },
         ]
       }
+      linkup_invite_reply_events: {
+        Row: {
+          applied: boolean
+          created_at: string
+          details: Json
+          id: string
+          inbound_message_id: string
+          inbound_message_sid: string
+          invite_id: string
+          invited_user_id: string
+          linkup_id: string
+          outcome: string
+          parsed_reply: string
+        }
+        Insert: {
+          applied?: boolean
+          created_at?: string
+          details?: Json
+          id?: string
+          inbound_message_id: string
+          inbound_message_sid: string
+          invite_id: string
+          invited_user_id: string
+          linkup_id: string
+          outcome: string
+          parsed_reply: string
+        }
+        Update: {
+          applied?: boolean
+          created_at?: string
+          details?: Json
+          id?: string
+          inbound_message_id?: string
+          inbound_message_sid?: string
+          invite_id?: string
+          invited_user_id?: string
+          linkup_id?: string
+          outcome?: string
+          parsed_reply?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "linkup_invite_reply_events_inbound_message_id_fkey"
+            columns: ["inbound_message_id"]
+            isOneToOne: true
+            referencedRelation: "sms_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "linkup_invite_reply_events_invite_id_fkey"
+            columns: ["invite_id"]
+            isOneToOne: false
+            referencedRelation: "linkup_invites"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "linkup_invite_reply_events_invited_user_id_fkey"
+            columns: ["invited_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "linkup_invite_reply_events_linkup_id_fkey"
+            columns: ["linkup_id"]
+            isOneToOne: false
+            referencedRelation: "linkups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       linkup_invites: {
         Row: {
           closed_at: string | null
@@ -820,7 +1193,9 @@ export type Database = {
           sent_at: string | null
           state: Database["public"]["Enums"]["invite_state"]
           status: Database["public"]["Enums"]["invite_state"] | null
+          terminal_reason: string | null
           updated_at: string
+          wave_no: number
         }
         Insert: {
           closed_at?: string | null
@@ -838,7 +1213,9 @@ export type Database = {
           sent_at?: string | null
           state?: Database["public"]["Enums"]["invite_state"]
           status?: Database["public"]["Enums"]["invite_state"] | null
+          terminal_reason?: string | null
           updated_at?: string
+          wave_no?: number
         }
         Update: {
           closed_at?: string | null
@@ -856,7 +1233,9 @@ export type Database = {
           sent_at?: string | null
           state?: Database["public"]["Enums"]["invite_state"]
           status?: Database["public"]["Enums"]["invite_state"] | null
+          terminal_reason?: string | null
           updated_at?: string
+          wave_no?: number
         }
         Relationships: [
           {
@@ -928,8 +1307,8 @@ export type Database = {
       }
       linkup_outcomes: {
         Row: {
-          attendance_result: string | null
           attendance_response: string | null
+          attendance_result: string | null
           created_at: string
           do_again: boolean | null
           exchange_opt_in: boolean | null
@@ -941,8 +1320,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
-          attendance_result?: string | null
           attendance_response?: string | null
+          attendance_result?: string | null
           created_at?: string
           do_again?: boolean | null
           exchange_opt_in?: boolean | null
@@ -954,8 +1333,8 @@ export type Database = {
           user_id: string
         }
         Update: {
-          attendance_result?: string | null
           attendance_response?: string | null
+          attendance_result?: string | null
           created_at?: string
           do_again?: boolean | null
           exchange_opt_in?: boolean | null
@@ -1038,6 +1417,7 @@ export type Database = {
         Row: {
           acceptance_window_ends_at: string | null
           brief: Json
+          broadcast_started_at: string | null
           canceled_reason: string | null
           correlation_id: string | null
           created_at: string
@@ -1048,16 +1428,21 @@ export type Database = {
           lock_version: number
           locked_at: string | null
           max_size: number
+          max_waves: number
           min_size: number
           region_id: string
           scheduled_at: string | null
           state: Database["public"]["Enums"]["linkup_state"]
+          status: Database["public"]["Enums"]["linkup_state"] | null
           updated_at: string
           venue: Json | null
+          wave_sizes: number[]
+          waves_sent: number
         }
         Insert: {
           acceptance_window_ends_at?: string | null
           brief: Json
+          broadcast_started_at?: string | null
           canceled_reason?: string | null
           correlation_id?: string | null
           created_at?: string
@@ -1068,16 +1453,21 @@ export type Database = {
           lock_version?: number
           locked_at?: string | null
           max_size?: number
+          max_waves?: number
           min_size?: number
           region_id: string
           scheduled_at?: string | null
           state?: Database["public"]["Enums"]["linkup_state"]
+          status?: Database["public"]["Enums"]["linkup_state"] | null
           updated_at?: string
           venue?: Json | null
+          wave_sizes?: number[]
+          waves_sent?: number
         }
         Update: {
           acceptance_window_ends_at?: string | null
           brief?: Json
+          broadcast_started_at?: string | null
           canceled_reason?: string | null
           correlation_id?: string | null
           created_at?: string
@@ -1088,12 +1478,16 @@ export type Database = {
           lock_version?: number
           locked_at?: string | null
           max_size?: number
+          max_waves?: number
           min_size?: number
           region_id?: string
           scheduled_at?: string | null
           state?: Database["public"]["Enums"]["linkup_state"]
+          status?: Database["public"]["Enums"]["linkup_state"] | null
           updated_at?: string
           venue?: Json | null
+          wave_sizes?: number[]
+          waves_sent?: number
         }
         Relationships: [
           {
@@ -1114,48 +1508,63 @@ export type Database = {
       }
       match_candidates: {
         Row: {
+          breakdown: Json
           candidate_profile_id: string | null
           candidate_user_id: string
           component_scores: Json
           created_at: string
           explainability: Json
           final_score: number | null
+          fingerprint: string
           id: string
           match_run_id: string
           mode: Database["public"]["Enums"]["match_mode"]
           passed_hard_filters: boolean
+          reasons: Json
+          source_user_id: string
           subject_profile_id: string | null
           subject_user_id: string
+          total_score: number
           updated_at: string
         }
         Insert: {
+          breakdown?: Json
           candidate_profile_id?: string | null
           candidate_user_id: string
           component_scores?: Json
           created_at?: string
           explainability?: Json
           final_score?: number | null
+          fingerprint: string
           id?: string
           match_run_id: string
           mode: Database["public"]["Enums"]["match_mode"]
           passed_hard_filters?: boolean
+          reasons?: Json
+          source_user_id: string
           subject_profile_id?: string | null
           subject_user_id: string
+          total_score: number
           updated_at?: string
         }
         Update: {
+          breakdown?: Json
           candidate_profile_id?: string | null
           candidate_user_id?: string
           component_scores?: Json
           created_at?: string
           explainability?: Json
           final_score?: number | null
+          fingerprint?: string
           id?: string
           match_run_id?: string
           mode?: Database["public"]["Enums"]["match_mode"]
           passed_hard_filters?: boolean
+          reasons?: Json
+          source_user_id?: string
           subject_profile_id?: string | null
           subject_user_id?: string
+          total_score?: number
           updated_at?: string
         }
         Relationships: [
@@ -1181,6 +1590,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "match_candidates_source_user_id_fkey"
+            columns: ["source_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "match_candidates_subject_profile_id_fkey"
             columns: ["subject_profile_id"]
             isOneToOne: false
@@ -1199,42 +1615,57 @@ export type Database = {
       match_runs: {
         Row: {
           completed_at: string | null
+          config: Json
           created_at: string
+          error: string | null
           error_code: string | null
           error_detail: string | null
+          finished_at: string | null
           id: string
+          inputs: Json
           mode: Database["public"]["Enums"]["match_mode"]
           params: Json
           region_id: string | null
           run_key: string
+          started_at: string
           status: Database["public"]["Enums"]["match_run_status"]
           subject_user_id: string | null
           updated_at: string
         }
         Insert: {
           completed_at?: string | null
+          config?: Json
           created_at?: string
+          error?: string | null
           error_code?: string | null
           error_detail?: string | null
+          finished_at?: string | null
           id?: string
+          inputs?: Json
           mode: Database["public"]["Enums"]["match_mode"]
           params?: Json
           region_id?: string | null
           run_key: string
+          started_at: string
           status?: Database["public"]["Enums"]["match_run_status"]
           subject_user_id?: string | null
           updated_at?: string
         }
         Update: {
           completed_at?: string | null
+          config?: Json
           created_at?: string
+          error?: string | null
           error_code?: string | null
           error_detail?: string | null
+          finished_at?: string | null
           id?: string
+          inputs?: Json
           mode?: Database["public"]["Enums"]["match_mode"]
           params?: Json
           region_id?: string | null
           run_key?: string
+          started_at?: string
           status?: Database["public"]["Enums"]["match_run_status"]
           subject_user_id?: string | null
           updated_at?: string
@@ -1250,6 +1681,70 @@ export type Database = {
           {
             foreignKeyName: "match_runs_subject_user_id_fkey"
             columns: ["subject_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      moderation_incidents: {
+        Row: {
+          created_at: string
+          free_text: string | null
+          id: string
+          idempotency_key: string
+          linkup_id: string | null
+          metadata: Json
+          prompt_token: string | null
+          reason_category: string
+          reported_user_id: string
+          reporter_user_id: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          free_text?: string | null
+          id?: string
+          idempotency_key: string
+          linkup_id?: string | null
+          metadata?: Json
+          prompt_token?: string | null
+          reason_category: string
+          reported_user_id: string
+          reporter_user_id: string
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          free_text?: string | null
+          id?: string
+          idempotency_key?: string
+          linkup_id?: string | null
+          metadata?: Json
+          prompt_token?: string | null
+          reason_category?: string
+          reported_user_id?: string
+          reporter_user_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "moderation_incidents_linkup_id_fkey"
+            columns: ["linkup_id"]
+            isOneToOne: false
+            referencedRelation: "linkups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_incidents_reported_user_id_fkey"
+            columns: ["reported_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_incidents_reporter_user_id_fkey"
+            columns: ["reporter_user_id"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -1292,129 +1787,6 @@ export type Database = {
             foreignKeyName: "otp_sessions_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      profile_compatibility_scores: {
-        Row: {
-          a_hash: string
-          b_hash: string
-          breakdown_json: Json
-          computed_at: string
-          id: string
-          score_total: number
-          score_version: string
-          updated_at: string
-          user_a_id: string
-          user_b_id: string
-        }
-        Insert: {
-          a_hash: string
-          b_hash: string
-          breakdown_json?: Json
-          computed_at?: string
-          id?: string
-          score_total: number
-          score_version: string
-          updated_at?: string
-          user_a_id: string
-          user_b_id: string
-        }
-        Update: {
-          a_hash?: string
-          b_hash?: string
-          breakdown_json?: Json
-          computed_at?: string
-          id?: string
-          score_total?: number
-          score_version?: string
-          updated_at?: string
-          user_a_id?: string
-          user_b_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "profile_compatibility_scores_user_a_id_fkey"
-            columns: ["user_a_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "profile_compatibility_scores_user_b_id_fkey"
-            columns: ["user_b_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      profile_compatibility_signals: {
-        Row: {
-          availability_vector: number[]
-          content_hash: string
-          created_at: string
-          id: string
-          intent_vector: number[]
-          interest_vector: number[]
-          metadata: Json
-          normalization_version: string
-          profile_id: string
-          source_profile_completed_at: string | null
-          source_profile_state: Database["public"]["Enums"]["profile_state"]
-          source_profile_updated_at: string
-          trait_vector: number[]
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          availability_vector: number[]
-          content_hash: string
-          created_at?: string
-          id?: string
-          intent_vector: number[]
-          interest_vector: number[]
-          metadata?: Json
-          normalization_version: string
-          profile_id: string
-          source_profile_completed_at?: string | null
-          source_profile_state: Database["public"]["Enums"]["profile_state"]
-          source_profile_updated_at: string
-          trait_vector: number[]
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          availability_vector?: number[]
-          content_hash?: string
-          created_at?: string
-          id?: string
-          intent_vector?: number[]
-          interest_vector?: number[]
-          metadata?: Json
-          normalization_version?: string
-          profile_id?: string
-          source_profile_completed_at?: string | null
-          source_profile_state?: Database["public"]["Enums"]["profile_state"]
-          source_profile_updated_at?: string
-          trait_vector?: number[]
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "profile_compatibility_signals_profile_id_fkey"
-            columns: ["profile_id"]
-            isOneToOne: true
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "profile_compatibility_signals_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: true
             referencedRelation: "users"
             referencedColumns: ["id"]
           },
@@ -1589,13 +1961,18 @@ export type Database = {
           boundaries: Json
           completed_at: string | null
           completeness_percent: number
+          coordination_dimensions: Json | null
+          coordination_style: string | null
           country_code: string | null
           created_at: string
-          fingerprint: Json
           id: string
           is_complete_mvp: boolean
           last_interview_step: string | null
+          notice_preference: string | null
+          personality_substrate: Json | null
           preferences: Json
+          relational_style: Json | null
+          scheduling_availability: Json | null
           stale_at: string | null
           state: Database["public"]["Enums"]["profile_state"]
           state_changed_at: string
@@ -1603,6 +1980,7 @@ export type Database = {
           status_reason: string | null
           updated_at: string
           user_id: string
+          values_orientation: Json | null
         }
         Insert: {
           active_intent?: Json | null
@@ -1610,13 +1988,18 @@ export type Database = {
           boundaries?: Json
           completed_at?: string | null
           completeness_percent?: number
+          coordination_dimensions?: Json | null
+          coordination_style?: string | null
           country_code?: string | null
           created_at?: string
-          fingerprint?: Json
           id?: string
           is_complete_mvp?: boolean
           last_interview_step?: string | null
+          notice_preference?: string | null
+          personality_substrate?: Json | null
           preferences?: Json
+          relational_style?: Json | null
+          scheduling_availability?: Json | null
           stale_at?: string | null
           state?: Database["public"]["Enums"]["profile_state"]
           state_changed_at?: string
@@ -1624,6 +2007,7 @@ export type Database = {
           status_reason?: string | null
           updated_at?: string
           user_id: string
+          values_orientation?: Json | null
         }
         Update: {
           active_intent?: Json | null
@@ -1631,13 +2015,18 @@ export type Database = {
           boundaries?: Json
           completed_at?: string | null
           completeness_percent?: number
+          coordination_dimensions?: Json | null
+          coordination_style?: string | null
           country_code?: string | null
           created_at?: string
-          fingerprint?: Json
           id?: string
           is_complete_mvp?: boolean
           last_interview_step?: string | null
+          notice_preference?: string | null
+          personality_substrate?: Json | null
           preferences?: Json
+          relational_style?: Json | null
+          scheduling_availability?: Json | null
           stale_at?: string | null
           state?: Database["public"]["Enums"]["profile_state"]
           state_changed_at?: string
@@ -1645,6 +2034,7 @@ export type Database = {
           status_reason?: string | null
           updated_at?: string
           user_id?: string
+          values_orientation?: Json | null
         }
         Relationships: [
           {
@@ -1751,6 +2141,60 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      safety_events: {
+        Row: {
+          action_taken: string
+          created_at: string
+          id: string
+          inbound_message_id: string | null
+          inbound_message_sid: string | null
+          keyword_version: string | null
+          matched_term: string | null
+          metadata: Json
+          severity: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action_taken: string
+          created_at?: string
+          id?: string
+          inbound_message_id?: string | null
+          inbound_message_sid?: string | null
+          keyword_version?: string | null
+          matched_term?: string | null
+          metadata?: Json
+          severity?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action_taken?: string
+          created_at?: string
+          id?: string
+          inbound_message_id?: string | null
+          inbound_message_sid?: string | null
+          keyword_version?: string | null
+          matched_term?: string | null
+          metadata?: Json
+          severity?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "safety_events_inbound_message_id_fkey"
+            columns: ["inbound_message_id"]
+            isOneToOne: false
+            referencedRelation: "sms_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "safety_events_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       safety_holds: {
         Row: {
@@ -2099,42 +2543,6 @@ export type Database = {
           },
         ]
       }
-      subscriptions: {
-        Row: {
-          cancel_at_period_end: boolean
-          created_at: string
-          current_period_end: string | null
-          id: string
-          status: string
-          stripe_customer_id: string | null
-          stripe_subscription_id: string
-          updated_at: string
-          user_id: string | null
-        }
-        Insert: {
-          cancel_at_period_end?: boolean
-          created_at?: string
-          current_period_end?: string | null
-          id?: string
-          status: string
-          stripe_customer_id?: string | null
-          stripe_subscription_id: string
-          updated_at?: string
-          user_id?: string | null
-        }
-        Update: {
-          cancel_at_period_end?: boolean
-          created_at?: string
-          current_period_end?: string | null
-          id?: string
-          status?: string
-          stripe_customer_id?: string | null
-          stripe_subscription_id?: string
-          updated_at?: string
-          user_id?: string | null
-        }
-        Relationships: []
-      }
       stripe_events: {
         Row: {
           created_at: string
@@ -2171,6 +2579,42 @@ export type Database = {
           processing_error?: string | null
           received_at?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      subscriptions: {
+        Row: {
+          cancel_at_period_end: boolean
+          created_at: string
+          current_period_end: string | null
+          id: string
+          status: string
+          stripe_customer_id: string | null
+          stripe_subscription_id: string | null
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          cancel_at_period_end?: boolean
+          created_at?: string
+          current_period_end?: string | null
+          id?: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          cancel_at_period_end?: boolean
+          created_at?: string
+          current_period_end?: string | null
+          id?: string
+          status?: string
+          stripe_customer_id?: string | null
+          stripe_subscription_id?: string | null
+          updated_at?: string
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -2299,6 +2743,50 @@ export type Database = {
           },
         ]
       }
+      user_safety_state: {
+        Row: {
+          created_at: string
+          last_safety_event_at: string | null
+          last_strike_at: string | null
+          rate_limit_count: number
+          rate_limit_window_start: string | null
+          safety_hold: boolean
+          strike_count: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          last_safety_event_at?: string | null
+          last_strike_at?: string | null
+          rate_limit_count?: number
+          rate_limit_window_start?: string | null
+          safety_hold?: boolean
+          strike_count?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          last_safety_event_at?: string | null
+          last_strike_at?: string | null
+          rate_limit_count?: number
+          rate_limit_window_start?: string | null
+          safety_hold?: boolean
+          strike_count?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_safety_state_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_strikes: {
         Row: {
           created_at: string
@@ -2357,6 +2845,7 @@ export type Database = {
           phone_hash: string
           privacy_consent: boolean
           region_id: string | null
+          registration_source: string | null
           sms_consent: boolean
           state: Database["public"]["Enums"]["user_state"]
           suspended_at: string | null
@@ -2376,6 +2865,7 @@ export type Database = {
           phone_hash: string
           privacy_consent: boolean
           region_id?: string | null
+          registration_source?: string | null
           sms_consent: boolean
           state?: Database["public"]["Enums"]["user_state"]
           suspended_at?: string | null
@@ -2395,6 +2885,7 @@ export type Database = {
           phone_hash?: string
           privacy_consent?: boolean
           region_id?: string | null
+          registration_source?: string | null
           sms_consent?: boolean
           state?: Database["public"]["Enums"]["user_state"]
           suspended_at?: string | null
@@ -2486,9 +2977,138 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      admin_moderation_incident_queue: {
+        Row: {
+          created_at: string | null
+          free_text: string | null
+          id: string | null
+          linkup_id: string | null
+          metadata: Json | null
+          reason_category: string | null
+          reported_user_id: string | null
+          reporter_user_id: string | null
+          status: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          free_text?: string | null
+          id?: string | null
+          linkup_id?: string | null
+          metadata?: Json | null
+          reason_category?: string | null
+          reported_user_id?: string | null
+          reporter_user_id?: string | null
+          status?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          free_text?: string | null
+          id?: string | null
+          linkup_id?: string | null
+          metadata?: Json | null
+          reason_category?: string | null
+          reported_user_id?: string | null
+          reporter_user_id?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "moderation_incidents_linkup_id_fkey"
+            columns: ["linkup_id"]
+            isOneToOne: false
+            referencedRelation: "linkups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_incidents_reported_user_id_fkey"
+            columns: ["reported_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moderation_incidents_reporter_user_id_fkey"
+            columns: ["reporter_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
+      append_safety_event: {
+        Args: {
+          p_action_taken: string
+          p_created_at?: string
+          p_inbound_message_id: string
+          p_inbound_message_sid: string
+          p_keyword_version: string
+          p_matched_term: string
+          p_metadata?: Json
+          p_severity: string
+          p_user_id: string
+        }
+        Returns: {
+          event_id: string
+          inserted: boolean
+        }[]
+      }
+      apply_user_safety_rate_limit: {
+        Args: {
+          p_now?: string
+          p_threshold: number
+          p_user_id: string
+          p_window_seconds: number
+        }
+        Returns: {
+          exceeded: boolean
+          rate_limit_count: number
+          rate_limit_window_start: string
+        }[]
+      }
+      apply_user_safety_strikes: {
+        Args: {
+          p_escalation_threshold: number
+          p_increment: number
+          p_now?: string
+          p_user_id: string
+        }
+        Returns: {
+          escalated: boolean
+          safety_hold: boolean
+          strike_count: number
+        }[]
+      }
+      build_linkup_coordination_message: {
+        Args: {
+          p_activity_label: string
+          p_location_label: string
+          p_member_count: number
+          p_time_label: string
+        }
+        Returns: string
+      }
+      capture_post_event_attendance: {
+        Args: {
+          p_attendance_result: string
+          p_correlation_id?: string
+          p_inbound_message_id: string
+          p_inbound_message_sid: string
+          p_user_id: string
+        }
+        Returns: {
+          attendance_result: string
+          correlation_id: string
+          duplicate: boolean
+          linkup_id: string
+          mode: Database["public"]["Enums"]["conversation_mode__old_version_to_be_dropped"]
+          next_state_token: string
+          previous_state_token: string
+          reason: string
+          session_id: string
+        }[]
+      }
       capture_post_event_do_again: {
         Args: {
           p_correlation_id?: string
@@ -2504,7 +3124,7 @@ export type Database = {
           duplicate: boolean
           learning_signal_written: boolean
           linkup_id: string
-          mode: Database["public"]["Enums"]["conversation_mode"]
+          mode: Database["public"]["Enums"]["conversation_mode__old_version_to_be_dropped"]
           next_state_token: string
           previous_state_token: string
           reason: string
@@ -2525,34 +3145,14 @@ export type Database = {
           correlation_id: string
           duplicate: boolean
           exchange_choice: string
-          exchange_opt_in: boolean | null
+          exchange_opt_in: boolean
           linkup_id: string
-          mode: Database["public"]["Enums"]["conversation_mode"]
+          mode: Database["public"]["Enums"]["conversation_mode__old_version_to_be_dropped"]
           mutual_detected: boolean
           next_state_token: string
           previous_state_token: string
           reason: string
           reveal_sent: boolean
-          session_id: string
-        }[]
-      }
-      capture_post_event_attendance: {
-        Args: {
-          p_attendance_result: string
-          p_correlation_id?: string
-          p_inbound_message_id: string
-          p_inbound_message_sid: string
-          p_user_id: string
-        }
-        Returns: {
-          attendance_result: string
-          correlation_id: string
-          duplicate: boolean
-          linkup_id: string
-          mode: Database["public"]["Enums"]["conversation_mode"]
-          next_state_token: string
-          previous_state_token: string
-          reason: string
           session_id: string
         }[]
       }
@@ -2587,6 +3187,41 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      create_moderation_incident: {
+        Args: {
+          p_created_at?: string
+          p_free_text: string
+          p_idempotency_key?: string
+          p_linkup_id: string
+          p_metadata?: Json
+          p_prompt_token?: string
+          p_reason_category: string
+          p_reported_user_id: string
+          p_reporter_user_id: string
+          p_status?: string
+        }
+        Returns: {
+          created: boolean
+          incident_id: string
+          status: string
+        }[]
+      }
+      create_user_block: {
+        Args: {
+          p_blocked_user_id: string
+          p_blocker_user_id: string
+          p_created_at?: string
+        }
+        Returns: {
+          blocked_user_id: string
+          blocker_user_id: string
+          created: boolean
+        }[]
+      }
+      current_admin_role: {
+        Args: never
+        Returns: Database["public"]["Enums"]["admin_role"]
+      }
       decrypt_sms_body: {
         Args: { ciphertext: string; key: string }
         Returns: string
@@ -2595,14 +3230,129 @@ export type Database = {
         Args: { key: string; plaintext: string }
         Returns: string
       }
-      current_admin_role: { Args: never; Returns: Database["public"]["Enums"]["admin_role"] }
-      has_admin_role: { Args: { required_roles: Database["public"]["Enums"]["admin_role"][] }; Returns: boolean }
+      enqueue_interview_dropout_nudges: {
+        Args: {
+          p_limit?: number
+          p_now?: string
+          p_nudge_template: string
+          p_sms_encryption_key: string
+        }
+        Returns: Json
+      }
+      has_admin_role: {
+        Args: { required_roles: Database["public"]["Enums"]["admin_role"][] }
+        Returns: boolean
+      }
       is_admin_user: { Args: never; Returns: boolean }
       is_linkup_visible_to_current_user: {
         Args: { linkup_uuid: string }
         Returns: boolean
       }
+      linkup_apply_invite_reply: {
+        Args: {
+          p_inbound_message_id: string
+          p_inbound_message_sid: string
+          p_linkup_id: string
+          p_message_text: string
+          p_now?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      linkup_apply_invite_reply_with_coordination: {
+        Args: {
+          p_inbound_message_id: string
+          p_inbound_message_sid: string
+          p_linkup_id: string
+          p_message_text: string
+          p_now?: string
+          p_sms_encryption_key?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      linkup_attempt_lock: {
+        Args: {
+          p_idempotency_key?: string
+          p_linkup_id: string
+          p_now?: string
+        }
+        Returns: Json
+      }
+      linkup_create_from_seed: {
+        Args: {
+          p_brief: Json
+          p_initiator_user_id: string
+          p_linkup_create_key: string
+          p_max_waves?: number
+          p_now?: string
+          p_region_id: string
+          p_seed_match_run_id?: string
+          p_seed_scores?: number[]
+          p_seed_user_ids?: string[]
+          p_wave_sizes?: number[]
+        }
+        Returns: Json
+      }
+      linkup_enqueue_coordination_messages: {
+        Args: {
+          p_linkup_id: string
+          p_now?: string
+          p_sms_encryption_key: string
+        }
+        Returns: Json
+      }
+      linkup_maybe_expire: {
+        Args: { p_linkup_id: string; p_now?: string }
+        Returns: boolean
+      }
+      linkup_prepare_coordination_messages: {
+        Args: { p_linkup_id: string; p_now?: string }
+        Returns: Json
+      }
+      linkup_process_timeouts: {
+        Args: { p_linkup_id: string; p_now?: string }
+        Returns: Json
+      }
+      linkup_send_next_wave: {
+        Args: {
+          p_idempotency_key?: string
+          p_linkup_id: string
+          p_now?: string
+        }
+        Returns: Json
+      }
       owns_profile: { Args: { profile_uuid: string }; Returns: boolean }
+      parse_linkup_invite_reply_token: {
+        Args: { raw_text: string }
+        Returns: string
+      }
+      resolve_linkup_wave_size: {
+        Args: { fallback_size?: number; wave_no: number; wave_sizes: number[] }
+        Returns: number
+      }
+      set_user_safety_hold: {
+        Args: { p_now?: string; p_user_id: string }
+        Returns: {
+          safety_hold: boolean
+          strike_count: number
+        }[]
+      }
+      transition_session_to_post_event_if_linkup_completed: {
+        Args: { p_correlation_id?: string; p_session_id: string }
+        Returns: {
+          correlation_id: string
+          linkup_correlation_id: string
+          linkup_id: string
+          linkup_state: Database["public"]["Enums"]["linkup_state"]
+          next_mode: Database["public"]["Enums"]["conversation_mode__old_version_to_be_dropped"]
+          previous_mode: Database["public"]["Enums"]["conversation_mode__old_version_to_be_dropped"]
+          reason: string
+          session_id: string
+          state_token: string
+          transitioned: boolean
+        }[]
+      }
     }
     Enums: {
       admin_role: "super_admin" | "moderator" | "ops"
@@ -2611,9 +3361,27 @@ export type Database = {
         | "interviewing"
         | "linkup_forming"
         | "awaiting_invite_reply"
-        | "post_event"
         | "safety_hold"
+        | "post_event"
+        | "interviewing_abbreviated"
+        | "awaiting_social_choice"
+        | "post_activity_checkin"
+        | "pending_plan_confirmation"
+      conversation_mode__old_version_to_be_dropped:
+        | "idle"
+        | "interviewing"
+        | "linkup_forming"
+        | "awaiting_invite_reply"
+        | "safety_hold"
+        | "post_event"
+        | "interviewing_abbreviated"
+        | "awaiting_social_choice"
+        | "post_activity_checkin"
+        | "pending_plan_confirmation"
+        | "pending_contact_invite_confirmation"
       entitlement_source: "stripe" | "admin_override" | "reconciled"
+      invitation_state: "pending" | "accepted" | "passed" | "expired"
+      invitation_type: "solo" | "group"
       invite_state: "pending" | "accepted" | "declined" | "expired" | "closed"
       job_state: "pending" | "sending" | "sent" | "failed" | "canceled"
       keyword_match_type: "exact" | "contains" | "regex"
@@ -2625,12 +3393,17 @@ export type Database = {
         | "linkup_attendance_unsure"
         | "linkup_do_again_yes"
         | "linkup_do_again_no"
-        | "linkup_do_again_unsure"
         | "linkup_feedback_text"
         | "contact_exchange_mutual_yes"
         | "contact_exchange_declined"
         | "user_blocked_other"
         | "user_reported_other"
+        | "linkup_do_again_unsure"
+        | "solo_activity_attended"
+        | "solo_activity_skipped"
+        | "solo_do_again_yes"
+        | "solo_do_again_no"
+        | "solo_bridge_accepted"
       linkup_member_role: "initiator" | "participant"
       linkup_member_status:
         | "confirmed"
@@ -2653,6 +3426,7 @@ export type Database = {
         | "complete_mvp"
         | "complete_full"
         | "stale"
+        | "complete_invited"
       region_state: "open" | "waitlisted" | "closed"
       safety_hold_status: "active" | "lifted" | "expired"
       safety_hold_type:
@@ -2818,10 +3592,29 @@ export const Constants = {
         "interviewing",
         "linkup_forming",
         "awaiting_invite_reply",
-        "post_event",
         "safety_hold",
+        "post_event",
+        "interviewing_abbreviated",
+        "awaiting_social_choice",
+        "post_activity_checkin",
+        "pending_plan_confirmation",
+      ],
+      conversation_mode__old_version_to_be_dropped: [
+        "idle",
+        "interviewing",
+        "linkup_forming",
+        "awaiting_invite_reply",
+        "safety_hold",
+        "post_event",
+        "interviewing_abbreviated",
+        "awaiting_social_choice",
+        "post_activity_checkin",
+        "pending_plan_confirmation",
+        "pending_contact_invite_confirmation",
       ],
       entitlement_source: ["stripe", "admin_override", "reconciled"],
+      invitation_state: ["pending", "accepted", "passed", "expired"],
+      invitation_type: ["solo", "group"],
       invite_state: ["pending", "accepted", "declined", "expired", "closed"],
       job_state: ["pending", "sending", "sent", "failed", "canceled"],
       keyword_match_type: ["exact", "contains", "regex"],
@@ -2833,12 +3626,17 @@ export const Constants = {
         "linkup_attendance_unsure",
         "linkup_do_again_yes",
         "linkup_do_again_no",
-        "linkup_do_again_unsure",
         "linkup_feedback_text",
         "contact_exchange_mutual_yes",
         "contact_exchange_declined",
         "user_blocked_other",
         "user_reported_other",
+        "linkup_do_again_unsure",
+        "solo_activity_attended",
+        "solo_activity_skipped",
+        "solo_do_again_yes",
+        "solo_do_again_no",
+        "solo_bridge_accepted",
       ],
       linkup_member_role: ["initiator", "participant"],
       linkup_member_status: [
@@ -2864,6 +3662,7 @@ export const Constants = {
         "complete_mvp",
         "complete_full",
         "stale",
+        "complete_invited",
       ],
       region_state: ["open", "waitlisted", "closed"],
       safety_hold_status: ["active", "lifted", "expired"],
@@ -2901,3 +3700,4 @@ export const Constants = {
     },
   },
 } as const
+
