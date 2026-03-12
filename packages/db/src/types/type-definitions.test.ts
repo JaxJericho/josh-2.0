@@ -9,6 +9,8 @@ import type {
   GroupSizePreference,
   HolisticExtractInput,
   HolisticExtractOutput,
+  InterestSignature,
+  RelationalContext,
   Invitation,
   Linkup,
   Profile,
@@ -16,9 +18,11 @@ import type {
 } from "../index";
 import {
   GroupSizePreferenceSchema,
+  InterestSignatureSchema,
   InvitationSchema,
   LinkupSchema,
   ProfileSchema,
+  RelationalContextSchema,
   UserSchema,
 } from "../index";
 
@@ -160,12 +164,24 @@ describe("3.0 db type definitions", () => {
         max: 6,
       },
       id: "f62ab199-88c6-4f8e-b1d9-b9fd7038c1f8",
+      interest_signatures: [
+        {
+          domain: "urban infrastructure",
+          intensity: 0.8,
+          confidence: 0.6,
+        },
+      ],
       is_complete_mvp: true,
       last_interview_step: "group_01",
       notice_preference: "24_hours",
       personality_substrate: null,
       preferences: {
         group_size_pref: "4-6",
+      },
+      relational_context: {
+        life_stage_signal: "new to city",
+        connection_motivation: "rebuilding social circle",
+        social_history_hint: null,
       },
       relational_style: null,
       scheduling_availability: {
@@ -246,6 +262,8 @@ describe("3.0 db type definitions", () => {
     expect(coverageSummary.dimensions.social_energy.covered).toBe(true);
     expect(holisticInput.sessionId).toBe("session_123");
     expect(holisticOutput.needsFollowUp).toBe(false);
+    expect(ProfileSchema.parse(profileRecord).interest_signatures?.[0]?.domain).toBe("urban infrastructure");
+    expect(ProfileSchema.parse(profileRecord).relational_context?.connection_motivation).toBe("rebuilding social circle");
   });
 
   it("enforces exact dimension keys and rejects stepId on holistic extraction input", () => {
@@ -270,5 +288,27 @@ describe("3.0 db type definitions", () => {
     const validPreference: GroupSizePreference = { min: 2, max: 6 };
 
     expect(GroupSizePreferenceSchema.parse(validPreference)).toEqual(validPreference);
+  });
+
+  it("validates depth signal shapes", () => {
+    const validInterestSignature: InterestSignature = {
+      domain: "hiking",
+      intensity: 0.8,
+      confidence: 0.6,
+    };
+    const validRelationalContext: RelationalContext = {
+      life_stage_signal: null,
+      connection_motivation: null,
+      social_history_hint: null,
+    };
+
+    expect(() =>
+      InterestSignatureSchema.parse({ domain: "", intensity: 0.5, confidence: 0.5 })
+    ).toThrow();
+    expect(() =>
+      InterestSignatureSchema.parse({ domain: "hiking", intensity: 1.2, confidence: 0.5 })
+    ).toThrow();
+    expect(InterestSignatureSchema.parse(validInterestSignature)).toEqual(validInterestSignature);
+    expect(RelationalContextSchema.parse(validRelationalContext)).toEqual(validRelationalContext);
   });
 });
