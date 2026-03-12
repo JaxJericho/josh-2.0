@@ -145,7 +145,6 @@ function buildSeedSql() {
       id,
       user_id,
       state,
-      fingerprint,
       coordination_dimensions,
       activity_patterns,
       boundaries,
@@ -161,7 +160,6 @@ function buildSeedSql() {
         '${E2E_PROFILE_IDS[0]}',
         '${E2E_SOURCE_USER_ID}',
         'complete_mvp',
-        '{}'::jsonb,
         jsonb_build_object(
           'social_energy', jsonb_build_object('value', 0.72, 'confidence', 0.91),
           'social_pace', jsonb_build_object('value', 0.58, 'confidence', 0.87),
@@ -183,7 +181,6 @@ function buildSeedSql() {
         '${E2E_PROFILE_IDS[1]}',
         '${E2E_CANDIDATE_USER_IDS[0]}',
         'complete_mvp',
-        '{}'::jsonb,
         jsonb_build_object(
           'social_energy', jsonb_build_object('value', 0.7, 'confidence', 0.9),
           'social_pace', jsonb_build_object('value', 0.56, 'confidence', 0.86),
@@ -205,7 +202,6 @@ function buildSeedSql() {
         '${E2E_PROFILE_IDS[2]}',
         '${E2E_CANDIDATE_USER_IDS[1]}',
         'complete_mvp',
-        '{}'::jsonb,
         jsonb_build_object(
           'social_energy', jsonb_build_object('value', 0.54, 'confidence', 0.88),
           'social_pace', jsonb_build_object('value', 0.63, 'confidence', 0.85),
@@ -227,7 +223,6 @@ function buildSeedSql() {
         '${E2E_PROFILE_IDS[3]}',
         '${E2E_CANDIDATE_USER_IDS[2]}',
         'complete_mvp',
-        '{}'::jsonb,
         jsonb_build_object(
           'social_energy', jsonb_build_object('value', 0.42, 'confidence', 0.86),
           'social_pace', jsonb_build_object('value', 0.72, 'confidence', 0.83),

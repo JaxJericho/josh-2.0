@@ -192,7 +192,7 @@ function createHarnessState(): InterviewHarnessState {
       is_complete_mvp: false,
       last_interview_step: null,
       preferences: {},
-      fingerprint: {},
+      coordination_dimensions: {},
       activity_patterns: [],
       boundaries: {},
       active_intent: null,

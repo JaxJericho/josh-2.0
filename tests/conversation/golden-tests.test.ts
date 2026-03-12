@@ -39,7 +39,7 @@ const ANSWER_BY_STEP: Record<string, string> = {
   location_01: "US-WA",
 };
 
-function createFingerprint(keys: string[]): Record<string, unknown> {
+function createCoordinationDimensions(keys: string[]): Record<string, unknown> {
   return keys.reduce((accumulator, key) => {
     accumulator[key] = {
       value: 0.72,
@@ -60,7 +60,7 @@ function createProfile(overrides: Partial<ProfileRowForInterview> = {}): Profile
     is_complete_mvp: false,
     last_interview_step: null,
     preferences: {},
-    fingerprint: {},
+    coordination_dimensions: {},
     activity_patterns: [],
     boundaries: {},
     active_intent: null,
@@ -236,7 +236,7 @@ describe("conversation golden tests", () => {
     }
   });
 
-  it("mocked extraction inference writes activity and fingerprint signals", async () => {
+  it("mocked extraction inference writes activity and coordination_dimensions signals", async () => {
     const transition = await buildInterviewTransitionPlan({
       inbound_message_sid: "SM_GOLDEN_INFER_0001",
       inbound_message_text: "I love climbing because it feels adventurous and new",
@@ -281,8 +281,8 @@ describe("conversation golden tests", () => {
     });
 
     expect(transition.profile_event_payload?.extraction_source).toBe("llm");
-    const fingerprint = transition.profile_patch?.fingerprint as Record<string, unknown>;
-    const adventureOrientation = fingerprint.adventure_orientation as Record<string, unknown>;
+    const coordination_dimensions = transition.profile_patch?.coordination_dimensions as Record<string, unknown>;
+    const adventureOrientation = coordination_dimensions.adventure_orientation as Record<string, unknown>;
     expect((adventureOrientation.confidence as number) >= 0.66).toBe(true);
   });
 
@@ -379,7 +379,7 @@ describe("conversation golden tests", () => {
       profile: createProfile({
         state: "complete_mvp",
         is_complete_mvp: true,
-        fingerprint: createFingerprint([
+        coordination_dimensions: createCoordinationDimensions([
           "connection_depth",
           "social_energy",
           "social_pace",

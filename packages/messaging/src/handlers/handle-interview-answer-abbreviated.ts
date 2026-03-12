@@ -66,7 +66,6 @@ export type AbbreviatedInterviewProfile = {
   state_code: string | null;
   last_interview_step: string | null;
   preferences: unknown;
-  fingerprint: unknown;
   activity_patterns: unknown;
   boundaries: unknown;
   active_intent: unknown;
@@ -87,7 +86,6 @@ export type AbbreviatedInterviewProfilePatch = {
   state_code: string | null;
   last_interview_step: string | null;
   preferences: Record<string, unknown>;
-  fingerprint: Record<string, unknown>;
   activity_patterns: Array<Record<string, unknown>>;
   boundaries: Record<string, unknown>;
   active_intent: Record<string, unknown> | null;
@@ -211,15 +209,15 @@ export async function handleInterviewAnswerAbbreviated(
     coordination_signal_confidence: mergedSignalsResult.confidences,
   };
 
-  const mergedFingerprint = mirrorDimensionsIntoFingerprint({
-    existingFingerprint: input.profile.fingerprint,
+  const mergedCoordinationDimensions = mirrorDimensionsIntoCoordinationDimensions({
+    existingCoordinationDimensions: input.profile.coordination_dimensions,
     dimensions: mergedDimensionsResult.dimensions,
   });
 
   const profileForQuestionSelection = {
     country_code: input.profile.country_code,
     last_interview_step: input.profile.last_interview_step,
-    fingerprint: mergedFingerprint,
+    coordination_dimensions: mergedCoordinationDimensions,
     activity_patterns: input.profile.activity_patterns,
     boundaries: input.profile.boundaries,
     preferences: mergedPreferences,
@@ -244,11 +242,10 @@ export async function handleInterviewAnswerAbbreviated(
     state_code: input.profile.state_code,
     last_interview_step: completed ? input.profile.last_interview_step : nextQuestionId,
     preferences: mergedPreferences,
-    fingerprint: mergedFingerprint,
+    coordination_dimensions: mergedCoordinationDimensions,
     activity_patterns: asObjectArray(input.profile.activity_patterns),
     boundaries: asObject(input.profile.boundaries),
     active_intent: toNullableObject(input.profile.active_intent),
-    coordination_dimensions: mergedDimensionsResult.dimensions,
     scheduling_availability: mergedSignalsResult.values.scheduling_availability,
     notice_preference: mergedSignalsResult.values.notice_preference,
     coordination_style: mergedSignalsResult.values.coordination_style,
@@ -594,11 +591,11 @@ function evaluateCompletionSnapshot(input: {
   };
 }
 
-function mirrorDimensionsIntoFingerprint(params: {
-  existingFingerprint: unknown;
+function mirrorDimensionsIntoCoordinationDimensions(params: {
+  existingCoordinationDimensions: unknown;
   dimensions: Record<CoordinationDimensionKey, DimensionNode>;
 }): Record<string, unknown> {
-  const nextFingerprint = asObject(params.existingFingerprint);
+  const nextCoordinationDimensions = asObject(params.existingCoordinationDimensions);
 
   for (const key of COORDINATION_DIMENSION_KEYS) {
     const node = params.dimensions[key];
@@ -606,14 +603,14 @@ function mirrorDimensionsIntoFingerprint(params: {
       continue;
     }
 
-    nextFingerprint[key] = {
+    nextCoordinationDimensions[key] = {
       value: node.value,
       confidence: node.confidence,
       source: "interview_abbreviated_llm",
     };
   }
 
-  return nextFingerprint;
+  return nextCoordinationDimensions;
 }
 
 function computeInvitedCompletenessPercent(snapshot: {

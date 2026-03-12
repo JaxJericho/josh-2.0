@@ -28,7 +28,7 @@ export type ProfileRowForInterview = {
   is_complete_mvp: boolean;
   last_interview_step: string | null;
   preferences: unknown;
-  fingerprint: unknown;
+  coordination_dimensions: unknown;
   activity_patterns: unknown;
   boundaries: unknown;
   active_intent: unknown;
@@ -55,11 +55,10 @@ export type ProfileUpdatePatch = {
   state_code: string | null;
   last_interview_step: string | null;
   preferences: Record<string, unknown>;
-  fingerprint: Record<string, unknown>;
+  coordination_dimensions: Record<string, unknown>;
   activity_patterns: Array<Record<string, unknown>>;
   boundaries: Record<string, unknown>;
   active_intent: Record<string, unknown> | null;
-  coordination_dimensions?: Record<string, unknown>;
   scheduling_availability?: unknown;
   notice_preference?: string | null;
   coordination_style?: string | null;
@@ -70,7 +69,7 @@ export type ProfileUpdatePatch = {
 };
 
 export type StructuredProfileCoreSignals = {
-  fingerprint: Record<string, unknown>;
+  coordination_dimensions: Record<string, unknown>;
   activity_patterns: Array<Record<string, unknown>>;
   boundaries: Record<string, unknown>;
   preferences: Record<string, unknown>;
@@ -187,7 +186,7 @@ export function buildProfilePatchForInterviewStart(params: {
     state_code: params.profile.state_code,
     last_interview_step: params.profile.last_interview_step,
     preferences,
-    fingerprint: asObject(params.profile.fingerprint),
+    coordination_dimensions: asObject(params.profile.coordination_dimensions),
     activity_patterns: asObjectArray(params.profile.activity_patterns),
     boundaries: asObject(params.profile.boundaries),
     active_intent: asObject(params.profile.active_intent),
@@ -229,7 +228,7 @@ export function buildProfilePatchForInterviewPause(params: {
     state_code: params.profile.state_code,
     last_interview_step: params.profile.last_interview_step,
     preferences,
-    fingerprint: asObject(params.profile.fingerprint),
+    coordination_dimensions: asObject(params.profile.coordination_dimensions),
     activity_patterns: asObjectArray(params.profile.activity_patterns),
     boundaries: asObject(params.profile.boundaries),
     active_intent: asObject(params.profile.active_intent),
@@ -240,13 +239,13 @@ export function buildProfilePatchForInterviewPause(params: {
   };
 }
 
-function setFingerprintValue(
-  fingerprint: Record<string, unknown>,
+function setCoordinationDimensionsValue(
+  coordination_dimensions: Record<string, unknown>,
   key: string,
   value: unknown,
   confidence: number,
 ): void {
-  fingerprint[key] = {
+  coordination_dimensions[key] = {
     value,
     confidence,
     source: "interview",
@@ -283,7 +282,7 @@ type InterviewWriteTarget =
   | "onboarding_consent";
 
 type InterviewSignalWriteContext = {
-  fingerprint: Record<string, unknown>;
+  coordination_dimensions: Record<string, unknown>;
   boundaries: Record<string, unknown>;
   preferences: Record<string, unknown>;
   activeIntent: Record<string, unknown>;
@@ -579,20 +578,20 @@ const TARGET_WRITERS: Readonly<Record<InterviewWriteTarget, InterviewSignalWrite
   connection_depth: (context, answer) => {
     const connection = readMotiveWeights(answer).connection;
     if (connection != null) {
-      setFingerprintValue(context.fingerprint, "connection_depth", connection, 0.62);
+      setCoordinationDimensionsValue(context.coordination_dimensions, "connection_depth", connection, 0.62);
     }
   },
   novelty_seeking: (context, answer) => {
     const noveltySeeking = deriveNoveltySeeking(answer);
     if (noveltySeeking != null) {
-      setFingerprintValue(context.fingerprint, "novelty_seeking", noveltySeeking, 0.61);
+      setCoordinationDimensionsValue(context.coordination_dimensions, "novelty_seeking", noveltySeeking, 0.61);
     }
   },
   emotional_directness: (context, answer) => {
     const emotionalDirectness = deriveEmotionalDirectness(answer);
     if (emotionalDirectness != null) {
-      setFingerprintValue(
-        context.fingerprint,
+      setCoordinationDimensionsValue(
+        context.coordination_dimensions,
         "emotional_directness",
         emotionalDirectness,
         0.58,
@@ -602,44 +601,44 @@ const TARGET_WRITERS: Readonly<Record<InterviewWriteTarget, InterviewSignalWrite
   adventure_comfort: (context, answer) => {
     const adventureComfort = deriveAdventureComfort(answer);
     if (adventureComfort != null) {
-      setFingerprintValue(context.fingerprint, "adventure_comfort", adventureComfort, 0.6);
+      setCoordinationDimensionsValue(context.coordination_dimensions, "adventure_comfort", adventureComfort, 0.6);
     }
   },
   interaction_style: (context, answer) => {
     const primaryStyle = readStyleKeys(answer)[0];
     if (primaryStyle) {
-      setFingerprintValue(context.fingerprint, "interaction_style", primaryStyle, 0.72);
+      setCoordinationDimensionsValue(context.coordination_dimensions, "interaction_style", primaryStyle, 0.72);
     }
   },
   social_energy: (context, answer) => {
     const socialEnergy = deriveSocialEnergy(answer);
     if (socialEnergy != null) {
-      setFingerprintValue(context.fingerprint, "social_energy", socialEnergy, 0.68);
+      setCoordinationDimensionsValue(context.coordination_dimensions, "social_energy", socialEnergy, 0.68);
     }
   },
   humor_style: (context, answer) => {
     const humorStyle = deriveHumorStyle(answer);
     if (humorStyle) {
-      setFingerprintValue(context.fingerprint, "humor_style", humorStyle, 0.6);
+      setCoordinationDimensionsValue(context.coordination_dimensions, "humor_style", humorStyle, 0.6);
     }
   },
   conversation_style: (context, answer) => {
     const styleKeys = readStyleKeys(answer);
     if (styleKeys.length > 0) {
-      setFingerprintValue(context.fingerprint, "conversation_style", styleKeys, 0.7);
+      setCoordinationDimensionsValue(context.coordination_dimensions, "conversation_style", styleKeys, 0.7);
     }
   },
   social_pace: (context, answer) => {
     const socialPace = readPace(answer);
     if (socialPace) {
-      setFingerprintValue(context.fingerprint, "social_pace", socialPace, 0.8);
+      setCoordinationDimensionsValue(context.coordination_dimensions, "social_pace", socialPace, 0.8);
     }
   },
   structure_preference: (context, answer) => {
     const structurePreference = deriveStructurePreference(answer);
     if (structurePreference) {
-      setFingerprintValue(
-        context.fingerprint,
+      setCoordinationDimensionsValue(
+        context.coordination_dimensions,
         "structure_preference",
         structurePreference,
         0.66,
@@ -655,8 +654,8 @@ const TARGET_WRITERS: Readonly<Record<InterviewWriteTarget, InterviewSignalWrite
   group_vs_1on1_preference: (context, answer) => {
     const groupPreference = deriveGroupPreference(answer);
     if (groupPreference) {
-      setFingerprintValue(
-        context.fingerprint,
+      setCoordinationDimensionsValue(
+        context.coordination_dimensions,
         "group_vs_1on1_preference",
         groupPreference,
         0.65,
@@ -672,8 +671,8 @@ const TARGET_WRITERS: Readonly<Record<InterviewWriteTarget, InterviewSignalWrite
   values_alignment_importance: (context, answer) => {
     const valuesAlignmentImportance = readValuesAlignmentImportance(answer);
     if (valuesAlignmentImportance) {
-      setFingerprintValue(
-        context.fingerprint,
+      setCoordinationDimensionsValue(
+        context.coordination_dimensions,
         "values_alignment_importance",
         valuesAlignmentImportance,
         0.74,
@@ -686,8 +685,8 @@ const TARGET_WRITERS: Readonly<Record<InterviewWriteTarget, InterviewSignalWrite
     context.boundaries.skipped = boundaries.skipped;
   },
   conflict_tolerance: (context, answer) => {
-    setFingerprintValue(
-      context.fingerprint,
+    setCoordinationDimensionsValue(
+      context.coordination_dimensions,
       "conflict_tolerance",
       deriveConflictTolerance(answer),
       0.58,
@@ -742,7 +741,7 @@ export function buildProfilePatchForInterviewAnswer(params: {
   nowIso: string;
 }): ProfileUpdatePatch {
   const context: InterviewSignalWriteContext = {
-    fingerprint: asObject(params.profile.fingerprint),
+    coordination_dimensions: asObject(params.profile.coordination_dimensions),
     boundaries: asObject(params.profile.boundaries),
     preferences: asObject(params.profile.preferences),
     activeIntent: asObject(params.profile.active_intent),
@@ -780,7 +779,7 @@ export function buildProfilePatchForInterviewAnswer(params: {
   const coverageStatus = getSignalCoverageStatus({
     country_code: context.countryCode,
     last_interview_step: params.stepId,
-    fingerprint: context.fingerprint,
+    coordination_dimensions: context.coordination_dimensions,
     activity_patterns: context.activityPatterns,
     boundaries: context.boundaries,
     preferences: context.preferences,
@@ -808,7 +807,7 @@ export function buildProfilePatchForInterviewAnswer(params: {
     state_code: context.stateCode,
     last_interview_step: params.stepId,
     preferences: context.preferences,
-    fingerprint: context.fingerprint,
+    coordination_dimensions: context.coordination_dimensions,
     activity_patterns: context.activityPatterns,
     boundaries: context.boundaries,
     active_intent: context.activeIntent,
@@ -817,25 +816,6 @@ export function buildProfilePatchForInterviewAnswer(params: {
     status_reason: isComplete ? "interview_complete_mvp" : "interview_in_progress",
     state_changed_at: nextState !== params.profile.state ? params.nowIso : params.profile.state_changed_at,
   };
-}
-
-function mergeFingerprintFromExtraction(
-  fingerprint: Record<string, unknown>,
-  extractionOutput: HolisticExtractOutput,
-): Record<string, unknown> {
-  const nextFingerprint = { ...fingerprint };
-  for (const [key, patch] of Object.entries(extractionOutput.coordinationDimensionUpdates)) {
-    if (!patch) {
-      continue;
-    }
-    setFingerprintValue(
-      nextFingerprint,
-      key,
-      patch.value,
-      patch.confidence,
-    );
-  }
-  return nextFingerprint;
 }
 
 function mergeCoordinationDimensionsFromExtraction(
@@ -867,10 +847,6 @@ export function applyHolisticExtractOutputToProfilePatch(params: {
     ...params.profilePatch,
   } as ProfileUpdatePatch & Record<string, unknown>;
 
-  const fingerprint = mergeFingerprintFromExtraction(
-    asObject(nextPatch.fingerprint),
-    params.extractionOutput,
-  );
   const coordinationDimensions = mergeCoordinationDimensionsFromExtraction(
     asObject(nextPatch.coordination_dimensions),
     params.extractionOutput,
@@ -894,7 +870,7 @@ export function applyHolisticExtractOutputToProfilePatch(params: {
   const coverageStatus = getSignalCoverageStatus({
     country_code: nextPatch.country_code,
     last_interview_step: nextPatch.last_interview_step,
-    fingerprint,
+    coordination_dimensions: coordinationDimensions,
     activity_patterns: activityPatterns,
     boundaries,
     preferences,
@@ -908,7 +884,6 @@ export function applyHolisticExtractOutputToProfilePatch(params: {
     ...nextPatch,
     state: nextState,
     is_complete_mvp: isComplete,
-    fingerprint,
     coordination_dimensions: coordinationDimensions,
     activity_patterns: activityPatterns,
     boundaries,
@@ -926,14 +901,14 @@ export function applyHolisticExtractOutputToProfilePatch(params: {
 }
 
 export function buildStructuredProfileCoreSignals(input: {
-  fingerprint: unknown;
+  coordination_dimensions: unknown;
   activity_patterns: unknown;
   boundaries: unknown;
   preferences: unknown;
   active_intent: unknown;
 }): StructuredProfileCoreSignals {
   return {
-    fingerprint: asObject(input.fingerprint),
+    coordination_dimensions: asObject(input.coordination_dimensions),
     activity_patterns: asObjectArray(input.activity_patterns),
     boundaries: asObject(input.boundaries),
     preferences: asObject(input.preferences),

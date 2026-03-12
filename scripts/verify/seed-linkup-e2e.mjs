@@ -216,7 +216,7 @@ function buildSeedSql() {
       id,
       user_id,
       state,
-      fingerprint,
+      coordination_dimensions,
       activity_patterns,
       boundaries,
       preferences,

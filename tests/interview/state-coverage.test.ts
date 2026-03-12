@@ -9,7 +9,7 @@ import {
 } from "../../packages/core/src/interview/messages";
 import type { ProfileRowForInterview } from "../../packages/core/src/profile/profile-writer";
 
-function createFingerprint(keys: string[]): Record<string, unknown> {
+function createCoordinationDimensions(keys: string[]): Record<string, unknown> {
   return keys.reduce((accumulator, key) => {
     accumulator[key] = {
       value: 0.7,
@@ -30,7 +30,7 @@ function createProfile(overrides: Partial<ProfileRowForInterview> = {}): Profile
     is_complete_mvp: false,
     last_interview_step: null,
     preferences: {},
-    fingerprint: {},
+    coordination_dimensions: {},
     activity_patterns: [],
     boundaries: {},
     active_intent: null,
@@ -76,7 +76,7 @@ describe("interview state progression with signal coverage", () => {
           updated_at: "2026-02-18T00:00:00.000Z",
         },
       },
-      fingerprint: createFingerprint([
+      coordination_dimensions: createCoordinationDimensions([
         "connection_depth",
         "novelty_seeking",
         "social_energy",
@@ -144,7 +144,7 @@ describe("interview state progression with signal coverage", () => {
         no_thanks: [],
         skipped: true,
       },
-      fingerprint: createFingerprint([
+      coordination_dimensions: createCoordinationDimensions([
         "connection_depth",
         "social_energy",
         "social_pace",
@@ -233,7 +233,7 @@ describe("interview state progression with signal coverage", () => {
       profile: createProfile({
         state: "complete_mvp",
         is_complete_mvp: true,
-        fingerprint: createFingerprint([
+        coordination_dimensions: createCoordinationDimensions([
           "connection_depth",
           "social_energy",
           "social_pace",
