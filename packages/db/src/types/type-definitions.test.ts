@@ -1,7 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type {
   ActivityCatalogEntry,
-  ContactCircleEntry,
   ContactInvitation,
   CoordinationDimensionKey,
   CoordinationDimensions,
@@ -9,7 +8,6 @@ import type {
   DimensionCoverageSummary,
   HolisticExtractInput,
   HolisticExtractOutput,
-  PlanBrief,
 } from "../index";
 
 describe("3.0 db type definitions", () => {
@@ -19,27 +17,6 @@ describe("3.0 db type definitions", () => {
       inviter_user_id: "user_123",
       invitee_phone_hash: "hash_123",
       status: "pending",
-      created_at: "2026-02-28T00:00:00.000Z",
-      updated_at: "2026-02-28T00:00:00.000Z",
-    };
-
-    const planBrief: PlanBrief = {
-      id: "brief_123",
-      creator_user_id: "user_123",
-      activity_key: "coffee_walk",
-      proposed_time_window: "next_weekend",
-      notes: "Prefer late morning.",
-      status: "draft",
-      created_at: "2026-02-28T00:00:00.000Z",
-      updated_at: "2026-02-28T00:00:00.000Z",
-    };
-
-    const contactCircleEntry: ContactCircleEntry = {
-      id: "circle_123",
-      user_id: "user_123",
-      contact_name: "Taylor",
-      contact_phone_hash: "hash_456",
-      contact_phone_e164: "+15555550123",
       created_at: "2026-02-28T00:00:00.000Z",
       updated_at: "2026-02-28T00:00:00.000Z",
     };
@@ -129,8 +106,6 @@ describe("3.0 db type definitions", () => {
     };
 
     expect(invitation.status).toBe("pending");
-    expect(planBrief.status).toBe("draft");
-    expect(contactCircleEntry.contact_name).toBe("Taylor");
     expect(activityCatalogEntry.activity_key).toBe("coffee_walk");
     expect(coverageSummary.dimensions.social_energy.covered).toBe(true);
     expect(holisticInput.sessionId).toBe("session_123");
