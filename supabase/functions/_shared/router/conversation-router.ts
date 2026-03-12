@@ -22,6 +22,12 @@ import {
 } from "../../../../packages/messaging/src/handlers/handle-post-activity-checkin.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
+  handleInvitationResponse,
+  INVITATION_RESPONSE_CLARIFIER_STATE_TOKEN,
+  parseInvitationResponse,
+} from "../../../../packages/messaging/src/handlers/handle-invitation-response.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
   createContactInvitationWithSupabase,
 } from "../invitations/create-contact-invitation.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
@@ -69,6 +75,7 @@ export type RouterRoute =
   | "onboarding_engine"
   | "post_event_engine"
   | "contact_invite_response_handler"
+  | "invitation_response_handler"
   | "post_activity_checkin_handler"
   | "open_intent_handler"
   | "named_plan_request_handler"
@@ -121,6 +128,7 @@ type ConversationSessionRow = {
   mode: string | null;
   state_token: string | null;
   linkup_id: string | null;
+  last_inbound_message_sid: string | null;
 };
 
 type AbbreviatedInterviewSessionRow = {
@@ -162,6 +170,28 @@ type ContactInvitationResponseRow = {
   id: string;
   inviter_user_id: string;
   status: string;
+};
+
+type InvitationResponseRow = {
+  id: string;
+  invitation_type: "solo" | "group";
+  activity_key: string;
+  time_window: string;
+  linkup_id: string | null;
+};
+
+type ApplyInvitationResponseRpcRow = {
+  duplicate?: unknown;
+  invitation_id?: unknown;
+  invitation_type?: unknown;
+  learning_signal_written?: unknown;
+  next_mode?: unknown;
+  next_state_token?: unknown;
+  outbound_job_id?: unknown;
+  processed?: unknown;
+  reason?: unknown;
+  resulting_state?: unknown;
+  user_id?: unknown;
 };
 
 type ClassifyIntentFn = (
@@ -306,7 +336,7 @@ const ROUTE_BY_MODE: Record<ConversationMode, RouterRoute> = {
   pending_contact_invite_confirmation: "default_engine",
   linkup_forming: "default_engine",
   awaiting_invite_reply: "default_engine",
-  awaiting_invitation_response: "default_engine",
+  awaiting_invitation_response: "invitation_response_handler",
   post_activity_checkin: "post_activity_checkin_handler",
   post_event: "post_event_engine",
   safety_hold: "default_engine",
@@ -413,6 +443,44 @@ export async function routeConversationMessage(
       transitionEvaluatedSession.mode,
       transitionEvaluatedSession.state_token,
     );
+    const duplicateInvitationReplay = transitionEvaluatedSession.last_inbound_message_sid ===
+        params.payload.inbound_message_sid
+      ? await fetchInvitationReplayByMessageSid(
+        params.supabase,
+        user.id,
+        params.payload.inbound_message_sid,
+      )
+      : null;
+
+    if (duplicateInvitationReplay) {
+      const decision: RoutingDecision = {
+        user_id: user.id,
+        state,
+        profile_is_complete_mvp: null,
+        route: "invitation_response_handler",
+        safety_override_applied: params.safetyOverrideApplied ?? false,
+        next_transition: resolveNextTransition(state, resolveRouteForState(state)),
+      };
+
+      logEvent({
+        event: "conversation.router_decision",
+        user_id: decision.user_id,
+        correlation_id: params.payload.inbound_message_id,
+        payload: {
+          inbound_message_id: params.payload.inbound_message_id,
+          route: decision.route,
+          intent: "duplicate_replay",
+          session_mode: decision.state.mode,
+          session_state_token: decision.state.state_token,
+          profile_is_complete_mvp: decision.profile_is_complete_mvp,
+          next_transition: decision.next_transition,
+          override_applied: decision.safety_override_applied,
+        },
+      });
+
+      return decision;
+    }
+
     const profile = await fetchProfileSummary(params.supabase, user.id);
     const shouldForceInterview = shouldRouteIdleUserToInterview(state, profile);
 
@@ -442,6 +510,39 @@ export async function routeConversationMessage(
     const nextTransition = shouldForceInterview
       ? ONBOARDING_STATE_TOKEN
       : resolveNextTransition(state, route);
+
+    if (state.mode === "awaiting_invitation_response") {
+      const parsedInvitationResponse = parseInvitationResponse(
+        params.payload.body_raw,
+        state.state_token,
+      );
+      const decision: RoutingDecision = {
+        user_id: user.id,
+        state,
+        profile_is_complete_mvp: profile?.is_complete_mvp ?? null,
+        route: "invitation_response_handler",
+        safety_override_applied: params.safetyOverrideApplied ?? false,
+        next_transition: nextTransition,
+      };
+
+      logEvent({
+        event: "conversation.router_decision",
+        user_id: decision.user_id,
+        correlation_id: params.payload.inbound_message_id,
+        payload: {
+          inbound_message_id: params.payload.inbound_message_id,
+          route: decision.route,
+          intent: parsedInvitationResponse,
+          session_mode: decision.state.mode,
+          session_state_token: decision.state.state_token,
+          profile_is_complete_mvp: decision.profile_is_complete_mvp,
+          next_transition: decision.next_transition,
+          override_applied: decision.safety_override_applied,
+        },
+      });
+
+      return decision;
+    }
 
     const classifier = params.classifyIntentFn ?? classifyIntent;
     let routedIntent: IntentClassification["intent"] | null = null;
@@ -734,6 +835,7 @@ function resolveRouteForIntent(
 function isIntentHandlerRoute(route: RouterRoute): boolean {
   return (
     route === "contact_invite_response_handler" ||
+    route === "invitation_response_handler" ||
     route === "post_activity_checkin_handler" ||
     route === "open_intent_handler" ||
     route === "named_plan_request_handler" ||
@@ -868,6 +970,8 @@ export async function dispatchConversationRoute(
     }
     case "contact_invite_response_handler":
       return runContactInviteResponseHandler(input);
+    case "invitation_response_handler":
+      return runInvitationResponseHandler(input);
     case "post_activity_checkin_handler":
       return runPostActivityCheckinHandler(input);
     case "open_intent_handler":
@@ -917,6 +1021,121 @@ async function fetchPendingInvitationByPhoneHash(
   }
 
   return { id: data.id };
+}
+
+async function fetchInvitationForInvitationResponse(input: {
+  supabase: SupabaseClientLike;
+  userId: string;
+  action: "accept" | "pass";
+  nowIso: string;
+  inboundMessageSid: string;
+}): Promise<InvitationResponseRow | null> {
+  let query = input.supabase
+    .from("invitations")
+    .select("id,invitation_type,activity_key,time_window,linkup_id")
+    .eq("user_id", input.userId)
+    .eq("state", "pending");
+
+  if (input.action === "accept") {
+    query = query.gt("expires_at", input.nowIso);
+  }
+
+  const { data, error } = await query
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "INVITATION_LOOKUP_FAILED",
+      "Unable to load invitation state for invitation response handling.",
+    );
+  }
+
+  if (
+    !data?.id ||
+    (data.invitation_type !== "solo" && data.invitation_type !== "group") ||
+    !data.activity_key ||
+    !data.time_window
+  ) {
+    const replayData = await fetchInvitationReplayByMessageSid(
+      input.supabase,
+      input.userId,
+      input.inboundMessageSid,
+    );
+    return replayData;
+  }
+
+  return {
+    id: data.id,
+    invitation_type: data.invitation_type,
+    activity_key: data.activity_key,
+    time_window: data.time_window,
+    linkup_id: typeof data.linkup_id === "string" ? data.linkup_id : null,
+  };
+}
+
+async function fetchInvitationReplayByMessageSid(
+  supabase: SupabaseClientLike,
+  userId: string,
+  inboundMessageSid: string,
+): Promise<InvitationResponseRow | null> {
+  const { data, error } = await supabase
+    .from("invitations")
+    .select("id,invitation_type,activity_key,time_window,linkup_id")
+    .eq("user_id", userId)
+    .eq("response_message_sid", inboundMessageSid)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "INVITATION_LOOKUP_FAILED",
+      "Unable to load invitation replay state for invitation response handling.",
+    );
+  }
+
+  if (
+    !data?.id ||
+    (data.invitation_type !== "solo" && data.invitation_type !== "group") ||
+    !data.activity_key ||
+    !data.time_window
+  ) {
+    return null;
+  }
+
+  return {
+    id: data.id,
+    invitation_type: data.invitation_type,
+    activity_key: data.activity_key,
+    time_window: data.time_window,
+    linkup_id: typeof data.linkup_id === "string" ? data.linkup_id : null,
+  };
+}
+
+async function fetchActivityDisplayName(
+  supabase: SupabaseClientLike,
+  activityKey: string,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("activity_catalog")
+    .select("display_name")
+    .eq("activity_key", activityKey)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "ACTIVITY_LOOKUP_FAILED",
+      "Unable to resolve activity display name for invitation response handling.",
+    );
+  }
+
+  if (!data?.display_name || typeof data.display_name !== "string") {
+    return null;
+  }
+
+  return data.display_name;
 }
 
 type ContactInviteResponseIntent = "accept" | "decline" | "unknown";
@@ -1104,6 +1323,191 @@ async function runContactInviteResponseHandler(
       ? buildInvitedAbbreviatedWelcomeMessage(inviterDisplayName)
       : null,
   };
+}
+
+async function runInvitationResponseHandler(
+  input: EngineDispatchInput,
+): Promise<EngineDispatchResult> {
+  const parsedInvitationResponse = parseInvitationResponse(
+    input.payload.body_raw,
+    input.decision.state.state_token,
+  );
+
+  if (parsedInvitationResponse === "clarify") {
+    const invitationDecision = handleInvitationResponse({
+      message: input.payload.body_raw,
+      stateToken: input.decision.state.state_token,
+      invitation: null,
+    });
+
+    await persistConversationSessionState({
+      supabase: input.supabase,
+      userId: input.decision.user_id,
+      mode: invitationDecision.nextMode,
+      stateToken: invitationDecision.nextStateToken,
+      lastInboundMessageSid: input.payload.inbound_message_sid,
+    });
+
+    return {
+      engine: "invitation_response_handler",
+      reply_message: invitationDecision.replyMessage,
+    };
+  }
+
+  const nowIso = new Date().toISOString();
+  const invitation = await fetchInvitationForInvitationResponse({
+    supabase: input.supabase,
+    userId: input.decision.user_id,
+    action: parsedInvitationResponse,
+    nowIso,
+    inboundMessageSid: input.payload.inbound_message_sid,
+  });
+  const activityDisplayName = invitation && parsedInvitationResponse === "accept"
+    ? await fetchActivityDisplayName(input.supabase, invitation.activity_key)
+    : null;
+  const resolvedDecision = handleInvitationResponse({
+    message: input.payload.body_raw,
+    stateToken: input.decision.state.state_token,
+    invitation,
+    activityDisplayName,
+  });
+
+  if (resolvedDecision.kind === "terminal") {
+    await persistConversationSessionState({
+      supabase: input.supabase,
+      userId: input.decision.user_id,
+      mode: resolvedDecision.nextMode,
+      stateToken: resolvedDecision.nextStateToken,
+      lastInboundMessageSid: input.payload.inbound_message_sid,
+    });
+
+    return {
+      engine: "invitation_response_handler",
+      reply_message: resolvedDecision.replyMessage,
+    };
+  }
+
+  if (!invitation) {
+    throw new ConversationRouterError(
+      "INVITATION_LOOKUP_FAILED",
+      "Invitation response handling could not resolve the target invitation.",
+    );
+  }
+
+  if (typeof input.supabase.rpc !== "function") {
+    throw new ConversationRouterError(
+      "INVITATION_RESPONSE_MISCONFIGURED",
+      "Router requires Supabase RPC support for invitation response handling.",
+    );
+  }
+
+  const { data, error } = await input.supabase.rpc("apply_invitation_response", {
+    p_invitation_id: invitation.id,
+    p_user_id: input.decision.user_id,
+    p_inbound_message_id: input.payload.inbound_message_id,
+    p_inbound_message_sid: input.payload.inbound_message_sid,
+    p_action: resolvedDecision.action,
+    p_outbound_message: resolvedDecision.replyMessage,
+    p_sms_encryption_key: requireSmsEncryptionKey(),
+    p_now: nowIso,
+  });
+
+  if (error) {
+    emitRpcFailureMetric({
+      correlation_id: input.payload.inbound_message_id,
+      component: "conversation_router",
+      rpc_name: "apply_invitation_response",
+    });
+    throw new ConversationRouterError(
+      "INVITATION_RESPONSE_FAILED",
+      "Unable to apply invitation response.",
+    );
+  }
+
+  const result = (Array.isArray(data) ? data[0] : data) as ApplyInvitationResponseRpcRow | null;
+  if (!result) {
+    throw new ConversationRouterError(
+      "INVITATION_RESPONSE_INVALID_RESPONSE",
+      "Invitation response RPC returned no result row.",
+    );
+  }
+
+  const reason = typeof result.reason === "string" ? result.reason : "unknown";
+  const processed = result.processed === true;
+  const duplicate = result.duplicate === true;
+
+  if (processed && resolvedDecision.action === "accept" && invitation.invitation_type === "group") {
+    await maybeEvaluateInvitationGroupQuorum({
+      linkupId: invitation.linkup_id,
+      userId: input.decision.user_id,
+      correlationId: input.payload.inbound_message_id,
+    });
+  }
+
+  if (processed || duplicate || reason === "message_sid_already_used") {
+    return {
+      engine: "invitation_response_handler",
+      reply_message: null,
+    };
+  }
+
+  const fallback = handleInvitationResponse({
+    message: input.payload.body_raw,
+    stateToken: INVITATION_RESPONSE_CLARIFIER_STATE_TOKEN,
+    invitation: null,
+  });
+
+  return {
+    engine: "invitation_response_handler",
+    reply_message: fallback.kind === "terminal" ? fallback.replyMessage : null,
+  };
+}
+
+async function maybeEvaluateInvitationGroupQuorum(input: {
+  linkupId: string | null;
+  userId: string;
+  correlationId: string;
+}): Promise<void> {
+  if (!input.linkupId) {
+    return;
+  }
+
+  try {
+    const modulePath =
+      "../../../../packages/core/src/invitation/linkup-quorum.ts";
+    const quorumModule = await import(modulePath) as {
+      evaluateLinkupQuorum?: (linkupId: string) => Promise<unknown>;
+    };
+
+    if (typeof quorumModule.evaluateLinkupQuorum !== "function") {
+      logEvent({
+        level: "warn",
+        event: "system.migration_mismatch_warning",
+        user_id: input.userId,
+        correlation_id: input.correlationId,
+        payload: {
+          warning:
+            "evaluateLinkupQuorum export is unavailable; skipping optional group invitation quorum evaluation.",
+          linkup_id: input.linkupId,
+        },
+      });
+      return;
+    }
+
+    await quorumModule.evaluateLinkupQuorum(input.linkupId);
+  } catch (_error) {
+    logEvent({
+      level: "warn",
+      event: "system.migration_mismatch_warning",
+      user_id: input.userId,
+      correlation_id: input.correlationId,
+      payload: {
+        warning:
+          "evaluateLinkupQuorum module is unavailable; skipping optional group invitation quorum evaluation.",
+        linkup_id: input.linkupId,
+      },
+    });
+  }
 }
 
 async function fetchInvitationForContactInviteResponse(
@@ -1473,7 +1877,7 @@ async function fetchConversationSession(
 ): Promise<ConversationSessionRow | null> {
   const { data, error } = await supabase
     .from("conversation_sessions")
-    .select("id,mode,state_token,linkup_id")
+    .select("id,mode,state_token,linkup_id,last_inbound_message_sid")
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -1493,6 +1897,7 @@ async function fetchConversationSession(
     mode: data.mode ?? null,
     state_token: data.state_token ?? null,
     linkup_id: data.linkup_id ?? null,
+    last_inbound_message_sid: data.last_inbound_message_sid ?? null,
   };
 }
 
@@ -1514,7 +1919,7 @@ async function fetchOrCreateConversationSession(
       current_step_id: null,
       last_inbound_message_sid: null,
     })
-    .select("id,mode,state_token,linkup_id")
+    .select("id,mode,state_token,linkup_id,last_inbound_message_sid")
     .single();
 
   if (error || !data?.id) {
@@ -1538,6 +1943,7 @@ async function fetchOrCreateConversationSession(
     mode: data.mode ?? null,
     state_token: data.state_token ?? null,
     linkup_id: data.linkup_id ?? null,
+    last_inbound_message_sid: data.last_inbound_message_sid ?? null,
   };
 }
 
@@ -2465,12 +2871,14 @@ async function persistConversationSessionState(input: {
   userId: string;
   mode:
     | "idle"
+    | "awaiting_invitation_response"
     | "post_activity_checkin"
     | "awaiting_social_choice"
     | "pending_plan_confirmation"
     | "pending_contact_invite_confirmation";
   stateToken: string;
   updatedAt?: string;
+  lastInboundMessageSid?: string;
 }): Promise<void> {
   const session = await fetchConversationSession(input.supabase, input.userId);
   if (!session?.id) {
@@ -2492,6 +2900,9 @@ async function persistConversationSessionState(input: {
     .update({
       mode: input.mode,
       state_token: input.stateToken,
+      ...(input.lastInboundMessageSid
+        ? { last_inbound_message_sid: input.lastInboundMessageSid }
+        : {}),
       ...(input.updatedAt ? { updated_at: input.updatedAt } : {}),
     })
     .eq("id", session.id)
