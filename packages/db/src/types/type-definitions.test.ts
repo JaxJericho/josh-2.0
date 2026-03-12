@@ -9,8 +9,9 @@ import type {
   HolisticExtractInput,
   HolisticExtractOutput,
   Invitation,
+  Linkup,
 } from "../index";
-import { InvitationSchema } from "../index";
+import { InvitationSchema, LinkupSchema } from "../index";
 
 describe("3.0 db type definitions", () => {
   it("imports and instantiates all new type contracts", () => {
@@ -71,6 +72,36 @@ describe("3.0 db type definitions", () => {
       updated_at: "2026-03-12T00:00:00.000Z",
     };
 
+    const linkupRecord: Linkup = {
+      acceptance_window_ends_at: null,
+      brief: {
+        activity_key: "coffee_walk",
+        time_window: "weekend_morning",
+      },
+      broadcast_started_at: null,
+      canceled_reason: null,
+      correlation_id: null,
+      created_at: "2026-03-12T00:00:00.000Z",
+      event_time: null,
+      id: "e0ecfce7-3602-4dfa-84dd-6ef6d72265cb",
+      initiator_user_id: null,
+      linkup_create_key: "linkup:create:region_123:2026-W11",
+      lock_version: 0,
+      locked_at: null,
+      max_size: 6,
+      max_waves: 3,
+      min_size: 2,
+      region_id: "70f8f4d7-6af5-40ec-b548-c0f7aee0efe9",
+      scheduled_at: null,
+      state: "draft",
+      status: "draft",
+      system_created: false,
+      updated_at: "2026-03-12T00:00:00.000Z",
+      venue: null,
+      wave_sizes: [6, 6, 8],
+      waves_sent: 0,
+    };
+
     const dimensions: CoordinationDimensions = {
       social_energy: { value: 0.6, confidence: 0.7 },
       social_pace: { value: 0.4, confidence: 0.8 },
@@ -126,6 +157,7 @@ describe("3.0 db type definitions", () => {
 
     expect(invitation.status).toBe("pending");
     expect(InvitationSchema.parse(invitationRecord).state).toBe("pending");
+    expect(LinkupSchema.parse(linkupRecord).system_created).toBe(false);
     expect(activityCatalogEntry.activity_key).toBe("coffee_walk");
     expect(coverageSummary.dimensions.social_energy.covered).toBe(true);
     expect(holisticInput.sessionId).toBe("session_123");

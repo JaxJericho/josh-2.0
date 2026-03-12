@@ -1434,6 +1434,7 @@ export type Database = {
           scheduled_at: string | null
           state: Database["public"]["Enums"]["linkup_state"]
           status: Database["public"]["Enums"]["linkup_state"] | null
+          system_created: boolean
           updated_at: string
           venue: Json | null
           wave_sizes: number[]
@@ -1459,6 +1460,7 @@ export type Database = {
           scheduled_at?: string | null
           state?: Database["public"]["Enums"]["linkup_state"]
           status?: Database["public"]["Enums"]["linkup_state"] | null
+          system_created?: boolean
           updated_at?: string
           venue?: Json | null
           wave_sizes?: number[]
@@ -1484,6 +1486,7 @@ export type Database = {
           scheduled_at?: string | null
           state?: Database["public"]["Enums"]["linkup_state"]
           status?: Database["public"]["Enums"]["linkup_state"] | null
+          system_created?: boolean
           updated_at?: string
           venue?: Json | null
           wave_sizes?: number[]
