@@ -10,8 +10,9 @@ import type {
   HolisticExtractOutput,
   Invitation,
   Linkup,
+  User,
 } from "../index";
-import { InvitationSchema, LinkupSchema } from "../index";
+import { InvitationSchema, LinkupSchema, UserSchema } from "../index";
 
 describe("3.0 db type definitions", () => {
   it("imports and instantiates all new type contracts", () => {
@@ -102,6 +103,31 @@ describe("3.0 db type definitions", () => {
       waves_sent: 0,
     };
 
+    const userRecord: User = {
+      age_consent: true,
+      birthday: "1994-03-12",
+      created_at: "2026-03-12T00:00:00.000Z",
+      deleted_at: null,
+      email: "alex@example.com",
+      first_name: "Alex",
+      id: "c7af95e7-2370-4f99-b4b2-458b4cfe6958",
+      invitation_backoff_count: 0,
+      invitation_count_this_week: 0,
+      invitation_week_start: null,
+      last_invited_at: null,
+      last_name: "Rivera",
+      phone_e164: "+14155550123",
+      phone_hash: "phone_hash_123",
+      privacy_consent: true,
+      region_id: "70f8f4d7-6af5-40ec-b548-c0f7aee0efe9",
+      registration_source: "organic",
+      sms_consent: true,
+      state: "active",
+      suspended_at: null,
+      terms_consent: true,
+      updated_at: "2026-03-12T00:00:00.000Z",
+    };
+
     const dimensions: CoordinationDimensions = {
       social_energy: { value: 0.6, confidence: 0.7 },
       social_pace: { value: 0.4, confidence: 0.8 },
@@ -158,6 +184,7 @@ describe("3.0 db type definitions", () => {
     expect(invitation.status).toBe("pending");
     expect(InvitationSchema.parse(invitationRecord).state).toBe("pending");
     expect(LinkupSchema.parse(linkupRecord).system_created).toBe(false);
+    expect(UserSchema.parse(userRecord).invitation_count_this_week).toBe(0);
     expect(activityCatalogEntry.activity_key).toBe("coffee_walk");
     expect(coverageSummary.dimensions.social_energy.covered).toBe(true);
     expect(holisticInput.sessionId).toBe("session_123");
