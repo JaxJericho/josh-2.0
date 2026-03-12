@@ -266,6 +266,37 @@ describe("conversation router foundation", () => {
     expect(decision.state.state_token).toBe("idle");
   });
 
+  it("returns the neutral fallback for retired open-intent dispatches", async () => {
+    const supabase = buildSupabaseMock({
+      user: { id: "usr_123" },
+      session: { id: "ses_123", mode: "idle", state_token: "idle" },
+      profile: { is_complete_mvp: true, state: "complete_mvp" },
+    });
+
+    const result = await dispatchConversationRoute({
+      supabase,
+      decision: {
+        user_id: "usr_123",
+        state: {
+          mode: "idle",
+          state_token: "idle",
+        },
+        profile_is_complete_mvp: true,
+        route: "open_intent_handler",
+        safety_override_applied: false,
+        next_transition: "idle:awaiting_user_input",
+      },
+      payload: samplePayload(),
+    });
+
+    expect(result.engine).toBe("open_intent_handler");
+    expect(result.reply_message).toBe("I didn't catch that. Reply HELP if you need support.");
+    expect(supabase.debugState().session).toMatchObject({
+      mode: "idle",
+      state_token: "idle",
+    });
+  });
+
   it("transitions to post_event mode when linked linkup reaches completed", async () => {
     const supabase = buildSupabaseMock({
       user: { id: "usr_123" },

@@ -5,8 +5,10 @@ import {
   type NormalizedInboundMessagePayload,
 } from "../supabase/functions/_shared/router/conversation-router";
 
+const UNKNOWN_INTENT_REPLY = "I didn't catch that. Reply HELP if you need support.";
+
 describe("conversation router plan social choice dispatch", () => {
-  it("handles social-choice acceptance and persists session/audit updates", async () => {
+  it("resets orphaned social-choice sessions to idle with a neutral reply", async () => {
     const supabase = buildPlanSocialChoiceSupabaseMock();
 
     const result = await dispatchConversationRoute({
@@ -26,18 +28,10 @@ describe("conversation router plan social choice dispatch", () => {
     });
 
     expect(result.engine).toBe("plan_social_choice_handler");
-    expect(result.reply_message).toBe(
-      "Great choice. I confirmed that plan and will follow up with next steps shortly.",
-    );
-
-    const state = supabase.debugState();
-    expect(state.session.mode).toBe("pending_plan_confirmation");
-    expect(state.session.state_token).toBe("plan:pending_confirmation");
-    expect(state.auditLogs).toHaveLength(1);
-    expect(state.auditLogs[0]).toMatchObject({
-      action: "social_choice_accepted_plan_confirmed",
-      target_type: "plan_brief",
-      target_id: "synthetic_plan:usr_123:SM456",
+    expect(result.reply_message).toBe(UNKNOWN_INTENT_REPLY);
+    expect(supabase.debugState().session).toMatchObject({
+      mode: "idle",
+      state_token: "idle",
     });
   });
 });
@@ -61,99 +55,69 @@ function buildPlanSocialChoiceSupabaseMock() {
       state_token: "social:awaiting_choice:solo_walk:0",
       linkup_id: null as string | null,
     },
-    auditLogs: [] as Array<Record<string, unknown>>,
   };
 
   return {
     from(table: string) {
-      if (table === "conversation_sessions") {
-        const queryState: Record<string, unknown> = {};
-        return {
-          select() {
-            return this;
-          },
-          eq(column: string, value: unknown) {
-            queryState[column] = value;
-            return this;
-          },
-          async maybeSingle() {
-            if (queryState.user_id !== "usr_123") {
-              return { data: null, error: null };
-            }
-            return {
-              data: { ...state.session },
-              error: null,
-            };
-          },
-          update(payload: Record<string, unknown>) {
-            return {
-              eq(column: string, value: unknown) {
-                return {
-                  select() {
-                    return {
-                      async single() {
-                        if (column !== "id" || value !== state.session.id) {
-                          return {
-                            data: null,
-                            error: { message: "session_not_found" },
-                          };
-                        }
+      if (table !== "conversation_sessions") {
+        throw new Error(`Unexpected table '${table}' in plan social choice test.`);
+      }
 
-                        state.session = {
-                          ...state.session,
-                          mode: payload.mode as string,
-                          state_token: payload.state_token as string,
-                        };
+      const queryState: Record<string, unknown> = {};
 
+      return {
+        select() {
+          return this;
+        },
+        eq(column: string, value: unknown) {
+          queryState[column] = value;
+          return this;
+        },
+        async maybeSingle() {
+          if (queryState.user_id !== "usr_123") {
+            return { data: null, error: null };
+          }
+          return {
+            data: { ...state.session },
+            error: null,
+          };
+        },
+        update(payload: Record<string, unknown>) {
+          return {
+            eq(column: string, value: unknown) {
+              return {
+                select() {
+                  return {
+                    async single() {
+                      if (column !== "id" || value !== state.session.id) {
                         return {
-                          data: { id: state.session.id },
-                          error: null,
+                          data: null,
+                          error: { message: "session_not_found" },
                         };
-                      },
-                    };
-                  },
-                };
-              },
-            };
-          },
-        };
-      }
+                      }
 
-      if (table === "profiles") {
-        return {
-          select() {
-            return this;
-          },
-          eq() {
-            return this;
-          },
-          async maybeSingle() {
-            return {
-              data: null,
-              error: null,
-            };
-          },
-        };
-      }
+                      state.session = {
+                        ...state.session,
+                        mode: payload.mode as string,
+                        state_token: payload.state_token as string,
+                      };
 
-      if (table === "audit_log") {
-        return {
-          async insert(payload: Record<string, unknown>) {
-            state.auditLogs.push(payload);
-            return {
-              data: null,
-              error: null,
-            };
-          },
-        };
-      }
-
-      throw new Error(`Unexpected table '${table}' in plan social choice test.`);
+                      return {
+                        data: { id: state.session.id },
+                        error: null,
+                      };
+                    },
+                  };
+                },
+              };
+            },
+          };
+        },
+      };
     },
     debugState() {
       return {
         session: { ...state.session },
-        auditLogs: [...state.auditLogs],
       };
     },
   };
