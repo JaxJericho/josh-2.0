@@ -3288,6 +3288,22 @@ export type Database = {
         }
         Returns: Json
       }
+      expire_invitation: {
+        Args: {
+          p_correlation_id: string
+          p_invitation_id: string
+          p_now?: string
+        }
+        Returns: {
+          backoff_incremented: boolean
+          expired: boolean
+          invitation_id: string
+          learning_signal_written: boolean
+          reason: string
+          session_reset: boolean
+          user_id: string
+        }[]
+      }
       has_admin_role: {
         Args: { required_roles: Database["public"]["Enums"]["admin_role"][] }
         Returns: boolean

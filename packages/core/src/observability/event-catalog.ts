@@ -541,6 +541,13 @@ export const EVENT_CATALOG: readonly EventCatalogEntry[] = [
     pii_fields: [],
   },
   {
+    event_name: "expire_invitations.complete",
+    category: "system",
+    required_fields: ["expiredCount"],
+    optional_fields: ["request_id"],
+    pii_fields: [],
+  },
+  {
     event_name: "reconcile.invoked",
     category: "system",
     required_fields: ["handler"],
