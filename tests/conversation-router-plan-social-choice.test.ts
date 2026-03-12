@@ -6,7 +6,7 @@ import {
 } from "../supabase/functions/_shared/router/conversation-router";
 
 describe("conversation router plan social choice dispatch", () => {
-  it("handles social-choice acceptance via plan_social_choice_handler and persists plan/session updates", async () => {
+  it("handles social-choice acceptance and persists session/audit updates", async () => {
     const supabase = buildPlanSocialChoiceSupabaseMock();
 
     const result = await dispatchConversationRoute({
@@ -31,16 +31,14 @@ describe("conversation router plan social choice dispatch", () => {
     );
 
     const state = supabase.debugState();
-    expect(state.planBriefs).toHaveLength(1);
-    expect(state.planBriefs[0]).toMatchObject({
-      creator_user_id: "usr_123",
-      activity_key: "solo_walk",
-      status: "confirmed",
-    });
-    expect(state.auditLogs.some((entry) => entry.action === "social_choice_accepted_plan_confirmed"))
-      .toBe(true);
     expect(state.session.mode).toBe("pending_plan_confirmation");
     expect(state.session.state_token).toBe("plan:pending_confirmation");
+    expect(state.auditLogs).toHaveLength(1);
+    expect(state.auditLogs[0]).toMatchObject({
+      action: "social_choice_accepted_plan_confirmed",
+      target_type: "plan_brief",
+      target_id: "synthetic_plan:usr_123:SM456",
+    });
   });
 });
 
@@ -63,7 +61,6 @@ function buildPlanSocialChoiceSupabaseMock() {
       state_token: "social:awaiting_choice:solo_walk:0",
       linkup_id: null as string | null,
     },
-    planBriefs: [] as Array<Record<string, unknown>>,
     auditLogs: [] as Array<Record<string, unknown>>,
   };
 
@@ -122,21 +119,18 @@ function buildPlanSocialChoiceSupabaseMock() {
         };
       }
 
-      if (table === "plan_briefs") {
+      if (table === "profiles") {
         return {
-          insert(payload: Record<string, unknown>) {
-            state.planBriefs.push(payload);
+          select() {
+            return this;
+          },
+          eq() {
+            return this;
+          },
+          async maybeSingle() {
             return {
-              select() {
-                return {
-                  async single() {
-                    return {
-                      data: { id: "plan_123" },
-                      error: null,
-                    };
-                  },
-                };
-              },
+              data: null,
+              error: null,
             };
           },
         };
@@ -159,7 +153,6 @@ function buildPlanSocialChoiceSupabaseMock() {
     debugState() {
       return {
         session: { ...state.session },
-        planBriefs: [...state.planBriefs],
         auditLogs: [...state.auditLogs],
       };
     },

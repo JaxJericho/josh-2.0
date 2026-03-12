@@ -21,7 +21,6 @@ export type HandleOpenIntentDependencies = {
     userId: string;
     action_type: OpenIntentActionType;
   }) => Promise<OpenIntentEligibilityResult>;
-  hasContactCircleEntries: (userId: string) => Promise<boolean>;
   handoffToLinkupFlow: (input: {
     userId: string;
     message: string;
@@ -70,22 +69,19 @@ export async function handleOpenIntent(
     }
   }
 
-  const hasContactCircleEntries = await dependencies.hasContactCircleEntries(userId);
-  if (hasContactCircleEntries) {
-    const namedPlanEligibility = await dependencies.evaluateEligibility({
-      userId,
-      action_type: "can_initiate_named_plan",
-    });
+  const namedPlanEligibility = await dependencies.evaluateEligibility({
+    userId,
+    action_type: "can_initiate_named_plan",
+  });
 
-    if (namedPlanEligibility.allowed) {
-      const handoff = await dependencies.handoffToNamedPlanFlow({
-        userId,
-        message,
-        session,
-      });
-      if (handoff.took_over) {
-        return;
-      }
+  if (namedPlanEligibility.allowed) {
+    const handoff = await dependencies.handoffToNamedPlanFlow({
+      userId,
+      message,
+      session,
+    });
+    if (handoff.took_over) {
+      return;
     }
   }
 
@@ -115,8 +111,6 @@ function resolveDependencies(
   return {
     evaluateEligibility: overrides?.evaluateEligibility ??
       missingDependencyFn("evaluateEligibility"),
-    hasContactCircleEntries: overrides?.hasContactCircleEntries ??
-      missingDependencyFn("hasContactCircleEntries"),
     handoffToLinkupFlow: overrides?.handoffToLinkupFlow ??
       missingDependencyFn("handoffToLinkupFlow"),
     handoffToNamedPlanFlow: overrides?.handoffToNamedPlanFlow ??

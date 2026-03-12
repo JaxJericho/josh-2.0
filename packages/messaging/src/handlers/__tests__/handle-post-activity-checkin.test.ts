@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  extractPlanBriefId,
+  extractCheckinSubjectId,
   extractStep,
   handlePostActivityCheckin,
   parseAttendanceResponse,
@@ -367,7 +367,7 @@ describe("handlePostActivityCheckin", () => {
     });
   });
 
-  it("recovers to idle when state token is missing plan_brief_id", async () => {
+  it("recovers to idle when state token is missing checkin_subject_id", async () => {
     const deps = buildDependencies();
 
     await handlePostActivityCheckin(
@@ -397,14 +397,14 @@ describe("handlePostActivityCheckin", () => {
 });
 
 describe("post activity checkin parsing helpers", () => {
-  it("extracts step and plan_brief_id from state token", () => {
+  it("extracts step and checkin_subject_id from state token", () => {
     expect(extractStep(`checkin:awaiting_bridge:${PLAN_BRIEF_ID}`)).toBe("awaiting_bridge");
-    expect(extractPlanBriefId(`checkin:awaiting_bridge:${PLAN_BRIEF_ID}`)).toBe(PLAN_BRIEF_ID);
+    expect(extractCheckinSubjectId(`checkin:awaiting_bridge:${PLAN_BRIEF_ID}`)).toBe(PLAN_BRIEF_ID);
   });
 
   it("returns null for malformed state token segments", () => {
     expect(extractStep("checkin:not_a_step:123")).toBeNull();
-    expect(extractPlanBriefId("checkin:awaiting_attendance:")).toBeNull();
+    expect(extractCheckinSubjectId("checkin:awaiting_attendance:")).toBeNull();
   });
 
   it("parses attendance, do-again, and bridge responses locally", () => {
@@ -425,7 +425,7 @@ function buildDependencies(
   overrides: Partial<HandlePostActivityCheckinDependencies> = {},
 ): HandlePostActivityCheckinDependencies {
   return {
-    fetchPlanBriefActivityKey: vi.fn().mockResolvedValue("coffee_walk"),
+    fetchCheckinActivityKey: vi.fn().mockResolvedValue("coffee_walk"),
     insertLearningSignal: vi.fn().mockResolvedValue({ error: null }),
     updateConversationSession: vi.fn().mockResolvedValue(undefined),
     sendSms: vi.fn().mockResolvedValue(undefined),

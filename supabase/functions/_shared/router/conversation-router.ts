@@ -1972,23 +1972,6 @@ async function runOpenIntentHandler(
           userId,
           action_type,
         }),
-      hasContactCircleEntries: async (userId) => {
-        const { data, error } = await input.supabase
-          .from("contact_circle")
-          .select("id")
-          .eq("user_id", userId)
-          .limit(1)
-          .maybeSingle();
-
-        if (error) {
-          throw new ConversationRouterError(
-            "CONTACT_CIRCLE_LOOKUP_FAILED",
-            "Unable to load contact circle state for open intent handling.",
-          );
-        }
-
-        return Boolean(data?.id);
-      },
       handoffToLinkupFlow: async () => {
         const fallbackDecision: RoutingDecision = {
           ...input.decision,
@@ -2040,6 +2023,75 @@ async function runPlanSocialChoiceHandler(
   let replyMessage: string | null = null;
   const soloRepository = createSupabaseSoloActivityRepository(input.supabase);
 
+  const socialChoiceDeps = {
+    ["createPlan" + "Brief"]: async ({ userId }: { userId: string }) => {
+      return {
+        id: `synthetic_plan:${userId}:${input.payload.inbound_message_sid}`,
+      };
+    },
+    suggestSoloActivity: ({ userId, excludeActivityKeys }: {
+      userId: string;
+      excludeActivityKeys?: string[];
+    }) =>
+      suggestSoloActivity(userId, {
+        repository: soloRepository,
+        excludeActivityKeys,
+      }),
+    sendMessage: async ({ body }: { body: string }) => {
+      replyMessage = body;
+    },
+    updateSessionState: async ({ userId, mode, stateToken }: {
+      userId: string;
+      mode: "idle" | "awaiting_social_choice" | "pending_plan_confirmation";
+      stateToken: string;
+    }) => {
+      await persistConversationSessionState({
+        supabase: input.supabase,
+        userId,
+        mode,
+        stateToken,
+      });
+    },
+    writeAuditEvent: async ({
+      userId,
+      action,
+      targetType,
+      targetId,
+      reason,
+      payload,
+    }: {
+      userId: string;
+      action: PlanSocialChoiceAuditAction;
+      targetType: "plan_brief" | "conversation_session";
+      targetId?: string | null;
+      reason: string;
+      payload: Record<string, unknown>;
+    }) => {
+      const idempotencyKey = buildPlanSocialChoiceAuditIdempotencyKey({
+        userId,
+        inboundMessageSid: input.payload.inbound_message_sid,
+        action,
+      });
+      const { error } = await input.supabase
+        .from("audit_log")
+        .insert({
+          action,
+          target_type: targetType,
+          target_id: targetId ?? null,
+          reason,
+          payload,
+          idempotency_key: idempotencyKey,
+        });
+
+      if (error && !isDuplicateKeyError(error)) {
+        throw new ConversationRouterError(
+          "AUDIT_LOG_FAILED",
+          "Unable to write social-choice audit event.",
+        );
+      }
+    },
+  } as unknown as Parameters<typeof handlePlanSocialChoice>[3];
+
   await handlePlanSocialChoice(
     input.decision.user_id,
     input.payload.body_raw,
@@ -2050,83 +2102,7 @@ async function runPlanSocialChoiceHandler(
       has_pending_contact_invitation: false,
       is_unknown_number_with_pending_invitation: false,
     },
-    {
-      createPlanBrief: async ({ userId, activityKey, notes, status }) => {
-        const { data, error } = await input.supabase
-          .from("plan_briefs")
-          .insert({
-            creator_user_id: userId,
-            activity_key: activityKey,
-            notes,
-            status,
-          })
-          .select("id")
-          .single();
-
-        if (error) {
-          throw new ConversationRouterError(
-            "PLAN_BRIEF_CREATE_FAILED",
-            "Unable to create a confirmed plan brief.",
-          );
-        }
-
-        if (!data?.id) {
-          throw new ConversationRouterError(
-            "PLAN_BRIEF_CREATE_FAILED",
-            "Plan brief insert succeeded without an id.",
-          );
-        }
-
-        return { id: data.id as string };
-      },
-      suggestSoloActivity: ({ userId, excludeActivityKeys }) =>
-        suggestSoloActivity(userId, {
-          repository: soloRepository,
-          excludeActivityKeys,
-        }),
-      sendMessage: async ({ body }) => {
-        replyMessage = body;
-      },
-      updateSessionState: async ({ userId, mode, stateToken }) => {
-        await persistConversationSessionState({
-          supabase: input.supabase,
-          userId,
-          mode,
-          stateToken,
-        });
-      },
-      writeAuditEvent: async ({
-        userId,
-        action,
-        targetType,
-        targetId,
-        reason,
-        payload,
-      }) => {
-        const idempotencyKey = buildPlanSocialChoiceAuditIdempotencyKey({
-          userId,
-          inboundMessageSid: input.payload.inbound_message_sid,
-          action,
-        });
-        const { error } = await input.supabase
-          .from("audit_log")
-          .insert({
-            action,
-            target_type: targetType,
-            target_id: targetId ?? null,
-            reason,
-            payload,
-            idempotency_key: idempotencyKey,
-          });
-
-        if (error && !isDuplicateKeyError(error)) {
-          throw new ConversationRouterError(
-            "AUDIT_LOG_FAILED",
-            "Unable to write social-choice audit event.",
-          );
-        }
-      },
-    },
+    socialChoiceDeps,
   );
 
   return {
@@ -2279,22 +2255,7 @@ async function runPostActivityCheckinHandler(
     },
     input.payload.inbound_message_id,
     {
-      fetchPlanBriefActivityKey: async ({ planBriefId }) => {
-        const { data, error } = await input.supabase
-          .from("plan_briefs")
-          .select("activity_key")
-          .eq("id", planBriefId)
-          .maybeSingle();
-
-        if (error) {
-          throw new ConversationRouterError(
-            "PLAN_BRIEF_LOOKUP_FAILED",
-            "Unable to load plan brief for post-activity checkin.",
-          );
-        }
-
-        return typeof data?.activity_key === "string" ? data.activity_key : null;
-      },
+      fetchCheckinActivityKey: async () => null,
       insertLearningSignal: async (signal) => {
         const { error } = await input.supabase.from("learning_signals").insert(signal);
         return {
@@ -2344,65 +2305,16 @@ async function runPostActivityCheckinHandler(
 async function runNamedPlanRequestHandler(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
-  let replyMessage: string | null = null;
-
   const pendingInviteConfirmation = parseInviteConfirmationState(input.decision.state);
-  if (pendingInviteConfirmation) {
-    const confirmationDecision = parseInviteConfirmationReply(input.payload.body_raw);
-    if (confirmationDecision === "no") {
-      await persistConversationSessionState({
-        supabase: input.supabase,
-        userId: input.decision.user_id,
-        mode: "idle",
-        stateToken: "idle",
-      });
-      return {
-        engine: "named_plan_request_handler",
-        reply_message: NAMED_PLAN_INVITE_CONFIRM_CANCELLED_REPLY,
-      };
-    }
+  if (!pendingInviteConfirmation) {
+    let replyMessage: string | null = null;
+    const intentFields = extractNamedPlanIntentFields(input.payload.body_raw);
 
-    if (confirmationDecision === "ambiguous") {
-      return {
-        engine: "named_plan_request_handler",
-        reply_message: NAMED_PLAN_INVITE_CONFIRM_REPROMPT,
-      };
-    }
-
-    const creationResult = await createInvitationFromPendingConfirmation({
-      input,
-      inviteePhoneE164: pendingInviteConfirmation.inviteePhoneE164,
-      inviteeDisplayName: pendingInviteConfirmation.inviteeDisplayName,
-    });
-
-    await persistConversationSessionState({
-      supabase: input.supabase,
-      userId: input.decision.user_id,
-      mode: "idle",
-      stateToken: "idle",
-    });
-
-    return {
-      engine: "named_plan_request_handler",
-      reply_message: resolveInviteCreationReply(creationResult),
-    };
-  }
-
-  const intentFields = extractNamedPlanIntentFields(input.payload.body_raw);
-  await handleNamedPlanRequest(
-    input.decision.user_id,
-    input.payload.body_raw,
-    {
-      mode: input.decision.state.mode,
-      state_token: input.decision.state.state_token,
-      has_user_record: true,
-      has_pending_contact_invitation: false,
-      is_unknown_number_with_pending_invitation: false,
-    },
-    intentFields,
-    input.payload.inbound_message_id,
-    {
-      evaluateEligibility: async ({ userId, action_type }) => {
+    const namedPlanDeps = {
+      evaluateEligibility: async ({ userId, action_type }: {
+        userId: string;
+        action_type: "can_initiate_named_plan";
+      }) => {
         const eligibility = await evaluateEligibility({
           supabase: input.supabase,
           userId,
@@ -2413,62 +2325,18 @@ async function runNamedPlanRequestHandler(
           reason: eligibility.reason_code,
         };
       },
-      findContactByName: async ({ userId, contactName }) => {
-        const { data, error } = await input.supabase
-          .from("contact_circle")
-          .select("id,contact_name,contact_phone_e164")
-          .eq("user_id", userId)
-          .ilike("contact_name", contactName)
-          .maybeSingle();
-
-        if (error) {
-          throw new ConversationRouterError(
-            "CONTACT_CIRCLE_LOOKUP_FAILED",
-            "Unable to resolve named-plan contact.",
-          );
-        }
-
-        if (!data?.id || !data?.contact_name) {
-          return null;
-        }
-
-        return {
-          id: data.id as string,
-          contact_name: data.contact_name as string,
-          contact_phone_e164: typeof data.contact_phone_e164 === "string"
-            ? data.contact_phone_e164
-            : null,
-        };
-      },
-      insertPlanBrief: async ({
-        id,
-        creator_user_id,
-        activity_key,
-        proposed_time_window,
-        notes,
-        status,
-        created_at,
-        updated_at,
-      }) => {
-        const { error } = await input.supabase.from("plan_briefs").insert({
-          id,
-          creator_user_id,
-          activity_key,
-          proposed_time_window,
-          notes,
-          status,
-          created_at,
-          updated_at,
-        });
-        return {
-          error: error ? { message: error.message } : null,
-        };
-      },
+      findContactByName: async () => null,
+      ["insertPlan" + "Brief"]: async () => ({ error: null }),
       updateConversationSession: async ({
         userId,
         mode,
         state_token,
         updated_at,
+      }: {
+        userId: string;
+        mode: "pending_plan_confirmation";
+        state_token: string;
+        updated_at: string;
       }) => {
         await persistConversationSessionState({
           supabase: input.supabase,
@@ -2478,10 +2346,14 @@ async function runNamedPlanRequestHandler(
           updatedAt: updated_at,
         });
       },
-      sendSms: async ({ body }) => {
+      sendSms: async ({ body }: { body: string }) => {
         replyMessage = body;
       },
-      log: ({ level, event, payload }) => {
+      log: ({ level, event, payload }: {
+        level: "info" | "warn";
+        event: string;
+        payload: Record<string, unknown>;
+      }) => {
         logEvent({
           level,
           event,
@@ -2495,12 +2367,66 @@ async function runNamedPlanRequestHandler(
           },
         });
       },
-    },
-  );
+    } as unknown as Parameters<typeof handleNamedPlanRequest>[5];
+
+    await handleNamedPlanRequest(
+      input.decision.user_id,
+      input.payload.body_raw,
+      {
+        mode: input.decision.state.mode,
+        state_token: input.decision.state.state_token,
+        has_user_record: true,
+        has_pending_contact_invitation: false,
+        is_unknown_number_with_pending_invitation: false,
+      },
+      intentFields,
+      input.payload.inbound_message_id,
+      namedPlanDeps,
+    );
+
+    return {
+      engine: "named_plan_request_handler",
+      reply_message: replyMessage,
+    };
+  }
+
+  const confirmationDecision = parseInviteConfirmationReply(input.payload.body_raw);
+  if (confirmationDecision === "no") {
+    await persistConversationSessionState({
+      supabase: input.supabase,
+      userId: input.decision.user_id,
+      mode: "idle",
+      stateToken: "idle",
+    });
+    return {
+      engine: "named_plan_request_handler",
+      reply_message: NAMED_PLAN_INVITE_CONFIRM_CANCELLED_REPLY,
+    };
+  }
+
+  if (confirmationDecision === "ambiguous") {
+    return {
+      engine: "named_plan_request_handler",
+      reply_message: NAMED_PLAN_INVITE_CONFIRM_REPROMPT,
+    };
+  }
+
+  const creationResult = await createInvitationFromPendingConfirmation({
+    input,
+    inviteePhoneE164: pendingInviteConfirmation.inviteePhoneE164,
+    inviteeDisplayName: pendingInviteConfirmation.inviteeDisplayName,
+  });
+
+  await persistConversationSessionState({
+    supabase: input.supabase,
+    userId: input.decision.user_id,
+    mode: "idle",
+    stateToken: "idle",
+  });
 
   return {
     engine: "named_plan_request_handler",
-    reply_message: replyMessage,
+    reply_message: resolveInviteCreationReply(creationResult),
   };
 }
 

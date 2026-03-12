@@ -40,7 +40,6 @@ describe("contact invitation creation flow", () => {
     expect(second.outbound_job_id).toBe(first.outbound_job_id);
 
     const state = supabase.debugState();
-    expect(state.contactCircleRows).toHaveLength(1);
     expect(state.contactInvitationRows).toHaveLength(1);
     expect(state.smsOutboundJobRows).toHaveLength(1);
     expect(state.auditLogRows).toHaveLength(1);
@@ -56,7 +55,6 @@ describe("contact invitation creation flow", () => {
 
 function buildInvitationSupabaseMock() {
   const state = {
-    contactCircleRows: [] as Array<Record<string, unknown>>,
     contactInvitationRows: [] as Array<
       {
         id: string;
@@ -74,21 +72,6 @@ function buildInvitationSupabaseMock() {
 
   return {
     from(table: string) {
-      if (table === "contact_circle") {
-        return {
-          async insert(payload: Record<string, unknown>) {
-            const exists = state.contactCircleRows.some((row) =>
-              row.user_id === payload.user_id &&
-              row.contact_phone_hash === payload.contact_phone_hash
-            );
-            if (!exists) {
-              state.contactCircleRows.push({ ...payload });
-            }
-            return { data: null, error: null };
-          },
-        };
-      }
-
       if (table === "contact_invitations") {
         const filters: Record<string, unknown> = {};
         const query = {
@@ -241,7 +224,6 @@ function buildInvitationSupabaseMock() {
     },
     debugState() {
       return {
-        contactCircleRows: [...state.contactCircleRows],
         contactInvitationRows: [...state.contactInvitationRows],
         smsOutboundJobRows: [...state.smsOutboundJobRows],
         auditLogRows: [...state.auditLogRows],
