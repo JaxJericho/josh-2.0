@@ -56,7 +56,7 @@ class InMemoryInvitationExpiryRepository implements InvitationExpiryRepository {
         user_id: invitation.user_id,
         invitation_type: invitation.invitation_type,
         activity_key: invitation.activity_key,
-        time_window: invitation.time_window,
+        proposed_time_window: invitation.proposed_time_window,
         expires_at: invitation.expires_at,
       }));
   }
@@ -292,7 +292,7 @@ function buildInvitation(id: string, userId: string): MutableInvitation {
     user_id: userId,
     invitation_type: "solo",
     activity_key: "coffee_walk",
-    time_window: "this Saturday afternoon",
+    proposed_time_window: "this Saturday afternoon",
     expires_at: "2026-03-12T11:00:00.000Z",
     state: "pending",
   };

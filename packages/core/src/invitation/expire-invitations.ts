@@ -9,7 +9,12 @@ type InvitationRow = Database["public"]["Tables"]["invitations"]["Row"];
 
 export type ExpirableInvitation = Pick<
   InvitationRow,
-  "id" | "user_id" | "invitation_type" | "activity_key" | "time_window" | "expires_at"
+  | "id"
+  | "user_id"
+  | "invitation_type"
+  | "activity_key"
+  | "proposed_time_window"
+  | "expires_at"
 >;
 
 export type ExpireInvitationResult = {
@@ -103,7 +108,7 @@ export function createSupabaseInvitationExpiryRepository(
     async fetchStaleInvitations({ limit, nowIso }) {
       const { data, error } = await supabase
         .from("invitations")
-        .select("id,user_id,invitation_type,activity_key,time_window,expires_at")
+        .select("id,user_id,invitation_type,activity_key,proposed_time_window,expires_at")
         .eq("state", "pending")
         .lte("expires_at", nowIso)
         .order("expires_at", { ascending: true })

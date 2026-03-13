@@ -236,9 +236,9 @@ function buildInvitationResponseSupabaseMock(input?: {
   invitation?: Partial<{
     id: string;
     user_id: string;
-    invitation_type: "solo" | "group";
+    invitation_type: "solo" | "linkup";
     activity_key: string;
-    time_window: string;
+    proposed_time_window: string;
     state: "pending" | "accepted" | "passed" | "expired";
     expires_at: string;
     responded_at: string | null;
@@ -268,9 +268,9 @@ function buildInvitationResponseSupabaseMock(input?: {
     invitation: {
       id: string;
       user_id: string;
-      invitation_type: "solo" | "group";
+      invitation_type: "solo" | "linkup";
       activity_key: string;
-      time_window: string;
+      proposed_time_window: string;
       state: "pending" | "accepted" | "passed" | "expired";
       expires_at: string;
       responded_at: string | null;
@@ -307,7 +307,7 @@ function buildInvitationResponseSupabaseMock(input?: {
       user_id: "11111111-1111-1111-1111-111111111111",
       invitation_type: "solo",
       activity_key: "coffee_walk",
-      time_window: "this Saturday afternoon",
+      proposed_time_window: "this Saturday afternoon",
       state: "pending",
       expires_at: "2026-03-20T00:00:00.000Z",
       responded_at: null,
