@@ -3485,6 +3485,21 @@ export type Database = {
         Args: { fallback_size?: number; wave_no: number; wave_sizes: number[] }
         Returns: number
       }
+      send_reengagement_message: {
+        Args: {
+          p_message_template: string
+          p_now?: string
+          p_sms_encryption_key: string
+          p_state_token?: string
+          p_threshold: number
+          p_user_id: string
+        }
+        Returns: {
+          reason: string
+          sent: boolean
+          user_id: string
+        }[]
+      }
       set_user_safety_hold: {
         Args: { p_now?: string; p_user_id: string }
         Returns: {

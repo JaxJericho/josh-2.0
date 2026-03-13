@@ -30,6 +30,10 @@ type GeneratorProfileRow = Pick<
 
 type GeneratorUserRow = Pick<DbRow<"users">, "id">;
 type GeneratorSubscriptionRow = Pick<DbRow<"subscriptions">, "user_id">;
+type GeneratorConversationSessionRow = Pick<
+  DbRow<"conversation_sessions">,
+  "user_id" | "mode"
+>;
 
 type SystemLinkup = {
   id: string;
@@ -204,16 +208,22 @@ async function loadEligibleUsers(
     return [];
   }
 
-  const [profiles, subscribedUserIds] = await Promise.all([
+  const [profiles, subscribedUserIds, interviewingUserIds] = await Promise.all([
     fetchEligibleProfiles(db, candidateUserIds),
     fetchActiveSubscribedUserIds(db, candidateUserIds),
+    fetchInterviewingUserIds(db, candidateUserIds),
   ]);
 
   const subscribedUserIdSet = new Set(subscribedUserIds);
+  const interviewingUserIdSet = new Set(interviewingUserIds);
   const eligibleUsers: EligibleUser[] = [];
 
   for (const profile of profiles) {
     if (!subscribedUserIdSet.has(profile.user_id)) {
+      continue;
+    }
+
+    if (interviewingUserIdSet.has(profile.user_id)) {
       continue;
     }
 
@@ -309,6 +319,29 @@ async function fetchActiveSubscribedUserIds(
     new Set(
       (data ?? [])
         .map((row) => normalizeId((row as GeneratorSubscriptionRow).user_id))
+        .filter((value): value is string => value !== null),
+    ),
+  );
+}
+
+async function fetchInterviewingUserIds(
+  db: DbClientLike,
+  userIds: string[],
+): Promise<string[]> {
+  const { data, error } = await db
+    .from("conversation_sessions")
+    .select("user_id,mode")
+    .in("user_id", userIds)
+    .eq("mode", "interviewing");
+
+  if (error) {
+    throw new Error("Unable to load active interviewing sessions for regional invitation generation.");
+  }
+
+  return Array.from(
+    new Set(
+      (data ?? [])
+        .map((row) => normalizeId((row as GeneratorConversationSessionRow).user_id))
         .filter((value): value is string => value !== null),
     ),
   );
