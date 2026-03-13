@@ -3448,6 +3448,19 @@ export type Database = {
         }
         Returns: Json
       }
+      lock_linkup_quorum: {
+        Args: {
+          p_confirmation_message: string
+          p_linkup_id: string
+          p_now?: string
+          p_sms_encryption_key: string
+        }
+        Returns: {
+          accepted_count: number
+          locked_at: string
+          status: string
+        }[]
+      }
       linkup_maybe_expire: {
         Args: { p_linkup_id: string; p_now?: string }
         Returns: boolean
@@ -3879,4 +3892,3 @@ export const Constants = {
     },
   },
 } as const
-

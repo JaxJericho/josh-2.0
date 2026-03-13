@@ -1,9 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { evaluateLinkupQuorumMock } = vi.hoisted(() => ({
+  evaluateLinkupQuorumMock: vi.fn(),
+}));
+
+vi.mock("../../../../core/src/invitation/linkup-quorum.ts", () => ({
+  evaluateLinkupQuorum: evaluateLinkupQuorumMock,
+}));
 
 import {
   handleInvitationResponse,
   INVITATION_RESPONSE_CLARIFICATION_MESSAGE,
   INVITATION_RESPONSE_CLARIFIER_STATE_TOKEN,
+  maybeEvaluateAcceptedInvitationLinkupQuorum,
   parseInvitationResponse,
   type InvitationResponseInvitation,
 } from "../handle-invitation-response";
@@ -17,6 +26,10 @@ const BASE_INVITATION: InvitationResponseInvitation = {
 };
 
 describe("handleInvitationResponse", () => {
+  beforeEach(() => {
+    evaluateLinkupQuorumMock.mockReset();
+  });
+
   it("parses accept and pass tokens deterministically", () => {
     expect(parseInvitationResponse("YES")).toBe("accept");
     expect(parseInvitationResponse("ok sure")).toBe("accept");
@@ -127,5 +140,51 @@ describe("handleInvitationResponse", () => {
       nextStateToken: "idle",
       reason: "not_found",
     });
+  });
+
+  it("calls evaluateLinkupQuorum for processed linkup accepts", async () => {
+    evaluateLinkupQuorumMock.mockResolvedValue({ locked: false, reason: "still_pending" });
+
+    await maybeEvaluateAcceptedInvitationLinkupQuorum({
+      invitation: {
+        ...BASE_INVITATION,
+        invitation_type: "linkup",
+        linkup_id: "44444444-4444-4444-4444-444444444444",
+      },
+      action: "accept",
+      processed: true,
+    });
+
+    expect(evaluateLinkupQuorumMock).toHaveBeenCalledWith(
+      "44444444-4444-4444-4444-444444444444",
+    );
+  });
+
+  it("skips quorum evaluation for non-linkup or unprocessed responses", async () => {
+    await maybeEvaluateAcceptedInvitationLinkupQuorum({
+      invitation: BASE_INVITATION,
+      action: "accept",
+      processed: true,
+    });
+    await maybeEvaluateAcceptedInvitationLinkupQuorum({
+      invitation: {
+        ...BASE_INVITATION,
+        invitation_type: "linkup",
+        linkup_id: "44444444-4444-4444-4444-444444444444",
+      },
+      action: "pass",
+      processed: true,
+    });
+    await maybeEvaluateAcceptedInvitationLinkupQuorum({
+      invitation: {
+        ...BASE_INVITATION,
+        invitation_type: "linkup",
+        linkup_id: "44444444-4444-4444-4444-444444444444",
+      },
+      action: "accept",
+      processed: false,
+    });
+
+    expect(evaluateLinkupQuorumMock).not.toHaveBeenCalled();
   });
 });

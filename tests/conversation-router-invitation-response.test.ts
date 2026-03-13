@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { evaluateLinkupQuorumMock } = vi.hoisted(() => ({
+  evaluateLinkupQuorumMock: vi.fn(),
+}));
+
+vi.mock("../packages/core/src/invitation/linkup-quorum.ts", () => ({
+  evaluateLinkupQuorum: evaluateLinkupQuorumMock,
+}));
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
   dispatchConversationRoute,
@@ -17,6 +25,8 @@ const ORIGINAL_SMS_KEY = process.env.SMS_BODY_ENCRYPTION_KEY;
 describe("conversation router invitation response handler", () => {
   beforeEach(() => {
     process.env.SMS_BODY_ENCRYPTION_KEY = "test-encryption-key";
+    evaluateLinkupQuorumMock.mockReset();
+    evaluateLinkupQuorumMock.mockResolvedValue({ locked: false, reason: "still_pending" });
   });
 
   afterEach(() => {
@@ -83,6 +93,27 @@ describe("conversation router invitation response handler", () => {
     expect(state.learningSignals).toHaveLength(1);
     expect(state.learningSignals[0]?.signal_type).toBe("invitation_passed");
     expect(state.outboundJobs).toHaveLength(1);
+  });
+
+  it("invokes quorum evaluation after a processed linkup accept", async () => {
+    const supabase = buildInvitationResponseSupabaseMock({
+      invitation: {
+        invitation_type: "linkup",
+        linkup_id: "44444444-4444-4444-4444-444444444444",
+      },
+      activityDisplayName: "Board Game Night",
+    });
+
+    const result = await dispatchConversationRoute({
+      supabase,
+      decision: decisionForAwaitingInvitationResponse(),
+      payload: samplePayload({ body_raw: "yes", body_normalized: "YES" }),
+    });
+
+    expect(result.reply_message).toBeNull();
+    expect(evaluateLinkupQuorumMock).toHaveBeenCalledWith(
+      "44444444-4444-4444-4444-444444444444",
+    );
   });
 
   it("returns expired copy on accept when no unexpired pending invitation remains", async () => {

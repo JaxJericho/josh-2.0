@@ -28,6 +28,7 @@ import {
 import {
   handleInvitationResponse,
   INVITATION_RESPONSE_CLARIFIER_STATE_TOKEN,
+  maybeEvaluateAcceptedInvitationLinkupQuorum,
   parseInvitationResponse,
 } from "../../../../packages/messaging/src/handlers/handle-invitation-response.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
@@ -1473,13 +1474,11 @@ async function runInvitationResponseHandler(
   const processed = result.processed === true;
   const duplicate = result.duplicate === true;
 
-  if (processed && resolvedDecision.action === "accept" && invitation.invitation_type === "linkup") {
-    await maybeEvaluateInvitationGroupQuorum({
-      linkupId: invitation.linkup_id,
-      userId: input.decision.user_id,
-      correlationId: input.payload.inbound_message_id,
-    });
-  }
+  await maybeEvaluateAcceptedInvitationLinkupQuorum({
+    invitation,
+    action: resolvedDecision.action,
+    processed,
+  });
 
   if (processed || duplicate || reason === "message_sid_already_used") {
     return {
@@ -1498,53 +1497,6 @@ async function runInvitationResponseHandler(
     engine: "invitation_response_handler",
     reply_message: fallback.kind === "terminal" ? fallback.replyMessage : null,
   };
-}
-
-async function maybeEvaluateInvitationGroupQuorum(input: {
-  linkupId: string | null;
-  userId: string;
-  correlationId: string;
-}): Promise<void> {
-  if (!input.linkupId) {
-    return;
-  }
-
-  try {
-    const modulePath =
-      "../../../../packages/core/src/invitation/linkup-quorum.ts";
-    const quorumModule = await import(modulePath) as {
-      evaluateLinkupQuorum?: (linkupId: string) => Promise<unknown>;
-    };
-
-    if (typeof quorumModule.evaluateLinkupQuorum !== "function") {
-      logEvent({
-        level: "warn",
-        event: "system.migration_mismatch_warning",
-        user_id: input.userId,
-        correlation_id: input.correlationId,
-        payload: {
-          warning:
-            "evaluateLinkupQuorum export is unavailable; skipping optional linkup invitation quorum evaluation.",
-          linkup_id: input.linkupId,
-        },
-      });
-      return;
-    }
-
-    await quorumModule.evaluateLinkupQuorum(input.linkupId);
-  } catch (_error) {
-    logEvent({
-      level: "warn",
-      event: "system.migration_mismatch_warning",
-      user_id: input.userId,
-      correlation_id: input.correlationId,
-      payload: {
-        warning:
-          "evaluateLinkupQuorum module is unavailable; skipping optional linkup invitation quorum evaluation.",
-        linkup_id: input.linkupId,
-      },
-    });
-  }
 }
 
 async function fetchInvitationForContactInviteResponse(

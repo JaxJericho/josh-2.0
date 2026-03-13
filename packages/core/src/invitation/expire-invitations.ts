@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { Database } from "../../../../supabase/types/database";
 import type { LogLevel } from "../observability/logger.ts";
+import { evaluateLinkupQuorum } from "./linkup-quorum.ts";
 
 type DbClientLike = Pick<SupabaseClient<Database>, "from" | "rpc">;
 
@@ -12,6 +13,7 @@ export type ExpirableInvitation = Pick<
   | "id"
   | "user_id"
   | "invitation_type"
+  | "linkup_id"
   | "activity_key"
   | "proposed_time_window"
   | "expires_at"
@@ -40,6 +42,7 @@ export type InvitationExpiryRepository = {
     correlationId: string;
     nowIso: string;
   }): Promise<ExpireInvitationResult>;
+  shouldEvaluateLinkupQuorum(linkupId: string): Promise<boolean>;
 };
 
 const BATCH_SIZE = 50;
@@ -66,6 +69,7 @@ export async function expireStaleInvitations(input: {
     let batchExpiredCount = 0;
 
     for (const invitation of invitations) {
+      let phase = "expire_invitation";
       try {
         const result = await input.repository.expireInvitation({
           invitationId: invitation.id,
@@ -76,6 +80,15 @@ export async function expireStaleInvitations(input: {
         if (result.expired) {
           expiredCount += 1;
           batchExpiredCount += 1;
+
+          if (
+            invitation.invitation_type === "linkup" &&
+            invitation.linkup_id &&
+            await input.repository.shouldEvaluateLinkupQuorum(invitation.linkup_id)
+          ) {
+            phase = "evaluate_linkup_quorum_after_expiry";
+            await evaluateLinkupQuorum(invitation.linkup_id);
+          }
         }
       } catch (error) {
         input.log?.({
@@ -84,7 +97,7 @@ export async function expireStaleInvitations(input: {
           correlation_id: input.correlationId,
           user_id: invitation.user_id,
           payload: {
-            phase: "expire_invitation",
+            phase,
             error_name: normalizeErrorName(error),
             error_message: normalizeErrorMessage(error),
             invitation_id: invitation.id,
@@ -108,7 +121,7 @@ export function createSupabaseInvitationExpiryRepository(
     async fetchStaleInvitations({ limit, nowIso }) {
       const { data, error } = await supabase
         .from("invitations")
-        .select("id,user_id,invitation_type,activity_key,proposed_time_window,expires_at")
+        .select("id,user_id,invitation_type,linkup_id,activity_key,proposed_time_window,expires_at")
         .eq("state", "pending")
         .lte("expires_at", nowIso)
         .order("expires_at", { ascending: true })
@@ -153,6 +166,37 @@ export function createSupabaseInvitationExpiryRepository(
         expired: row.expired === true,
         reason: typeof row.reason === "string" ? row.reason : "unknown",
       };
+    },
+
+    async shouldEvaluateLinkupQuorum(linkupId) {
+      const { data: linkup, error: linkupError } = await supabase
+        .from("linkups")
+        .select("state")
+        .eq("id", linkupId)
+        .maybeSingle();
+
+      if (linkupError) {
+        throw new Error(`Failed to load linkup ${linkupId} for expiry quorum check: ${linkupError.message}`);
+      }
+
+      if (linkup?.state !== "broadcasting") {
+        return false;
+      }
+
+      const { data: acceptedInvitations, error: invitationsError } = await supabase
+        .from("invitations")
+        .select("id")
+        .eq("linkup_id", linkupId)
+        .eq("state", "accepted")
+        .order("id", { ascending: true });
+
+      if (invitationsError) {
+        throw new Error(
+          `Failed to count accepted invitations for expiry quorum check: ${invitationsError.message}`,
+        );
+      }
+
+      return (acceptedInvitations ?? []).length >= 2;
     },
   };
 }
