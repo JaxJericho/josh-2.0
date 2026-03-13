@@ -68,6 +68,20 @@ export type ProfileUpdatePatch = {
   state_changed_at: string;
 };
 
+export type ProfileRowForFreeformPreferenceUpdate = ProfileRowForInterview & {
+  scheduling_availability: unknown;
+  notice_preference: string | null;
+  coordination_style: string | null;
+};
+
+export type FreeformPreferenceProfileExtraction = {
+  summary: string;
+  preferences_patch: Record<string, unknown>;
+  boundaries_patch: Record<string, unknown>;
+  notice_preference?: string | null;
+  coordination_style?: string | null;
+};
+
 export type StructuredProfileCoreSignals = {
   coordination_dimensions: Record<string, unknown>;
   activity_patterns: Array<Record<string, unknown>>;
@@ -914,4 +928,48 @@ export function buildStructuredProfileCoreSignals(input: {
     preferences: asObject(input.preferences),
     active_intent: input.active_intent == null ? null : asObject(input.active_intent),
   };
+}
+
+export function buildProfilePatchForFreeformPreferenceUpdate(params: {
+  profile: ProfileRowForFreeformPreferenceUpdate;
+  extraction: FreeformPreferenceProfileExtraction;
+  nowIso: string;
+}): ProfileUpdatePatch {
+  const preferences = {
+    ...asObject(params.profile.preferences),
+    ...asObject(params.extraction.preferences_patch),
+  };
+  const boundaries = {
+    ...asObject(params.profile.boundaries),
+    ...asObject(params.extraction.boundaries_patch),
+  };
+
+  const patch: ProfileUpdatePatch = {
+    state: params.profile.state,
+    is_complete_mvp: params.profile.is_complete_mvp,
+    country_code: params.profile.country_code,
+    state_code: params.profile.state_code,
+    last_interview_step: params.profile.last_interview_step,
+    preferences,
+    coordination_dimensions: asObject(params.profile.coordination_dimensions),
+    activity_patterns: asObjectArray(params.profile.activity_patterns),
+    boundaries,
+    active_intent: params.profile.active_intent == null ? null : asObject(params.profile.active_intent),
+    scheduling_availability: params.profile.scheduling_availability,
+    notice_preference: params.profile.notice_preference,
+    coordination_style: params.profile.coordination_style,
+    completeness_percent: params.profile.completeness_percent,
+    completed_at: params.profile.completed_at,
+    status_reason: params.profile.status_reason,
+    state_changed_at: params.profile.state_changed_at,
+  };
+
+  if (Object.prototype.hasOwnProperty.call(params.extraction, "notice_preference")) {
+    patch.notice_preference = params.extraction.notice_preference ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(params.extraction, "coordination_style")) {
+    patch.coordination_style = params.extraction.coordination_style ?? null;
+  }
+
+  return patch;
 }

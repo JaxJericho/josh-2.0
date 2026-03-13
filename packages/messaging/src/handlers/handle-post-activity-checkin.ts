@@ -69,7 +69,7 @@ const STEP_SET: ReadonlySet<SoloCheckinStep> = new Set([
 ] as const);
 
 const ATTENDANCE_POSITIVE_PATTERN =
-  /^(yes|yeah|yep|yup|went|i went|i did|attended|totally|definitely|sure|great|good|loved|liked|it was great|it was good)\b/;
+  /^(yes|yeah|yep|yup|went|i went|i did|attended|totally|definitely|sure|great|good|loved|liked|it was great|it was good|had a great time|had a good time)\b/;
 const ATTENDANCE_NEGATIVE_PATTERN =
   /^(no|nope|didn't|did not|skipped|couldn't|could not|couldn't make|nah|not really|missed)\b/;
 const DO_AGAIN_POSITIVE_PATTERN =

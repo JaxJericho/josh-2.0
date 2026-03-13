@@ -3473,6 +3473,7 @@ export type Database = {
         | "invitation_accepted"
         | "invitation_passed"
         | "invitation_expired"
+        | "availability_expressed"
       linkup_member_role: "initiator" | "participant"
       linkup_member_status:
         | "confirmed"
@@ -3710,6 +3711,7 @@ export const Constants = {
         "invitation_accepted",
         "invitation_passed",
         "invitation_expired",
+        "availability_expressed",
       ],
       linkup_member_role: ["initiator", "participant"],
       linkup_member_status: [
