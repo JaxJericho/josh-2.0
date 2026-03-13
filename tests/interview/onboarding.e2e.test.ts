@@ -34,6 +34,8 @@ describe("onboarding interview e2e", () => {
       "B",
       "bars and late nights",
       "C",
+      "urban design podcasts",
+      "meeting new people and getting out more",
     ];
 
     let finalAction = "";

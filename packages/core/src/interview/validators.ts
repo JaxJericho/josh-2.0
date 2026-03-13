@@ -52,6 +52,10 @@ export type LocationAnswer = {
   state_code: string | null;
 };
 
+export type OpenTextAnswer = {
+  response_text: string;
+};
+
 const ACTIVITY_ALIAS_MAP: Record<string, string[]> = {
   coffee: ["coffee", "cafe", "espresso", "latte"],
   walk: ["walk", "walking", "stroll"],
@@ -127,6 +131,20 @@ const US_STATE_NAME_TO_CODE: Record<string, string> = {
 
 function normalizeText(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function parseOpenTextAnswer(raw: string): DeterministicParseResult<OpenTextAnswer> {
+  const responseText = raw.trim();
+  if (!responseText) {
+    return { ok: false };
+  }
+
+  return {
+    ok: true,
+    value: {
+      response_text: responseText,
+    },
+  };
 }
 
 function parseSingleChoice(
@@ -623,4 +641,12 @@ export function parseLocationAnswer(raw: string): DeterministicParseResult<Locat
       state_code: null,
     },
   };
+}
+
+export function parseInterestDepthAnswer(raw: string): DeterministicParseResult<OpenTextAnswer> {
+  return parseOpenTextAnswer(raw);
+}
+
+export function parseRelationalContextAnswer(raw: string): DeterministicParseResult<OpenTextAnswer> {
+  return parseOpenTextAnswer(raw);
 }

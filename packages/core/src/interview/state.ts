@@ -193,6 +193,16 @@ function asObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function asObjectArray(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry) => entry && typeof entry === "object") as Array<
+    Record<string, unknown>
+  >;
+}
+
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -377,6 +387,9 @@ function deriveStoredAnswerFromExtraction(
       return { time_preferences: ["evenings"] };
     case "location_01":
       return { country_code: "US", state_code: null };
+    case "interest_01":
+    case "relational_01":
+      return { response_text: "" };
     case "intro_01":
       return { consent: "yes" };
     default:
@@ -431,6 +444,62 @@ function applyHolisticExtractOutputToProfilePatch(params: {
   }
   if ("coordination_style" in params.extractionOutput.coordinationSignalUpdates) {
     patch.coordination_style = params.extractionOutput.coordinationSignalUpdates.coordination_style ?? null;
+  }
+
+  const interestSignatures = new Map<string, Record<string, unknown>>();
+  for (const entry of asObjectArray(patch.interest_signatures)) {
+    const domain = typeof entry.domain === "string" ? entry.domain.trim() : "";
+    if (!domain) {
+      continue;
+    }
+    interestSignatures.set(domain.toLowerCase(), {
+      domain,
+      intensity: asNumber(entry.intensity) ?? 0,
+      confidence: asNumber(entry.confidence) ?? 0,
+    });
+  }
+
+  for (const entry of params.extractionOutput.interestSignaturePatches ?? []) {
+    const domain = entry.domain.trim();
+    if (!domain || entry.confidence < 0.4) {
+      continue;
+    }
+
+    const key = domain.toLowerCase();
+    const existing = interestSignatures.get(key);
+    if (existing && (asNumber(existing.confidence) ?? 0) >= entry.confidence) {
+      continue;
+    }
+
+    interestSignatures.set(key, {
+      domain,
+      intensity: entry.intensity,
+      confidence: entry.confidence,
+    });
+  }
+
+  if (interestSignatures.size > 0) {
+    patch.interest_signatures = Array.from(interestSignatures.values());
+  }
+
+  if (params.extractionOutput.relationalContextPatch) {
+    const existing = asObject(patch.relational_context);
+    const merged: Record<string, unknown> = {
+      life_stage_signal: existing.life_stage_signal ?? null,
+      connection_motivation: existing.connection_motivation ?? null,
+      social_history_hint: existing.social_history_hint ?? null,
+    };
+
+    for (
+      const key of ["life_stage_signal", "connection_motivation", "social_history_hint"] as const
+    ) {
+      const value = params.extractionOutput.relationalContextPatch[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        merged[key] = value.trim();
+      }
+    }
+
+    patch.relational_context = merged;
   }
 
   return patch;
@@ -494,7 +563,12 @@ export async function buildInterviewTransitionPlan(
   input: BuildInterviewTransitionInput,
 ): Promise<InterviewTransitionPlan> {
   const coverageStatus = getSignalCoverageStatus(input.profile);
-  if (coverageStatus.mvpComplete || input.profile.state === "complete_full") {
+  const pendingQuestionSelection = selectNextQuestion(
+    input.profile,
+    buildConversationHistory(input.profile),
+  );
+
+  if ((coverageStatus.mvpComplete && pendingQuestionSelection === null) || input.profile.state === "complete_full") {
     const shouldWrap = shouldSendCompletionWrap(input.session);
     return {
       action: shouldWrap ? "complete" : "idempotent",
@@ -692,10 +766,7 @@ export async function buildInterviewTransitionPlan(
     profileAfterAnswer,
     buildConversationHistory(profileAfterAnswer, input.inbound_message_text),
   );
-  const postAnswerCoverage = getSignalCoverageStatus(profileAfterAnswer);
-  const nextStepId = postAnswerCoverage.mvpComplete
-    ? null
-    : (nextSelection?.questionId ?? currentStepId);
+  const nextStepId = nextSelection?.questionId ?? null;
 
   let profilePatch = buildProfilePatchForInterviewAnswer({
     profile: input.profile,
@@ -712,7 +783,7 @@ export async function buildInterviewTransitionPlan(
     });
   }
 
-  const isComplete = profilePatch.is_complete_mvp;
+  const isComplete = profilePatch.is_complete_mvp && nextStepId === null;
   const activeNextStepId = nextStepId ?? currentStepId;
   const plannedNextStepId = isComplete ? null : activeNextStepId;
 

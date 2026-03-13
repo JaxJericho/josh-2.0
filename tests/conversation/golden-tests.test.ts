@@ -401,6 +401,22 @@ describe("conversation golden tests", () => {
         preferences: {
           group_size_pref: "2-3",
           time_preferences: ["evenings"],
+          interview_progress: {
+            version: 1,
+            status: "complete",
+            step_index: 12,
+            current_step_id: "relational_01",
+            completed_step_ids: ["interest_01", "relational_01"],
+            answers: {
+              interest_01: {
+                response_text: "design meetups",
+              },
+              relational_01: {
+                response_text: "meeting more people nearby",
+              },
+            },
+            updated_at: "2026-02-18T00:01:00.000Z",
+          },
         },
       }),
       llm_extractor: async () => {

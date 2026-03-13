@@ -110,7 +110,7 @@ describe("interview state progression with signal coverage", () => {
     expect(transition.reply_message).not.toBe(INTERVIEW_WRAP);
   });
 
-  it("completion is triggered only when mvp coverage thresholds are met", async () => {
+  it("mvp completion advances into the new depth questions before wrap", async () => {
     const profile = createProfile({
       preferences: {
         group_size_pref: "2-3",
@@ -173,10 +173,10 @@ describe("interview state progression with signal coverage", () => {
       },
     });
 
-    expect(transition.action).toBe("complete");
-    expect(transition.next_step_id).toBeNull();
-    expect(transition.next_session.mode).toBe("idle");
-    expect(transition.reply_message).toBe(INTERVIEW_WRAP);
+    expect(transition.action).toBe("advance");
+    expect(transition.next_step_id).toBe("interest_01");
+    expect(transition.next_session.mode).toBe("interviewing");
+    expect(transition.reply_message).not.toBe(INTERVIEW_WRAP);
     expect(transition.profile_patch?.is_complete_mvp).toBe(true);
   });
 
@@ -246,6 +246,22 @@ describe("interview state progression with signal coverage", () => {
         preferences: {
           group_size_pref: "2-3",
           time_preferences: ["evenings"],
+          interview_progress: {
+            version: 1,
+            status: "complete",
+            step_index: 12,
+            current_step_id: "relational_01",
+            completed_step_ids: ["interest_01", "relational_01"],
+            answers: {
+              interest_01: {
+                response_text: "design meetups",
+              },
+              relational_01: {
+                response_text: "meeting more people nearby",
+              },
+            },
+            updated_at: "2026-02-20T00:00:00.000Z",
+          },
         },
         boundaries: {
           no_thanks: [],

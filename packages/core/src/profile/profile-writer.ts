@@ -30,6 +30,8 @@ export type ProfileRowForInterview = {
   preferences: unknown;
   coordination_dimensions: unknown;
   activity_patterns: unknown;
+  interest_signatures?: unknown;
+  relational_context?: unknown;
   boundaries: unknown;
   active_intent: unknown;
   completeness_percent: number;
@@ -57,6 +59,8 @@ export type ProfileUpdatePatch = {
   preferences: Record<string, unknown>;
   coordination_dimensions: Record<string, unknown>;
   activity_patterns: Array<Record<string, unknown>>;
+  interest_signatures?: Array<Record<string, unknown>> | null;
+  relational_context?: Record<string, unknown> | null;
   boundaries: Record<string, unknown>;
   active_intent: Record<string, unknown> | null;
   scheduling_availability?: unknown;
@@ -202,6 +206,12 @@ export function buildProfilePatchForInterviewStart(params: {
     preferences,
     coordination_dimensions: asObject(params.profile.coordination_dimensions),
     activity_patterns: asObjectArray(params.profile.activity_patterns),
+    interest_signatures: params.profile.interest_signatures == null
+      ? null
+      : asObjectArray(params.profile.interest_signatures),
+    relational_context: params.profile.relational_context == null
+      ? null
+      : asObject(params.profile.relational_context),
     boundaries: asObject(params.profile.boundaries),
     active_intent: asObject(params.profile.active_intent),
     completeness_percent: params.profile.completeness_percent,
@@ -244,6 +254,12 @@ export function buildProfilePatchForInterviewPause(params: {
     preferences,
     coordination_dimensions: asObject(params.profile.coordination_dimensions),
     activity_patterns: asObjectArray(params.profile.activity_patterns),
+    interest_signatures: params.profile.interest_signatures == null
+      ? null
+      : asObjectArray(params.profile.interest_signatures),
+    relational_context: params.profile.relational_context == null
+      ? null
+      : asObject(params.profile.relational_context),
     boundaries: asObject(params.profile.boundaries),
     active_intent: asObject(params.profile.active_intent),
     completeness_percent: params.profile.completeness_percent,
@@ -336,6 +352,8 @@ const STEP_TO_WRITE_TARGETS: Readonly<Record<InterviewQuestionStepId, readonly I
   boundaries_01: ["boundaries_asked", "conflict_tolerance"],
   constraints_01: ["time_preferences"],
   location_01: ["location_capture"],
+  interest_01: [],
+  relational_01: [],
 };
 
 function asNumber(value: unknown): number | null {
@@ -726,6 +744,8 @@ const TARGET_WRITERS: Readonly<Record<InterviewWriteTarget, InterviewSignalWrite
     context.countryCode = location.country_code;
     context.stateCode = location.state_code;
   },
+  interest_signatures: () => {},
+  relational_context: () => {},
 };
 
 function computeCoverageCompletenessPercent(coverageStatus: SignalCoverageStatus): number {
@@ -800,9 +820,10 @@ export function buildProfilePatchForInterviewAnswer(params: {
     active_intent: context.activeIntent,
   });
 
-  const isComplete = coverageStatus.mvpComplete;
+  const mvpComplete = coverageStatus.mvpComplete;
+  const isComplete = mvpComplete && params.nextStepId === null;
   const completenessPercent = computeCoverageCompletenessPercent(coverageStatus);
-  const nextState: ProfileState = isComplete ? "complete_mvp" : "partial";
+  const nextState: ProfileState = mvpComplete ? "complete_mvp" : "partial";
 
   context.preferences.interview_progress = {
     version: 1,
@@ -816,18 +837,24 @@ export function buildProfilePatchForInterviewAnswer(params: {
 
   return {
     state: nextState,
-    is_complete_mvp: isComplete,
+    is_complete_mvp: mvpComplete,
     country_code: context.countryCode,
     state_code: context.stateCode,
     last_interview_step: params.stepId,
     preferences: context.preferences,
     coordination_dimensions: context.coordination_dimensions,
     activity_patterns: context.activityPatterns,
+    interest_signatures: params.profile.interest_signatures == null
+      ? null
+      : asObjectArray(params.profile.interest_signatures),
+    relational_context: params.profile.relational_context == null
+      ? null
+      : asObject(params.profile.relational_context),
     boundaries: context.boundaries,
     active_intent: context.activeIntent,
     completeness_percent: completenessPercent,
-    completed_at: isComplete ? params.nowIso : params.profile.completed_at,
-    status_reason: isComplete ? "interview_complete_mvp" : "interview_in_progress",
+    completed_at: mvpComplete ? params.nowIso : params.profile.completed_at,
+    status_reason: mvpComplete ? "interview_complete_mvp" : "interview_in_progress",
     state_changed_at: nextState !== params.profile.state ? params.nowIso : params.profile.state_changed_at,
   };
 }
@@ -850,6 +877,75 @@ function mergeCoordinationDimensionsFromExtraction(
     };
   }
   return nextDimensions;
+}
+
+function mergeInterestSignaturesFromExtraction(
+  currentValue: unknown,
+  extractionOutput: HolisticExtractOutput,
+): Array<Record<string, unknown>> | null {
+  const nextByDomain = new Map<string, Record<string, unknown>>();
+
+  for (const entry of asObjectArray(currentValue)) {
+    const domain = typeof entry.domain === "string" ? entry.domain.trim() : "";
+    if (!domain) {
+      continue;
+    }
+    nextByDomain.set(domain.toLowerCase(), {
+      domain,
+      intensity: asNumber(entry.intensity) ?? 0,
+      confidence: asNumber(entry.confidence) ?? 0,
+    });
+  }
+
+  for (const patch of extractionOutput.interestSignaturePatches ?? []) {
+    const domain = typeof patch.domain === "string" ? patch.domain.trim() : "";
+    if (!domain || patch.confidence < 0.4) {
+      continue;
+    }
+
+    const key = domain.toLowerCase();
+    const existingEntry = nextByDomain.get(key);
+    const existingConfidence = asNumber(existingEntry?.confidence) ?? 0;
+    if (existingEntry && existingConfidence >= patch.confidence) {
+      continue;
+    }
+
+    nextByDomain.set(key, {
+      domain,
+      intensity: patch.intensity,
+      confidence: patch.confidence,
+    });
+  }
+
+  return nextByDomain.size > 0 ? Array.from(nextByDomain.values()) : null;
+}
+
+function mergeRelationalContextFromExtraction(
+  currentValue: unknown,
+  extractionOutput: HolisticExtractOutput,
+): Record<string, unknown> | null {
+  const existing = asObject(currentValue);
+  const patch = extractionOutput.relationalContextPatch;
+  const merged: Record<string, unknown> = {
+    life_stage_signal: existing.life_stage_signal ?? null,
+    connection_motivation: existing.connection_motivation ?? null,
+    social_history_hint: existing.social_history_hint ?? null,
+  };
+
+  if (!patch) {
+    return Object.values(merged).some((value) => value !== null) ? merged : null;
+  }
+
+  for (
+    const key of ["life_stage_signal", "connection_motivation", "social_history_hint"] as const
+  ) {
+    const value = patch[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      merged[key] = value.trim();
+    }
+  }
+
+  return Object.values(merged).some((value) => value !== null) ? merged : null;
 }
 
 export function applyHolisticExtractOutputToProfilePatch(params: {
@@ -881,6 +977,22 @@ export function applyHolisticExtractOutputToProfilePatch(params: {
     nextPatch.coordination_style = params.extractionOutput.coordinationSignalUpdates.coordination_style ?? null;
   }
 
+  const interestSignatures = mergeInterestSignaturesFromExtraction(
+    nextPatch.interest_signatures,
+    params.extractionOutput,
+  );
+  if (interestSignatures !== null) {
+    nextPatch.interest_signatures = interestSignatures;
+  }
+
+  const relationalContext = mergeRelationalContextFromExtraction(
+    nextPatch.relational_context,
+    params.extractionOutput,
+  );
+  if (relationalContext !== null) {
+    nextPatch.relational_context = relationalContext;
+  }
+
   const coverageStatus = getSignalCoverageStatus({
     country_code: nextPatch.country_code,
     last_interview_step: nextPatch.last_interview_step,
@@ -900,6 +1012,8 @@ export function applyHolisticExtractOutputToProfilePatch(params: {
     is_complete_mvp: isComplete,
     coordination_dimensions: coordinationDimensions,
     activity_patterns: activityPatterns,
+    interest_signatures: nextPatch.interest_signatures ?? null,
+    relational_context: nextPatch.relational_context ?? null,
     boundaries,
     preferences,
     active_intent: activeIntent,
@@ -953,6 +1067,12 @@ export function buildProfilePatchForFreeformPreferenceUpdate(params: {
     preferences,
     coordination_dimensions: asObject(params.profile.coordination_dimensions),
     activity_patterns: asObjectArray(params.profile.activity_patterns),
+    interest_signatures: params.profile.interest_signatures == null
+      ? null
+      : asObjectArray(params.profile.interest_signatures),
+    relational_context: params.profile.relational_context == null
+      ? null
+      : asObject(params.profile.relational_context),
     boundaries,
     active_intent: params.profile.active_intent == null ? null : asObject(params.profile.active_intent),
     scheduling_availability: params.profile.scheduling_availability,
