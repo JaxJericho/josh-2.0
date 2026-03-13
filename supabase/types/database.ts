@@ -749,14 +749,17 @@ export type Database = {
           correlation_id: string | null
           created_at: string
           expires_at: string
+          group_size_preference_snapshot: Json | null
           id: string
           idempotency_key: string
           invitation_type: Database["public"]["Enums"]["invitation_type"]
           linkup_id: string | null
+          location_hint: string | null
+          offered_at: string
+          proposed_time_window: string
           responded_at: string | null
           response_message_sid: string | null
           state: Database["public"]["Enums"]["invitation_state"]
-          time_window: string
           updated_at: string
           user_id: string
         }
@@ -765,14 +768,17 @@ export type Database = {
           correlation_id?: string | null
           created_at?: string
           expires_at: string
+          group_size_preference_snapshot?: Json | null
           id?: string
           idempotency_key: string
           invitation_type: Database["public"]["Enums"]["invitation_type"]
           linkup_id?: string | null
+          location_hint?: string | null
+          offered_at: string
+          proposed_time_window: string
           responded_at?: string | null
           response_message_sid?: string | null
           state?: Database["public"]["Enums"]["invitation_state"]
-          time_window: string
           updated_at?: string
           user_id: string
         }
@@ -781,14 +787,17 @@ export type Database = {
           correlation_id?: string | null
           created_at?: string
           expires_at?: string
+          group_size_preference_snapshot?: Json | null
           id?: string
           idempotency_key?: string
           invitation_type?: Database["public"]["Enums"]["invitation_type"]
           linkup_id?: string | null
+          location_hint?: string | null
+          offered_at?: string
+          proposed_time_window?: string
           responded_at?: string | null
           response_message_sid?: string | null
           state?: Database["public"]["Enums"]["invitation_state"]
-          time_window?: string
           updated_at?: string
           user_id?: string
         }
@@ -3320,6 +3329,27 @@ export type Database = {
         Args: { ciphertext: string; key: string }
         Returns: string
       }
+      dispatch_invitation: {
+        Args: {
+          p_activity_key: string
+          p_correlation_id: string
+          p_expiry_hours: number
+          p_idempotency_key: string
+          p_invitation_type: Database["public"]["Enums"]["invitation_type"]
+          p_linkup_id: string
+          p_location_hint: string
+          p_now?: string
+          p_outbound_message: string
+          p_proposed_time_window: string
+          p_sms_encryption_key: string
+          p_user_id: string
+        }
+        Returns: {
+          dispatched: boolean
+          invitation_id: string
+          reason: string
+        }[]
+      }
       encrypt_sms_body: {
         Args: { key: string; plaintext: string }
         Returns: string
@@ -3492,7 +3522,7 @@ export type Database = {
         | "pending_contact_invite_confirmation"
       entitlement_source: "stripe" | "admin_override" | "reconciled"
       invitation_state: "pending" | "accepted" | "passed" | "expired"
-      invitation_type: "solo" | "group"
+      invitation_type: "solo" | "linkup"
       invite_state: "pending" | "accepted" | "declined" | "expired" | "closed"
       job_state: "pending" | "sending" | "sent" | "failed" | "canceled"
       keyword_match_type: "exact" | "contains" | "regex"
@@ -3730,7 +3760,7 @@ export const Constants = {
       ],
       entitlement_source: ["stripe", "admin_override", "reconciled"],
       invitation_state: ["pending", "accepted", "passed", "expired"],
-      invitation_type: ["solo", "group"],
+      invitation_type: ["solo", "linkup"],
       invite_state: ["pending", "accepted", "declined", "expired", "closed"],
       job_state: ["pending", "sending", "sent", "failed", "canceled"],
       keyword_match_type: ["exact", "contains", "regex"],

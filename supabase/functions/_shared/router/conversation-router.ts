@@ -201,9 +201,9 @@ type ContactInvitationResponseRow = {
 
 type InvitationResponseRow = {
   id: string;
-  invitation_type: "solo" | "group";
+  invitation_type: "solo" | "linkup";
   activity_key: string;
-  time_window: string;
+  proposed_time_window: string;
   linkup_id: string | null;
 };
 
@@ -1069,7 +1069,7 @@ async function fetchInvitationForInvitationResponse(input: {
 }): Promise<InvitationResponseRow | null> {
   let query = input.supabase
     .from("invitations")
-    .select("id,invitation_type,activity_key,time_window,linkup_id")
+    .select("id,invitation_type,activity_key,proposed_time_window,linkup_id")
     .eq("user_id", input.userId)
     .eq("state", "pending");
 
@@ -1091,9 +1091,9 @@ async function fetchInvitationForInvitationResponse(input: {
 
   if (
     !data?.id ||
-    (data.invitation_type !== "solo" && data.invitation_type !== "group") ||
+    (data.invitation_type !== "solo" && data.invitation_type !== "linkup") ||
     !data.activity_key ||
-    !data.time_window
+    !data.proposed_time_window
   ) {
     const replayData = await fetchInvitationReplayByMessageSid(
       input.supabase,
@@ -1107,7 +1107,7 @@ async function fetchInvitationForInvitationResponse(input: {
     id: data.id,
     invitation_type: data.invitation_type,
     activity_key: data.activity_key,
-    time_window: data.time_window,
+    proposed_time_window: data.proposed_time_window,
     linkup_id: typeof data.linkup_id === "string" ? data.linkup_id : null,
   };
 }
@@ -1119,7 +1119,7 @@ async function fetchInvitationReplayByMessageSid(
 ): Promise<InvitationResponseRow | null> {
   const { data, error } = await supabase
     .from("invitations")
-    .select("id,invitation_type,activity_key,time_window,linkup_id")
+    .select("id,invitation_type,activity_key,proposed_time_window,linkup_id")
     .eq("user_id", userId)
     .eq("response_message_sid", inboundMessageSid)
     .order("created_at", { ascending: false })
@@ -1135,9 +1135,9 @@ async function fetchInvitationReplayByMessageSid(
 
   if (
     !data?.id ||
-    (data.invitation_type !== "solo" && data.invitation_type !== "group") ||
+    (data.invitation_type !== "solo" && data.invitation_type !== "linkup") ||
     !data.activity_key ||
-    !data.time_window
+    !data.proposed_time_window
   ) {
     return null;
   }
@@ -1146,7 +1146,7 @@ async function fetchInvitationReplayByMessageSid(
     id: data.id,
     invitation_type: data.invitation_type,
     activity_key: data.activity_key,
-    time_window: data.time_window,
+    proposed_time_window: data.proposed_time_window,
     linkup_id: typeof data.linkup_id === "string" ? data.linkup_id : null,
   };
 }
@@ -1473,7 +1473,7 @@ async function runInvitationResponseHandler(
   const processed = result.processed === true;
   const duplicate = result.duplicate === true;
 
-  if (processed && resolvedDecision.action === "accept" && invitation.invitation_type === "group") {
+  if (processed && resolvedDecision.action === "accept" && invitation.invitation_type === "linkup") {
     await maybeEvaluateInvitationGroupQuorum({
       linkupId: invitation.linkup_id,
       userId: input.decision.user_id,
@@ -1524,7 +1524,7 @@ async function maybeEvaluateInvitationGroupQuorum(input: {
         correlation_id: input.correlationId,
         payload: {
           warning:
-            "evaluateLinkupQuorum export is unavailable; skipping optional group invitation quorum evaluation.",
+            "evaluateLinkupQuorum export is unavailable; skipping optional linkup invitation quorum evaluation.",
           linkup_id: input.linkupId,
         },
       });
@@ -1540,7 +1540,7 @@ async function maybeEvaluateInvitationGroupQuorum(input: {
       correlation_id: input.correlationId,
       payload: {
         warning:
-          "evaluateLinkupQuorum module is unavailable; skipping optional group invitation quorum evaluation.",
+          "evaluateLinkupQuorum module is unavailable; skipping optional linkup invitation quorum evaluation.",
         linkup_id: input.linkupId,
       },
     });

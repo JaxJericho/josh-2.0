@@ -1,7 +1,9 @@
 import { z } from "zod";
 
+import { GroupSizePreferenceSchema } from "./profile";
+
 export type InvitationState = "pending" | "accepted" | "passed" | "expired";
-export type InvitationType = "solo" | "group";
+export type InvitationType = "solo" | "linkup";
 
 export type Invitation = {
   id: string;
@@ -9,7 +11,13 @@ export type Invitation = {
   invitation_type: InvitationType;
   linkup_id: string | null;
   activity_key: string;
-  time_window: string;
+  proposed_time_window: string;
+  offered_at: string;
+  location_hint: string | null;
+  group_size_preference_snapshot: {
+    min: number;
+    max: number;
+  } | null;
   state: InvitationState;
   expires_at: string;
   responded_at: string | null;
@@ -27,7 +35,7 @@ export const InvitationStateSchema = z.enum([
   "expired",
 ]);
 
-export const InvitationTypeSchema = z.enum(["solo", "group"]);
+export const InvitationTypeSchema = z.enum(["solo", "linkup"]);
 
 export const InvitationSchema = z.object({
   id: z.string().uuid(),
@@ -35,7 +43,10 @@ export const InvitationSchema = z.object({
   invitation_type: InvitationTypeSchema,
   linkup_id: z.string().uuid().nullable(),
   activity_key: z.string(),
-  time_window: z.string(),
+  proposed_time_window: z.string(),
+  offered_at: z.string(),
+  location_hint: z.string().nullable(),
+  group_size_preference_snapshot: GroupSizePreferenceSchema.nullable(),
   state: InvitationStateSchema,
   expires_at: z.string(),
   responded_at: z.string().nullable(),

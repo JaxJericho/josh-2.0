@@ -12,7 +12,7 @@ const BASE_INVITATION: InvitationResponseInvitation = {
   id: "11111111-1111-1111-1111-111111111111",
   invitation_type: "solo",
   activity_key: "coffee_walk",
-  time_window: "this Saturday afternoon",
+  proposed_time_window: "this Saturday afternoon",
   linkup_id: null,
 };
 
@@ -79,7 +79,7 @@ describe("handleInvitationResponse", () => {
       stateToken: "invitation:awaiting_response",
       invitation: {
         ...BASE_INVITATION,
-        invitation_type: "group",
+        invitation_type: "linkup",
       },
       activityDisplayName: "Board Game Night",
     });

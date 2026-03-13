@@ -33,9 +33,9 @@ export type InvitationResponseParseResult = "accept" | "pass" | "clarify";
 
 export type InvitationResponseInvitation = {
   id: string;
-  invitation_type: "solo" | "group";
+  invitation_type: "solo" | "linkup";
   activity_key: string;
-  time_window: string;
+  proposed_time_window: string;
   linkup_id: string | null;
 };
 
@@ -166,10 +166,10 @@ function buildAcceptanceReply(input: {
   );
 
   if (input.invitation.invitation_type === "solo") {
-    return `You're set for ${activityName} ${input.invitation.time_window}. JOSH will check in with you afterward. Reply STOP anytime to unsubscribe.`;
+    return `You're set for ${activityName} ${input.invitation.proposed_time_window}. JOSH will check in with you afterward. Reply STOP anytime to unsubscribe.`;
   }
 
-  return `You're in for ${activityName} ${input.invitation.time_window}. JOSH will confirm the group and send details once everyone is locked in.`;
+  return `You're in for ${activityName} ${input.invitation.proposed_time_window}. JOSH will confirm the group and send details once everyone is locked in.`;
 }
 
 function resolveActivityDisplayName(
