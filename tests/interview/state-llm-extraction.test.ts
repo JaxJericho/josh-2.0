@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildInterviewTransitionPlan } from "../../packages/core/src/interview/state";
-import type { ProfileRowForInterview } from "../../packages/core/src/profile/profile-writer";
+import {
+  applyHolisticExtractOutputToProfilePatch,
+  buildProfilePatchForInterviewAnswer,
+  type ProfileRowForInterview,
+} from "../../packages/core/src/profile/profile-writer";
 import { createHolisticSignalExtractor } from "../../packages/llm/src/holistic-extractor";
 import { LlmProviderError, type LlmProvider } from "../../packages/llm/src/provider";
 import type { HolisticExtractOutput } from "../../packages/db/src/types";
@@ -38,6 +42,8 @@ function createProfile(overrides: Partial<ProfileRowForInterview> = {}): Profile
     active_intent: {
       activity_key: "coffee",
     },
+    interest_signatures: null,
+    relational_context: null,
     completeness_percent: 0,
     completed_at: null,
     status_reason: "interview_in_progress",
@@ -113,6 +119,122 @@ describe("interview state llm extraction wiring", () => {
     expect((adventureNode.confidence as number) >= 0.66).toBe(true);
     expect(patch.notice_preference).toBe("24_hours");
     expect(patch.coordination_style).toBe("direct");
+  });
+
+  it("filters low-confidence interest signatures and preserves non-null relational context fields", () => {
+    const basePatch = buildProfilePatchForInterviewAnswer({
+      profile: createProfile({
+        interest_signatures: [
+          {
+            domain: "urban infrastructure",
+            intensity: 0.51,
+            confidence: 0.45,
+          },
+        ],
+        relational_context: {
+          life_stage_signal: null,
+          connection_motivation: "staying active",
+          social_history_hint: "used to have a regular group",
+        },
+      }),
+      stepId: "activity_01",
+      answer: {
+        activity_keys: ["coffee", "walk", "museum"],
+      },
+      nextStepId: "activity_02",
+      nowIso: "2026-02-18T12:00:00.000Z",
+    });
+
+    const patch = applyHolisticExtractOutputToProfilePatch({
+      profilePatch: basePatch,
+      extractionOutput: validHolisticOutput({
+        interestSignaturePatches: [
+          { domain: "live music discovery", intensity: 0.7, confidence: 0.35 },
+          { domain: "urban infrastructure", intensity: 0.82, confidence: 0.62 },
+          { domain: "cooking as craft", intensity: 0.61, confidence: 0.42 },
+        ],
+        relationalContextPatch: {
+          life_stage_signal: "new to city",
+          connection_motivation: null,
+        },
+      }),
+      nowIso: "2026-02-18T12:00:00.000Z",
+    });
+
+    expect(patch.interest_signatures).toEqual([
+      {
+        domain: "urban infrastructure",
+        intensity: 0.82,
+        confidence: 0.62,
+      },
+      {
+        domain: "cooking as craft",
+        intensity: 0.61,
+        confidence: 0.42,
+      },
+    ]);
+    expect(patch.relational_context).toEqual({
+      life_stage_signal: "new to city",
+      connection_motivation: "staying active",
+      social_history_hint: "used to have a regular group",
+    });
+  });
+
+  it("applies both new depth fields during interview transition planning", async () => {
+    const transition = await buildInterviewTransitionPlan({
+      inbound_message_sid: "SM_LLM_WIRE_0001B",
+      inbound_message_text: "I have been really into urban design lately.",
+      now_iso: "2026-02-18T12:00:00.000Z",
+      session: {
+        mode: "interviewing",
+        state_token: "interview:motive_01",
+        current_step_id: "motive_01",
+        last_inbound_message_sid: null,
+        dropout_nudge_sent_at: null,
+      },
+      profile: createProfile({
+        interest_signatures: [
+          {
+            domain: "urban infrastructure",
+            intensity: 0.5,
+            confidence: 0.41,
+          },
+        ],
+        relational_context: {
+          life_stage_signal: null,
+          connection_motivation: "staying active",
+          social_history_hint: null,
+        },
+      }),
+      llm_extractor: async () =>
+        validHolisticOutput({
+          interestSignaturePatches: [
+            {
+              domain: "urban infrastructure",
+              intensity: 0.85,
+              confidence: 0.63,
+            },
+          ],
+          relationalContextPatch: {
+            life_stage_signal: "new to city",
+            connection_motivation: "meeting new people",
+          },
+        }),
+    });
+
+    const patch = transition.profile_patch as Record<string, unknown>;
+    expect(patch.interest_signatures).toEqual([
+      {
+        domain: "urban infrastructure",
+        intensity: 0.85,
+        confidence: 0.63,
+      },
+    ]);
+    expect(patch.relational_context).toEqual({
+      life_stage_signal: "new to city",
+      connection_motivation: "meeting new people",
+      social_history_hint: null,
+    });
   });
 
   it("invalid JSON extractor output falls back to deterministic parser", async () => {

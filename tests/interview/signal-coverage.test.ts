@@ -157,4 +157,49 @@ describe("adaptive next question selection", () => {
     expect(selection?.signalTarget).toBe("values_alignment_importance");
     expect(selection?.questionId).toBe("values_01");
   });
+
+  it("asks the new depth questions after MVP coverage is complete", () => {
+    const completeProfile = createProfile({
+      coordination_dimensions: createCoordinationDimensions([
+        "connection_depth",
+        "social_energy",
+        "social_pace",
+        "novelty_seeking",
+        "structure_preference",
+        "humor_style",
+        "conversation_style",
+        "values_alignment_importance",
+      ]),
+      activity_patterns: [
+        { activity_key: "coffee", confidence: 0.65, source: "interview" },
+        { activity_key: "walk", confidence: 0.65, source: "interview" },
+        { activity_key: "museum", confidence: 0.65, source: "interview" },
+      ],
+      boundaries: { skipped: true, no_thanks: [] },
+      preferences: {
+        group_size_pref: "2-3",
+        time_preferences: ["evenings"],
+      },
+    });
+
+    expect(selectNextQuestion(completeProfile, [])).toEqual({
+      questionId: "interest_01",
+      signalTarget: "interest_signatures",
+    });
+
+    expect(selectNextQuestion({
+      ...completeProfile,
+      preferences: {
+        group_size_pref: "2-3",
+        time_preferences: ["evenings"],
+        interview_progress: {
+          completed_step_ids: ["interest_01"],
+          answers: {},
+        },
+      },
+    }, [])).toEqual({
+      questionId: "relational_01",
+      signalTarget: "relational_context",
+    });
+  });
 });

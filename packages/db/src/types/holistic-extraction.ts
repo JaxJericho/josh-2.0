@@ -16,10 +16,16 @@ export type HolisticExtractInput = {
 export type HolisticExtractOutput = {
   coordinationDimensionUpdates: Partial<CoordinationDimensions>;
   coordinationSignalUpdates: Partial<CoordinationSignals>;
+  interestSignaturePatches?: Array<{
+    domain: string;
+    intensity: number;
+    confidence: number;
+  }>;
+  relationalContextPatch?: {
+    life_stage_signal?: string | null;
+    connection_motivation?: string | null;
+    social_history_hint?: string | null;
+  };
   coverageSummary: DimensionCoverageSummary;
-  // TODO (Ticket 5b.1): Add interestSignaturePatches and relationalContextPatch fields.
-  // These fields extend the holistic extractor to populate
-  // profiles.interest_signatures and profiles.relational_context.
-  // Do not implement extraction logic here - that belongs in Session 5b.
   needsFollowUp: boolean;
 };

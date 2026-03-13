@@ -3,10 +3,12 @@ import {
   parseBoundariesAnswer,
   parseGroupSizeAnswer,
   parseIntroAnswer,
+  parseInterestDepthAnswer,
   parseLocationAnswer,
   parseMotiveAnswer,
   parseMotiveChoiceAnswer,
   parsePaceAnswer,
+  parseRelationalContextAnswer,
   parseStyleConversationAnswer,
   parseStylePrimaryAnswer,
   parseTimePreferenceAnswer,
@@ -18,6 +20,7 @@ import {
   type GroupSizeAnswer,
   type IntroAnswer,
   type LocationAnswer,
+  type OpenTextAnswer,
   type InterviewValidationContext,
   type MotiveAnswer,
   type PaceAnswer,
@@ -43,6 +46,8 @@ export const INTERVIEW_STEP_IDS = [
   "boundaries_01",
   "constraints_01",
   "location_01",
+  "interest_01",
+  "relational_01",
   "wrap_01",
 ] as const;
 
@@ -72,6 +77,8 @@ export type InterviewNormalizedAnswerByStep = {
   boundaries_01: BoundariesAnswer;
   constraints_01: TimePreferenceAnswer;
   location_01: LocationAnswer;
+  interest_01: OpenTextAnswer;
+  relational_01: OpenTextAnswer;
 };
 
 export type InterviewNormalizedAnswer =
@@ -202,6 +209,24 @@ export const ONBOARDING_INTERVIEW_STEPS: readonly InterviewStep[] = [
     retry_prompt:
       "Reply in this format: US-WA (example: US-WA), or a 2-letter country code if outside the US.",
     parse: (rawAnswer) => parseLocationAnswer(rawAnswer),
+  },
+  {
+    id: "interest_01",
+    kind: "question",
+    prompt:
+      "What's something you've gotten really into lately - could be anything, not just activities?",
+    retry_prompt:
+      "Tell me one thing you've been really into lately, even if it's not an activity.",
+    parse: (rawAnswer) => parseInterestDepthAnswer(rawAnswer),
+  },
+  {
+    id: "relational_01",
+    kind: "question",
+    prompt:
+      "What are you hoping JOSH can help with - staying active, meeting new people, just getting out of the house?",
+    retry_prompt:
+      "Tell me what you're hoping JOSH helps with, like staying active, meeting new people, or getting out more.",
+    parse: (rawAnswer) => parseRelationalContextAnswer(rawAnswer),
   },
   {
     id: "wrap_01",

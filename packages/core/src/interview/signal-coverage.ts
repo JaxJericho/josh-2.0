@@ -34,7 +34,9 @@ export type RequiredCoverageTarget = (typeof REQUIRED_COVERAGE_TARGETS)[number];
 export type InterviewSignalTarget =
   | RequiredCoverageTarget
   | "top_activity_intent"
-  | "location_capture";
+  | "location_capture"
+  | "interest_signatures"
+  | "relational_context";
 
 export const SIGNAL_TARGET_TO_QUESTION_ID: Readonly<
   Record<InterviewSignalTarget, InterviewQuestionStepId>
@@ -57,6 +59,8 @@ export const SIGNAL_TARGET_TO_QUESTION_ID: Readonly<
   emotional_directness: "motive_01",
   adventure_comfort: "motive_02",
   location_capture: "location_01",
+  interest_signatures: "interest_01",
+  relational_context: "relational_01",
 };
 
 export const REQUIRED_TARGET_PRIORITY: readonly RequiredCoverageTarget[] = [
@@ -97,6 +101,11 @@ export const QUESTION_TARGET_PRIORITY: readonly InterviewSignalTarget[] = [
   "conflict_tolerance",
   "group_vs_1on1_preference",
   "location_capture",
+];
+
+const DEPTH_SIGNAL_TARGET_PRIORITY: readonly InterviewSignalTarget[] = [
+  "interest_signatures",
+  "relational_context",
 ];
 
 type SignalCoverageProfile = {
@@ -450,6 +459,15 @@ export function selectNextQuestion(
 ): NextQuestionSelection | null {
   const coverage = getSignalCoverageStatus(profile);
   if (coverage.mvpComplete) {
+    for (const target of DEPTH_SIGNAL_TARGET_PRIORITY) {
+      const questionId = SIGNAL_TARGET_TO_QUESTION_ID[target];
+      if (!isQuestionAlreadyAnswered(questionId, profile)) {
+        return {
+          questionId,
+          signalTarget: target,
+        };
+      }
+    }
     return null;
   }
 

@@ -22,6 +22,8 @@ const SIGNAL_KEYS = [
 const TOP_LEVEL_KEYS = new Set([
   "coordinationDimensionUpdates",
   "coordinationSignalUpdates",
+  "interestSignaturePatches",
+  "relationalContextPatch",
   "coverageSummary",
   "needsFollowUp",
 ]);
@@ -174,6 +176,61 @@ function parseCoordinationSignalUpdates(value: unknown): HolisticExtractOutput["
   return parsed;
 }
 
+function parseInterestSignaturePatches(
+  value: unknown,
+): NonNullable<HolisticExtractOutput["interestSignaturePatches"]> {
+  if (!Array.isArray(value)) {
+    throw new HolisticExtractOutputSchemaError("interestSignaturePatches must be an array.");
+  }
+
+  return value.map((entry, index) => {
+    const path = `interestSignaturePatches[${index}]`;
+    const object = assertPlainObject(entry, path);
+    assertNoUnknownKeys(object, new Set(["domain", "intensity", "confidence"]), path);
+
+    if (typeof object.domain !== "string" || object.domain.trim().length === 0) {
+      throw new HolisticExtractOutputSchemaError(`${path}.domain must be a non-empty string.`);
+    }
+
+    return {
+      domain: object.domain.trim(),
+      intensity: assertUnitInterval(object.intensity, `${path}.intensity`),
+      confidence: assertUnitInterval(object.confidence, `${path}.confidence`),
+    };
+  });
+}
+
+function parseRelationalContextPatch(
+  value: unknown,
+): NonNullable<HolisticExtractOutput["relationalContextPatch"]> {
+  const object = assertPlainObject(value, "relationalContextPatch");
+  assertNoUnknownKeys(
+    object,
+    new Set(["life_stage_signal", "connection_motivation", "social_history_hint"]),
+    "relationalContextPatch",
+  );
+
+  const parsed: NonNullable<HolisticExtractOutput["relationalContextPatch"]> = {};
+  for (
+    const key of ["life_stage_signal", "connection_motivation", "social_history_hint"] as const
+  ) {
+    if (!(key in object)) {
+      continue;
+    }
+
+    const entry = object[key];
+    if (entry !== null && typeof entry !== "string") {
+      throw new HolisticExtractOutputSchemaError(
+        `relationalContextPatch.${key} must be a string or null.`,
+      );
+    }
+
+    parsed[key] = entry;
+  }
+
+  return parsed;
+}
+
 function parseCoverageSummary(value: unknown): HolisticExtractOutput["coverageSummary"] {
   const object = assertPlainObject(value, "coverageSummary");
   assertNoUnknownKeys(object, new Set(["dimensions", "signals"]), "coverageSummary");
@@ -250,6 +307,14 @@ export function parseHolisticExtractOutput(value: unknown): HolisticExtractOutpu
     coverageSummary: parseCoverageSummary(output.coverageSummary),
     needsFollowUp: assertBoolean(output.needsFollowUp, "output.needsFollowUp"),
   };
+
+  if (output.interestSignaturePatches != null) {
+    parsed.interestSignaturePatches = parseInterestSignaturePatches(output.interestSignaturePatches);
+  }
+
+  if (output.relationalContextPatch != null) {
+    parsed.relationalContextPatch = parseRelationalContextPatch(output.relationalContextPatch);
+  }
 
   return parsed;
 }
