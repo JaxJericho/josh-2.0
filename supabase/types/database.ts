@@ -194,6 +194,51 @@ export type Database = {
           },
         ]
       }
+      compatibility_score_cache: {
+        Row: {
+          computed_at: string
+          id: string
+          profile_hash_a: string
+          profile_hash_b: string
+          score: number
+          user_a_id: string
+          user_b_id: string
+        }
+        Insert: {
+          computed_at?: string
+          id?: string
+          profile_hash_a: string
+          profile_hash_b: string
+          score: number
+          user_a_id: string
+          user_b_id: string
+        }
+        Update: {
+          computed_at?: string
+          id?: string
+          profile_hash_a?: string
+          profile_hash_b?: string
+          score?: number
+          user_a_id?: string
+          user_b_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "compatibility_score_cache_user_a_id_fkey"
+            columns: ["user_a_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "compatibility_score_cache_user_b_id_fkey"
+            columns: ["user_b_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_exchange_choices: {
         Row: {
           captured_at: string
