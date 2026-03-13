@@ -294,6 +294,13 @@ export const EVENT_CATALOG: readonly EventCatalogEntry[] = [
     pii_fields: [],
   },
   {
+    event_name: "generator_cron.dispatched",
+    category: "system",
+    required_fields: ["regionCount", "reEngagementSentCount", "reEngagementSkippedCount"],
+    optional_fields: ["request_id"],
+    pii_fields: [],
+  },
+  {
     event_name: "twilio.inbound_received",
     category: "system",
     required_fields: ["inbound_message_sid"],

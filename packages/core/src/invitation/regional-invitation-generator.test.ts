@@ -65,12 +65,18 @@ type SubscriptionRow = {
   status: string;
 };
 
+type ConversationSessionRow = {
+  user_id: string;
+  mode: string;
+};
+
 function buildDbClient(input?: {
   lockAcquired?: boolean;
   unlockAcquired?: boolean;
   users?: UserRow[];
   profiles?: ProfileRow[];
   subscriptions?: SubscriptionRow[];
+  conversationSessions?: ConversationSessionRow[];
   existingLinkups?: Record<string, { id: string }>;
 }) {
   const state = {
@@ -79,6 +85,7 @@ function buildDbClient(input?: {
     users: [...(input?.users ?? [])],
     profiles: [...(input?.profiles ?? [])],
     subscriptions: [...(input?.subscriptions ?? [])],
+    conversationSessions: [...(input?.conversationSessions ?? [])],
     existingLinkups: new Map(Object.entries(input?.existingLinkups ?? {})),
   };
 
@@ -88,6 +95,8 @@ function buildDbClient(input?: {
     profilesNeq: [] as Array<{ column: string; value: unknown }>,
     subscriptionsIn: [] as Array<{ column: string; values: unknown[] }>,
     subscriptionsEq: [] as Array<{ column: string; value: unknown }>,
+    conversationSessionsIn: [] as Array<{ column: string; values: unknown[] }>,
+    conversationSessionsEq: [] as Array<{ column: string; value: unknown }>,
     linkupSelectKeys: [] as string[],
     linkupInserts: [] as Record<string, unknown>[],
     rpc: [] as Array<{ name: string; payload: Record<string, unknown> }>,
@@ -174,6 +183,14 @@ function buildDbClient(input?: {
           rows: state.subscriptions,
           onIn: (column, values) => calls.subscriptionsIn.push({ column, values }),
           onEq: (column, value) => calls.subscriptionsEq.push({ column, value }),
+        });
+      }
+
+      if (table === "conversation_sessions") {
+        return createAwaitableQuery({
+          rows: state.conversationSessions,
+          onIn: (column, values) => calls.conversationSessionsIn.push({ column, values }),
+          onEq: (column, value) => calls.conversationSessionsEq.push({ column, value }),
         });
       }
 
@@ -280,6 +297,16 @@ function buildSubscription(userId: string): SubscriptionRow {
   return {
     user_id: userId,
     status: "active",
+  };
+}
+
+function buildConversationSession(
+  userId: string,
+  mode: string,
+): ConversationSessionRow {
+  return {
+    user_id: userId,
+    mode,
   };
 }
 
@@ -421,6 +448,25 @@ describe("runRegionalGenerator", () => {
     expect(dbClient.calls.profilesNeq).toContainEqual({
       column: "state",
       value: "complete_invited",
+    });
+  });
+
+  it("skips users already moved into the interviewing re-engagement session", async () => {
+    const dbClient = buildDbClient({
+      users: [buildUser(userA, regionId), buildUser(userB, regionId)],
+      profiles: [buildProfile(userA), buildProfile(userB)],
+      subscriptions: [buildSubscription(userA), buildSubscription(userB)],
+      conversationSessions: [buildConversationSession(userA, "interviewing")],
+    });
+    createServiceRoleDbClientMock.mockReturnValue(dbClient.db);
+
+    await runRegionalGenerator(regionId);
+
+    expect(checkInvitationEligibilityMock).toHaveBeenCalledTimes(1);
+    expect(checkInvitationEligibilityMock).toHaveBeenCalledWith(userB);
+    expect(dbClient.calls.conversationSessionsEq).toContainEqual({
+      column: "mode",
+      value: "interviewing",
     });
   });
 
