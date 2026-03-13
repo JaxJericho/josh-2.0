@@ -1,30 +1,24 @@
 import type { ConversationSession } from "../intents/intent-types";
 import {
   CHECKIN_ERROR_RECOVERY_MESSAGE,
-  SOLO_CHECKIN_BRIDGE_OFFER,
   SOLO_CHECKIN_CLARIFY_ATTENDANCE,
   SOLO_CHECKIN_CLARIFY_DO_AGAIN,
   SOLO_CHECKIN_DO_AGAIN_PROMPT,
   SOLO_CHECKIN_WRAP_ATTENDED,
-  SOLO_CHECKIN_WRAP_BRIDGE_ACCEPTED,
-  SOLO_CHECKIN_WRAP_BRIDGE_DECLINED,
   SOLO_CHECKIN_WRAP_SKIPPED,
 } from "../../../core/src/messages";
 
 export type SoloCheckinStep =
   | "awaiting_attendance"
-  | "awaiting_do_again"
-  | "awaiting_bridge";
+  | "awaiting_do_again";
 
 export type SoloSignalType =
   | "solo_activity_attended"
   | "solo_activity_skipped"
   | "solo_do_again_yes"
-  | "solo_do_again_no"
-  | "solo_bridge_accepted";
+  | "solo_do_again_no";
 
 type BinaryResponse = "positive" | "negative" | "ambiguous";
-type BridgeResponse = "positive" | "non_positive";
 
 export type HandlePostActivityCheckinDependencies = {
   fetchCheckinActivityKey: (input: { checkinSubjectId: string }) => Promise<string | null>;
@@ -65,7 +59,6 @@ type HandlePostActivityCheckinDependencyOverrides =
 const STEP_SET: ReadonlySet<SoloCheckinStep> = new Set([
   "awaiting_attendance",
   "awaiting_do_again",
-  "awaiting_bridge",
 ] as const);
 
 const ATTENDANCE_POSITIVE_PATTERN =
@@ -76,15 +69,12 @@ const DO_AGAIN_POSITIVE_PATTERN =
   /^(yes|yeah|yep|yup|definitely|for sure|sure|absolutely|totally|would|i would)\b/;
 const DO_AGAIN_NEGATIVE_PATTERN =
   /^(no|nope|nah|not really|was fine once|once was enough|not my thing|pass)\b/;
-const BRIDGE_POSITIVE_PATTERN =
-  /^(yes|yeah|yep|yup|sure|please|ok|okay|sounds good|do it)\b/;
 
 const IDEMPOTENCY_SEGMENT_BY_SIGNAL: Record<SoloSignalType, string> = {
   solo_activity_attended: "attended",
   solo_activity_skipped: "skipped",
   solo_do_again_yes: "do_again_yes",
   solo_do_again_no: "do_again_no",
-  solo_bridge_accepted: "bridge_accepted",
 };
 
 export async function handlePostActivityCheckin(
@@ -161,16 +151,6 @@ export async function handlePostActivityCheckin(
       return;
     case "awaiting_do_again":
       await handleDoAgainStep({
-        userId,
-        message,
-        checkinSubjectId,
-        activityKey,
-        correlationId,
-        dependencies,
-      });
-      return;
-    case "awaiting_bridge":
-      await handleBridgeStep({
         userId,
         message,
         checkinSubjectId,
@@ -307,15 +287,15 @@ async function handleDoAgainStep(input: {
       correlationId: input.correlationId,
       dependencies: input.dependencies,
     });
-    await input.dependencies.updateConversationSession({
+    await setSessionIdle({
       userId: input.userId,
-      mode: "post_activity_checkin",
-      state_token: buildStateToken("awaiting_bridge", input.checkinSubjectId),
-      updated_at: input.dependencies.nowIso(),
+      correlationId: input.correlationId,
+      finalStep: "awaiting_do_again",
+      dependencies: input.dependencies,
     });
     await input.dependencies.sendSms({
       userId: input.userId,
-      body: SOLO_CHECKIN_BRIDGE_OFFER,
+      body: SOLO_CHECKIN_WRAP_ATTENDED,
       correlationId: input.correlationId,
     });
     return;
@@ -338,51 +318,6 @@ async function handleDoAgainStep(input: {
   await input.dependencies.sendSms({
     userId: input.userId,
     body: SOLO_CHECKIN_WRAP_ATTENDED,
-    correlationId: input.correlationId,
-  });
-}
-
-async function handleBridgeStep(input: {
-  userId: string;
-  message: string;
-  checkinSubjectId: string;
-  activityKey: string | null;
-  correlationId: string;
-  dependencies: HandlePostActivityCheckinDependencies;
-}): Promise<void> {
-  const response = parseBridgeResponse(input.message);
-  if (response === "positive") {
-    await writeSoloSignal({
-      userId: input.userId,
-      signalType: "solo_bridge_accepted",
-      checkinSubjectId: input.checkinSubjectId,
-      activityKey: input.activityKey,
-      correlationId: input.correlationId,
-      dependencies: input.dependencies,
-    });
-    await setSessionIdle({
-      userId: input.userId,
-      correlationId: input.correlationId,
-      finalStep: "awaiting_bridge",
-      dependencies: input.dependencies,
-    });
-    await input.dependencies.sendSms({
-      userId: input.userId,
-      body: SOLO_CHECKIN_WRAP_BRIDGE_ACCEPTED,
-      correlationId: input.correlationId,
-    });
-    return;
-  }
-
-  await setSessionIdle({
-    userId: input.userId,
-    correlationId: input.correlationId,
-    finalStep: "awaiting_bridge",
-    dependencies: input.dependencies,
-  });
-  await input.dependencies.sendSms({
-    userId: input.userId,
-    body: SOLO_CHECKIN_WRAP_BRIDGE_DECLINED,
     correlationId: input.correlationId,
   });
 }
@@ -517,14 +452,6 @@ export function parseAttendanceResponse(message: string): BinaryResponse {
 
 export function parseDoAgainResponse(message: string): BinaryResponse {
   return parseBinaryResponse(message, DO_AGAIN_POSITIVE_PATTERN, DO_AGAIN_NEGATIVE_PATTERN);
-}
-
-export function parseBridgeResponse(message: string): BridgeResponse {
-  const normalized = normalizeMessage(message);
-  if (BRIDGE_POSITIVE_PATTERN.test(normalized)) {
-    return "positive";
-  }
-  return "non_positive";
 }
 
 function parseBinaryResponse(

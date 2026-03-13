@@ -5,19 +5,15 @@ import {
   extractStep,
   handlePostActivityCheckin,
   parseAttendanceResponse,
-  parseBridgeResponse,
   parseDoAgainResponse,
   type HandlePostActivityCheckinDependencies,
 } from "../handle-post-activity-checkin";
 import type { ConversationSession } from "../../intents/intent-types";
 import {
   CHECKIN_ERROR_RECOVERY_MESSAGE,
-  SOLO_CHECKIN_BRIDGE_OFFER,
   SOLO_CHECKIN_CLARIFY_ATTENDANCE,
   SOLO_CHECKIN_DO_AGAIN_PROMPT,
   SOLO_CHECKIN_WRAP_ATTENDED,
-  SOLO_CHECKIN_WRAP_BRIDGE_ACCEPTED,
-  SOLO_CHECKIN_WRAP_BRIDGE_DECLINED,
   SOLO_CHECKIN_WRAP_SKIPPED,
 } from "../../../../core/src/messages";
 
@@ -32,7 +28,7 @@ const BASE_SESSION: ConversationSession = {
 };
 
 describe("handlePostActivityCheckin", () => {
-  it("runs attended -> do-again yes -> bridge accepted across three turns", async () => {
+  it("runs attended -> do-again yes across two turns and idles after do-again", async () => {
     const deps = buildDependencies();
 
     await handlePostActivityCheckin(
@@ -90,49 +86,16 @@ describe("handlePostActivityCheckin", () => {
     });
     expect(deps.updateConversationSession).toHaveBeenNthCalledWith(2, {
       userId: "usr_123",
-      mode: "post_activity_checkin",
-      state_token: `checkin:awaiting_bridge:${PLAN_BRIEF_ID}`,
-      updated_at: "2026-03-03T12:00:00.000Z",
-    });
-    expect(deps.sendSms).toHaveBeenNthCalledWith(2, {
-      userId: "usr_123",
-      body: SOLO_CHECKIN_BRIDGE_OFFER,
-      correlationId: "corr_123",
-    });
-
-    await handlePostActivityCheckin(
-      "usr_123",
-      "yes please",
-      {
-        ...BASE_SESSION,
-        state_token: `checkin:awaiting_bridge:${PLAN_BRIEF_ID}`,
-      },
-      "corr_123",
-      deps,
-    );
-
-    expect(deps.insertLearningSignal).toHaveBeenNthCalledWith(3, {
-      id: "signal_123",
-      user_id: "usr_123",
-      signal_type: "solo_bridge_accepted",
-      subject_id: PLAN_BRIEF_ID,
-      value_bool: true,
-      meta: { activity_key: "coffee_walk" },
-      occurred_at: "2026-03-03T12:00:00.000Z",
-      ingested_at: "2026-03-03T12:00:00.000Z",
-      idempotency_key: `ls:solo_checkin:bridge_accepted:${PLAN_BRIEF_ID}:usr_123`,
-    });
-    expect(deps.updateConversationSession).toHaveBeenNthCalledWith(3, {
-      userId: "usr_123",
       mode: "idle",
       state_token: "idle",
       updated_at: "2026-03-03T12:00:00.000Z",
     });
-    expect(deps.sendSms).toHaveBeenNthCalledWith(3, {
+    expect(deps.sendSms).toHaveBeenNthCalledWith(2, {
       userId: "usr_123",
-      body: SOLO_CHECKIN_WRAP_BRIDGE_ACCEPTED,
+      body: SOLO_CHECKIN_WRAP_ATTENDED,
       correlationId: "corr_123",
     });
+    expect(deps.insertLearningSignal).toHaveBeenCalledTimes(2);
   });
 
   it("writes solo_activity_skipped and idles session when user did not attend", async () => {
@@ -169,8 +132,7 @@ describe("handlePostActivityCheckin", () => {
         .calls
         .every((call) =>
           call[0]?.signal_type !== "solo_do_again_yes" &&
-          call[0]?.signal_type !== "solo_do_again_no" &&
-          call[0]?.signal_type !== "solo_bridge_accepted"
+          call[0]?.signal_type !== "solo_do_again_no"
         ),
     ).toBe(true);
   });
@@ -205,39 +167,6 @@ describe("handlePostActivityCheckin", () => {
     expect(deps.sendSms).toHaveBeenCalledWith({
       userId: "usr_123",
       body: SOLO_CHECKIN_WRAP_ATTENDED,
-      correlationId: "corr_123",
-    });
-    expect(
-      (deps.insertLearningSignal as unknown as { mock: { calls: Array<Array<{ signal_type: string }>> } }).mock
-        .calls
-        .every((call) => call[0]?.signal_type !== "solo_bridge_accepted"),
-    ).toBe(true);
-  });
-
-  it("treats non-positive bridge reply as decline without writing a bridge signal", async () => {
-    const deps = buildDependencies();
-
-    await handlePostActivityCheckin(
-      "usr_123",
-      "nah i'm good",
-      {
-        ...BASE_SESSION,
-        state_token: `checkin:awaiting_bridge:${PLAN_BRIEF_ID}`,
-      },
-      "corr_123",
-      deps,
-    );
-
-    expect(deps.insertLearningSignal).not.toHaveBeenCalled();
-    expect(deps.updateConversationSession).toHaveBeenCalledWith({
-      userId: "usr_123",
-      mode: "idle",
-      state_token: "idle",
-      updated_at: "2026-03-03T12:00:00.000Z",
-    });
-    expect(deps.sendSms).toHaveBeenCalledWith({
-      userId: "usr_123",
-      body: SOLO_CHECKIN_WRAP_BRIDGE_DECLINED,
       correlationId: "corr_123",
     });
   });
@@ -296,12 +225,6 @@ describe("handlePostActivityCheckin", () => {
       message: "not really",
       signalType: "solo_do_again_no",
       idempotencySuffix: "do_again_no",
-    },
-    {
-      session: `checkin:awaiting_bridge:${PLAN_BRIEF_ID}`,
-      message: "yes",
-      signalType: "solo_bridge_accepted",
-      idempotencySuffix: "bridge_accepted",
     },
   ])(
     "writes $signalType in its correct branch",
@@ -398,8 +321,8 @@ describe("handlePostActivityCheckin", () => {
 
 describe("post activity checkin parsing helpers", () => {
   it("extracts step and checkin_subject_id from state token", () => {
-    expect(extractStep(`checkin:awaiting_bridge:${PLAN_BRIEF_ID}`)).toBe("awaiting_bridge");
-    expect(extractCheckinSubjectId(`checkin:awaiting_bridge:${PLAN_BRIEF_ID}`)).toBe(PLAN_BRIEF_ID);
+    expect(extractStep(`checkin:awaiting_do_again:${PLAN_BRIEF_ID}`)).toBe("awaiting_do_again");
+    expect(extractCheckinSubjectId(`checkin:awaiting_do_again:${PLAN_BRIEF_ID}`)).toBe(PLAN_BRIEF_ID);
   });
 
   it("returns null for malformed state token segments", () => {
@@ -407,7 +330,7 @@ describe("post activity checkin parsing helpers", () => {
     expect(extractCheckinSubjectId("checkin:awaiting_attendance:")).toBeNull();
   });
 
-  it("parses attendance, do-again, and bridge responses locally", () => {
+  it("parses attendance and do-again responses locally", () => {
     expect(parseAttendanceResponse("yeah i went")).toBe("positive");
     expect(parseAttendanceResponse("had a great time last night")).toBe("positive");
     expect(parseAttendanceResponse("no i skipped it")).toBe("negative");
@@ -416,9 +339,6 @@ describe("post activity checkin parsing helpers", () => {
     expect(parseDoAgainResponse("definitely")).toBe("positive");
     expect(parseDoAgainResponse("not really")).toBe("negative");
     expect(parseDoAgainResponse("maybe")).toBe("ambiguous");
-
-    expect(parseBridgeResponse("yes please")).toBe("positive");
-    expect(parseBridgeResponse("nah")).toBe("non_positive");
   });
 });
 
