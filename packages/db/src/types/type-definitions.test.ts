@@ -93,6 +93,7 @@ describe("3.0 db type definitions", () => {
 
     const linkupRecord: Linkup = {
       acceptance_window_ends_at: null,
+      activity_key: "coffee_walk",
       brief: {
         activity_key: "coffee_walk",
         time_window: "weekend_morning",
@@ -110,6 +111,7 @@ describe("3.0 db type definitions", () => {
       max_size: 6,
       max_waves: 3,
       min_size: 2,
+      proposed_time_window: "weekend_morning",
       region_id: "70f8f4d7-6af5-40ec-b548-c0f7aee0efe9",
       scheduled_at: null,
       state: "draft",
