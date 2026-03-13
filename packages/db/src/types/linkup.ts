@@ -26,6 +26,7 @@ const JsonSchema: z.ZodType<Json> = z.lazy(() =>
 
 export const LinkupSchema: z.ZodType<Linkup> = z.object({
   acceptance_window_ends_at: z.string().nullable(),
+  activity_key: z.string().nullable(),
   brief: JsonSchema,
   broadcast_started_at: z.string().nullable(),
   canceled_reason: z.string().nullable(),
@@ -40,6 +41,7 @@ export const LinkupSchema: z.ZodType<Linkup> = z.object({
   max_size: z.number().int(),
   max_waves: z.number().int(),
   min_size: z.number().int(),
+  proposed_time_window: z.string().nullable(),
   region_id: z.string().uuid(),
   scheduled_at: z.string().nullable(),
   state: LinkupStateSchema,

@@ -1470,6 +1470,7 @@ export type Database = {
       linkups: {
         Row: {
           acceptance_window_ends_at: string | null
+          activity_key: string | null
           brief: Json
           broadcast_started_at: string | null
           canceled_reason: string | null
@@ -1484,6 +1485,7 @@ export type Database = {
           max_size: number
           max_waves: number
           min_size: number
+          proposed_time_window: string | null
           region_id: string
           scheduled_at: string | null
           state: Database["public"]["Enums"]["linkup_state"]
@@ -1496,6 +1498,7 @@ export type Database = {
         }
         Insert: {
           acceptance_window_ends_at?: string | null
+          activity_key?: string | null
           brief: Json
           broadcast_started_at?: string | null
           canceled_reason?: string | null
@@ -1510,6 +1513,7 @@ export type Database = {
           max_size?: number
           max_waves?: number
           min_size?: number
+          proposed_time_window?: string | null
           region_id: string
           scheduled_at?: string | null
           state?: Database["public"]["Enums"]["linkup_state"]
@@ -1522,6 +1526,7 @@ export type Database = {
         }
         Update: {
           acceptance_window_ends_at?: string | null
+          activity_key?: string | null
           brief?: Json
           broadcast_started_at?: string | null
           canceled_reason?: string | null
@@ -1536,6 +1541,7 @@ export type Database = {
           max_size?: number
           max_waves?: number
           min_size?: number
+          proposed_time_window?: string | null
           region_id?: string
           scheduled_at?: string | null
           state?: Database["public"]["Enums"]["linkup_state"]
@@ -3466,6 +3472,14 @@ export type Database = {
       parse_linkup_invite_reply_token: {
         Args: { raw_text: string }
         Returns: string
+      }
+      regional_generator_try_lock: {
+        Args: { p_region_id: string }
+        Returns: boolean
+      }
+      regional_generator_unlock: {
+        Args: { p_region_id: string }
+        Returns: boolean
       }
       resolve_linkup_wave_size: {
         Args: { fallback_size?: number; wave_no: number; wave_sizes: number[] }
