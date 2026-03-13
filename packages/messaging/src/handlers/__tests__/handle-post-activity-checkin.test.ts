@@ -409,6 +409,7 @@ describe("post activity checkin parsing helpers", () => {
 
   it("parses attendance, do-again, and bridge responses locally", () => {
     expect(parseAttendanceResponse("yeah i went")).toBe("positive");
+    expect(parseAttendanceResponse("had a great time last night")).toBe("positive");
     expect(parseAttendanceResponse("no i skipped it")).toBe("negative");
     expect(parseAttendanceResponse("it was interesting")).toBe("ambiguous");
 

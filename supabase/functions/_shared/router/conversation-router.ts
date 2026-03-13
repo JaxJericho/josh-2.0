@@ -18,6 +18,10 @@ import {
 } from "../../../../packages/messaging/src/handlers/handle-interview-answer-abbreviated.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import {
+  handleFreeformInbound,
+} from "../../../../packages/messaging/src/handlers/handle-freeform-inbound.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import {
   handlePostActivityCheckin,
 } from "../../../../packages/messaging/src/handlers/handle-post-activity-checkin.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
@@ -77,6 +81,7 @@ export type RouterRoute =
   | "contact_invite_response_handler"
   | "invitation_response_handler"
   | "post_activity_checkin_handler"
+  | "freeform_inbound_handler"
   | "open_intent_handler"
   | "named_plan_request_handler"
   | "plan_social_choice_handler"
@@ -166,6 +171,28 @@ type ProfileSummary = {
   state: string | null;
 };
 
+type FreeformProfileRow = {
+  id: string;
+  user_id: string;
+  state: "empty" | "partial" | "complete_invited" | "complete_mvp" | "complete_full" | "stale";
+  is_complete_mvp: boolean;
+  country_code: string | null;
+  state_code: string | null;
+  last_interview_step: string | null;
+  preferences: unknown;
+  coordination_dimensions: unknown;
+  activity_patterns: unknown;
+  boundaries: unknown;
+  active_intent: unknown;
+  scheduling_availability: unknown;
+  notice_preference: string | null;
+  coordination_style: string | null;
+  completeness_percent: number;
+  completed_at: string | null;
+  status_reason: string | null;
+  state_changed_at: string;
+};
+
 type ContactInvitationResponseRow = {
   id: string;
   inviter_user_id: string;
@@ -178,6 +205,12 @@ type InvitationResponseRow = {
   activity_key: string;
   time_window: string;
   linkup_id: string | null;
+};
+
+type RecentAcceptedInvitationRow = {
+  id: string;
+  activity_key: string;
+  responded_at: string | null;
 };
 
 type ApplyInvitationResponseRpcRow = {
@@ -822,8 +855,9 @@ function resolveRouteForIntent(
     case "INVITE_RESPONSE":
     case "INVITATION_RESPONSE":
     case "PROFILE_UPDATE":
-    case "UNKNOWN":
       return resolveRouteForState(state);
+    case "UNKNOWN":
+      return state.mode === "idle" ? "freeform_inbound_handler" : resolveRouteForState(state);
     default:
       throw new ConversationRouterError(
         "INVALID_ROUTE",
@@ -837,6 +871,7 @@ function isIntentHandlerRoute(route: RouterRoute): boolean {
     route === "contact_invite_response_handler" ||
     route === "invitation_response_handler" ||
     route === "post_activity_checkin_handler" ||
+    route === "freeform_inbound_handler" ||
     route === "open_intent_handler" ||
     route === "named_plan_request_handler" ||
     route === "plan_social_choice_handler" ||
@@ -974,6 +1009,8 @@ export async function dispatchConversationRoute(
       return runInvitationResponseHandler(input);
     case "post_activity_checkin_handler":
       return runPostActivityCheckinHandler(input);
+    case "freeform_inbound_handler":
+      return runFreeformInboundHandler(input);
     case "open_intent_handler":
       return runOpenIntentHandler(input);
     case "plan_social_choice_handler":
@@ -2559,6 +2596,182 @@ async function runPostActivityCheckinHandler(
   };
 }
 
+async function runFreeformInboundHandler(
+  input: EngineDispatchInput,
+): Promise<EngineDispatchResult> {
+  const nowIso = new Date().toISOString();
+  const profile = await fetchFreeformProfile(input.supabase, input.decision.user_id);
+  const result = await handleFreeformInbound({
+    messageText: input.payload.body_raw,
+    correlationId: input.payload.inbound_message_id,
+    nowIso,
+    profile,
+  });
+
+  switch (result.kind) {
+    case "availability_signal": {
+      await insertFreeformAvailabilitySignal({
+        supabase: input.supabase,
+        userId: input.decision.user_id,
+        inboundMessageSid: input.payload.inbound_message_sid,
+        correlationId: input.payload.inbound_message_id,
+        rawMessage: input.payload.body_raw,
+        summary: result.summary,
+        nowIso,
+      });
+      await persistConversationSessionState({
+        supabase: input.supabase,
+        userId: input.decision.user_id,
+        mode: "idle",
+        stateToken: "idle",
+        updatedAt: nowIso,
+      });
+      return {
+        engine: "freeform_inbound_handler",
+        reply_message: result.replyMessage,
+      };
+    }
+    case "post_event_signal": {
+      const invitation = await fetchRecentAcceptedInvitation(input.supabase, input.decision.user_id, nowIso);
+      if (!invitation) {
+        await persistConversationSessionState({
+          supabase: input.supabase,
+          userId: input.decision.user_id,
+          mode: "idle",
+          stateToken: "idle",
+          updatedAt: nowIso,
+        });
+        return {
+          engine: "freeform_inbound_handler",
+          reply_message:
+            "JOSH handles plans and invitations over text — no app needed. JOSH will be in touch with something tailored to you. Reply HELP for options.",
+        };
+      }
+
+      let replyMessage: string | null = null;
+      const synthesizedStateToken = `checkin:awaiting_attendance:${invitation.id}`;
+      await handlePostActivityCheckin(
+        input.decision.user_id,
+        input.payload.body_raw,
+        {
+          mode: "post_activity_checkin",
+          state_token: synthesizedStateToken,
+          has_user_record: true,
+          has_pending_contact_invitation: false,
+          is_unknown_number_with_pending_invitation: false,
+        },
+        input.payload.inbound_message_id,
+        {
+          fetchCheckinActivityKey: async () => invitation.activity_key,
+          insertLearningSignal: async (signal) => {
+            const { error } = await input.supabase.from("learning_signals").insert(signal);
+            return {
+              error: error
+                ? {
+                  code: typeof error.code === "string" ? error.code : undefined,
+                  message: error.message,
+                }
+                : null,
+            };
+          },
+          updateConversationSession: async ({ userId, mode, state_token, updated_at }) => {
+            await persistConversationSessionState({
+              supabase: input.supabase,
+              userId,
+              mode,
+              stateToken: state_token,
+              updatedAt: updated_at,
+            });
+          },
+          sendSms: async ({ body }) => {
+            replyMessage = body;
+          },
+          log: ({ level, event, payload }) => {
+            logEvent({
+              level,
+              event,
+              user_id: input.decision.user_id,
+              correlation_id: input.payload.inbound_message_id,
+              payload: {
+                route: "post_activity_checkin_handler",
+                session_mode: "post_activity_checkin",
+                session_state_token: synthesizedStateToken,
+                ...payload,
+              },
+            });
+          },
+        },
+      );
+
+      return {
+        engine: "freeform_inbound_handler",
+        reply_message: replyMessage,
+      };
+    }
+    case "preference_update": {
+      if (profile?.id && result.profilePatch && result.profileEvent) {
+        const { error: updateProfileError } = await input.supabase
+          .from("profiles")
+          .update(result.profilePatch)
+          .eq("id", profile.id);
+
+        if (updateProfileError) {
+          throw new ConversationRouterError(
+            "PROFILE_UPDATE_FAILED",
+            "Unable to persist freeform preference update.",
+          );
+        }
+
+        const { error: profileEventError } = await input.supabase
+          .from("profile_events")
+          .insert({
+            profile_id: profile.id,
+            user_id: input.decision.user_id,
+            event_type: result.profileEvent.eventType,
+            source: "handle_freeform_inbound_handler",
+            step_id: null,
+            payload: result.profileEvent.payload,
+            idempotency_key:
+              `profile_event:freeform_preference:${input.decision.user_id}:${input.payload.inbound_message_sid}`,
+            correlation_id: input.payload.inbound_message_id,
+          });
+
+        if (profileEventError && !isDuplicateKeyError(profileEventError)) {
+          throw new ConversationRouterError(
+            "PROFILE_EVENT_WRITE_FAILED",
+            "Unable to persist freeform preference event.",
+          );
+        }
+      }
+
+      await persistConversationSessionState({
+        supabase: input.supabase,
+        userId: input.decision.user_id,
+        mode: "idle",
+        stateToken: "idle",
+        updatedAt: nowIso,
+      });
+      return {
+        engine: "freeform_inbound_handler",
+        reply_message: result.replyMessage,
+      };
+    }
+    case "general_freeform":
+    default:
+      await persistConversationSessionState({
+        supabase: input.supabase,
+        userId: input.decision.user_id,
+        mode: "idle",
+        stateToken: "idle",
+        updatedAt: nowIso,
+      });
+      return {
+        engine: "freeform_inbound_handler",
+        reply_message: result.replyMessage,
+      };
+  }
+}
+
 async function runNamedPlanRequestHandler(
   input: EngineDispatchInput,
 ): Promise<EngineDispatchResult> {
@@ -2632,6 +2845,88 @@ async function fetchRequiredProfileId(
   }
 
   return data.id;
+}
+
+async function fetchFreeformProfile(
+  supabase: SupabaseClientLike,
+  userId: string,
+): Promise<FreeformProfileRow | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(
+      "id, user_id, state, is_complete_mvp, country_code, state_code, last_interview_step, preferences, coordination_dimensions, activity_patterns, boundaries, active_intent, scheduling_availability, notice_preference, coordination_style, completeness_percent, completed_at, status_reason, state_changed_at",
+    )
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "PROFILE_LOOKUP_FAILED",
+      "Unable to load profile for freeform inbound handling.",
+    );
+  }
+
+  return data as FreeformProfileRow | null;
+}
+
+async function fetchRecentAcceptedInvitation(
+  supabase: SupabaseClientLike,
+  userId: string,
+  nowIso: string,
+): Promise<RecentAcceptedInvitationRow | null> {
+  const cutoff = new Date(new Date(nowIso).getTime() - (7 * 24 * 60 * 60 * 1000)).toISOString();
+  const { data, error } = await supabase
+    .from("invitations")
+    .select("id, activity_key, responded_at")
+    .eq("user_id", userId)
+    .eq("state", "accepted")
+    .gte("responded_at", cutoff)
+    .order("responded_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new ConversationRouterError(
+      "INVITATION_LOOKUP_FAILED",
+      "Unable to load recent invitation for freeform inbound handling.",
+    );
+  }
+
+  return data as RecentAcceptedInvitationRow | null;
+}
+
+async function insertFreeformAvailabilitySignal(input: {
+  supabase: SupabaseClientLike;
+  userId: string;
+  inboundMessageSid: string;
+  correlationId: string;
+  rawMessage: string;
+  summary: string;
+  nowIso: string;
+}): Promise<void> {
+  const { error } = await input.supabase
+    .from("learning_signals")
+    .insert({
+      id: crypto.randomUUID(),
+      user_id: input.userId,
+      signal_type: "availability_expressed",
+      value_text: input.summary,
+      meta: {
+        summary: input.summary,
+        raw_message: input.rawMessage,
+        correlation_id: input.correlationId,
+      },
+      occurred_at: input.nowIso,
+      ingested_at: input.nowIso,
+      idempotency_key: `ls:freeform_availability:${input.userId}:${input.inboundMessageSid}`,
+    });
+
+  if (error && !isDuplicateKeyError(error)) {
+    throw new ConversationRouterError(
+      "LEARNING_SIGNAL_WRITE_FAILED",
+      "Unable to persist freeform availability signal.",
+    );
+  }
 }
 
 async function fetchInviterDisplayName(

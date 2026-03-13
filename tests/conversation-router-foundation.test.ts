@@ -261,7 +261,7 @@ describe("conversation router foundation", () => {
       payload: samplePayload(),
     });
 
-    expect(decision.route).toBe("default_engine");
+    expect(decision.route).toBe("freeform_inbound_handler");
     expect(decision.state.mode).toBe("idle");
     expect(decision.state.state_token).toBe("idle");
   });
