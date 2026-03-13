@@ -254,6 +254,20 @@ export const EVENT_CATALOG: readonly EventCatalogEntry[] = [
     pii_fields: [],
   },
   {
+    event_name: "cold_start.no_activity_available",
+    category: "system",
+    required_fields: [],
+    optional_fields: ["userId"],
+    pii_fields: [],
+  },
+  {
+    event_name: "cold_start.recent_invitation_skip",
+    category: "system",
+    required_fields: [],
+    optional_fields: ["userId"],
+    pii_fields: [],
+  },
+  {
     event_name: "twilio.inbound_received",
     category: "system",
     required_fields: ["inbound_message_sid"],

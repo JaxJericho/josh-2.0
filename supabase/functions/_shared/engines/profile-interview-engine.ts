@@ -1,11 +1,17 @@
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { buildInterviewTransitionPlan, type ConversationMode, type InterviewSessionSnapshot } from "../../../../packages/core/src/interview/state.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
-import type { ProfileRowForInterview, ProfileState } from "../../../../packages/core/src/profile/profile-writer.ts";
+import {
+  didProfileJustReachMvpComplete,
+  type ProfileRowForInterview,
+  type ProfileState,
+} from "../../../../packages/core/src/profile/profile-writer.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { resolveRegionAssignment } from "../../../../packages/core/src/regions/assignment.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { createSupabaseEntitlementsRepository, evaluateEntitlements } from "../../../../packages/core/src/entitlements/evaluate-entitlements.ts";
+// @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
+import { enqueueColdStartInvitation } from "../../../../packages/core/src/invitation/cold-start-trigger.ts";
 // @ts-ignore: Deno runtime requires explicit .ts extensions for local imports.
 import { safetyHoldNotification } from "../../../../packages/messaging/src/templates/safety.ts";
 import type {
@@ -329,6 +335,7 @@ async function persistInterviewTransition(params: {
 }): Promise<{ reply_message_override: string | null }> {
   const conversationIdempotencyKey =
     `profile_interview:conversation:${params.userId}:${params.inboundMessageSid}:${params.transition.action}`;
+  let shouldEnqueueColdStartInvitation = false;
 
   if (params.transition.profile_patch) {
     const { error: updateProfileError } = await params.supabase
@@ -345,6 +352,11 @@ async function persistInterviewTransition(params: {
       profileId: params.profile.id,
       countryCode: params.transition.profile_patch.country_code ?? params.profile.country_code,
       stateCode: params.transition.profile_patch.state_code ?? params.profile.state_code,
+    });
+
+    shouldEnqueueColdStartInvitation = didProfileJustReachMvpComplete({
+      previousProfileState: normalizeProfileState(params.profile.state),
+      nextProfilePatch: params.transition.profile_patch,
     });
   }
 
@@ -428,6 +440,10 @@ async function persistInterviewTransition(params: {
     if (auditInsertError && !isDuplicateKeyError(auditInsertError)) {
       throw new Error("Unable to write profile completion audit log.");
     }
+  }
+
+  if (shouldEnqueueColdStartInvitation) {
+    await enqueueColdStartInvitation(params.userId);
   }
 
   return { reply_message_override: null };

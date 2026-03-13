@@ -72,6 +72,23 @@ export type ProfileUpdatePatch = {
   state_changed_at: string;
 };
 
+export function didProfileJustReachMvpComplete(params: {
+  previousProfileState: ProfileState | null;
+  nextProfilePatch: Pick<ProfileUpdatePatch, "state" | "is_complete_mvp">;
+}): boolean {
+  if (!params.nextProfilePatch.is_complete_mvp) {
+    return false;
+  }
+
+  if (params.nextProfilePatch.state !== "complete_mvp") {
+    return false;
+  }
+
+  return params.previousProfileState !== "complete_mvp" &&
+    params.previousProfileState !== "complete_full" &&
+    params.previousProfileState !== "complete_invited";
+}
+
 export type ProfileRowForFreeformPreferenceUpdate = ProfileRowForInterview & {
   scheduling_availability: unknown;
   notice_preference: string | null;
