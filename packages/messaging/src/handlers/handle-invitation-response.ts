@@ -1,3 +1,5 @@
+import { evaluateLinkupQuorum } from "../../../core/src/invitation/linkup-quorum.ts";
+
 export const INVITATION_RESPONSE_CLARIFICATION_MESSAGE =
   "Reply YES to accept or PASS to skip.";
 export const INVITATION_RESPONSE_CLARIFIER_STATE_TOKEN =
@@ -154,6 +156,22 @@ export function parseInvitationResponse(
   }
 
   return stateToken === INVITATION_RESPONSE_CLARIFIER_STATE_TOKEN ? "pass" : "clarify";
+}
+
+export async function maybeEvaluateAcceptedInvitationLinkupQuorum(input: {
+  invitation: InvitationResponseInvitation | null;
+  action: "accept" | "pass" | null;
+  processed: boolean;
+}): Promise<void> {
+  if (!input.processed || input.action !== "accept") {
+    return;
+  }
+
+  if (input.invitation?.invitation_type !== "linkup" || !input.invitation.linkup_id) {
+    return;
+  }
+
+  await evaluateLinkupQuorum(input.invitation.linkup_id);
 }
 
 function buildAcceptanceReply(input: {

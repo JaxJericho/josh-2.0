@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { evaluateLinkupQuorumMock } = vi.hoisted(() => ({
+  evaluateLinkupQuorumMock: vi.fn(),
+}));
+
+vi.mock("./linkup-quorum.ts", () => ({
+  evaluateLinkupQuorum: evaluateLinkupQuorumMock,
+}));
 
 import {
   createSupabaseInvitationExpiryRepository,
@@ -19,12 +27,14 @@ class InMemoryInvitationExpiryRepository implements InvitationExpiryRepository {
   readonly backoffCounts = new Map<string, number>();
   readonly learningSignals: string[] = [];
   readonly failureIds = new Set<string>();
+  readonly quorumEligibleLinkups = new Set<string>();
 
   constructor(input: {
     invitations: MutableInvitation[];
     sessionModes?: Record<string, string>;
     backoffCounts?: Record<string, number>;
     failureIds?: string[];
+    quorumEligibleLinkups?: string[];
   }) {
     this.invitations = input.invitations;
     for (const [userId, mode] of Object.entries(input.sessionModes ?? {})) {
@@ -35,6 +45,9 @@ class InMemoryInvitationExpiryRepository implements InvitationExpiryRepository {
     }
     for (const invitationId of input.failureIds ?? []) {
       this.failureIds.add(invitationId);
+    }
+    for (const linkupId of input.quorumEligibleLinkups ?? []) {
+      this.quorumEligibleLinkups.add(linkupId);
     }
   }
 
@@ -55,6 +68,7 @@ class InMemoryInvitationExpiryRepository implements InvitationExpiryRepository {
         id: invitation.id,
         user_id: invitation.user_id,
         invitation_type: invitation.invitation_type,
+        linkup_id: invitation.linkup_id,
         activity_key: invitation.activity_key,
         proposed_time_window: invitation.proposed_time_window,
         expires_at: invitation.expires_at,
@@ -103,9 +117,67 @@ class InMemoryInvitationExpiryRepository implements InvitationExpiryRepository {
       reason: "expired",
     };
   }
+
+  async shouldEvaluateLinkupQuorum(linkupId: string): Promise<boolean> {
+    return this.quorumEligibleLinkups.has(linkupId);
+  }
 }
 
 describe("expireStaleInvitations", () => {
+  beforeEach(() => {
+    evaluateLinkupQuorumMock.mockReset();
+  });
+
+  it("evaluates linkup quorum after expiry when the broadcasting linkup already has quorum", async () => {
+    evaluateLinkupQuorumMock.mockResolvedValue({ locked: true, acceptedCount: 2 });
+    const repository = new InMemoryInvitationExpiryRepository({
+      invitations: [
+        buildInvitation(
+          "11111111-1111-1111-1111-111111111111",
+          "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          {
+            invitation_type: "linkup",
+            linkup_id: "55555555-5555-5555-5555-555555555555",
+          },
+        ),
+      ],
+      quorumEligibleLinkups: ["55555555-5555-5555-5555-555555555555"],
+    });
+
+    await expireStaleInvitations({
+      repository,
+      correlationId: "99999999-9999-9999-9999-999999999999",
+      now: () => new Date("2026-03-12T12:00:00.000Z"),
+    });
+
+    expect(evaluateLinkupQuorumMock).toHaveBeenCalledWith(
+      "55555555-5555-5555-5555-555555555555",
+    );
+  });
+
+  it("skips linkup quorum evaluation when expiry does not leave a broadcasting quorum", async () => {
+    const repository = new InMemoryInvitationExpiryRepository({
+      invitations: [
+        buildInvitation(
+          "11111111-1111-1111-1111-111111111111",
+          "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          {
+            invitation_type: "linkup",
+            linkup_id: "55555555-5555-5555-5555-555555555555",
+          },
+        ),
+      ],
+    });
+
+    await expireStaleInvitations({
+      repository,
+      correlationId: "99999999-9999-9999-9999-999999999999",
+      now: () => new Date("2026-03-12T12:00:00.000Z"),
+    });
+
+    expect(evaluateLinkupQuorumMock).not.toHaveBeenCalled();
+  });
+
   it("expires stale invitations in batches and writes learning side effects", async () => {
     const repository = new InMemoryInvitationExpiryRepository({
       invitations: [
@@ -174,6 +246,9 @@ describe("expireStaleInvitations", () => {
           reason: "already_expired",
         };
       },
+      async shouldEvaluateLinkupQuorum() {
+        return false;
+      },
     };
 
     const result = await expireStaleInvitations({
@@ -220,18 +295,18 @@ describe("expireStaleInvitations", () => {
 describe("createSupabaseInvitationExpiryRepository", () => {
   it("fetches stale invitations and applies the expiry RPC", async () => {
     const calls: Array<{ kind: string; payload?: Record<string, unknown> }> = [];
-    const queryBuilder = {
+    const invitationsQueryBuilder = {
       select() {
-        return queryBuilder;
+        return invitationsQueryBuilder;
       },
       eq() {
-        return queryBuilder;
+        return invitationsQueryBuilder;
       },
       lte() {
-        return queryBuilder;
+        return invitationsQueryBuilder;
       },
       order() {
-        return queryBuilder;
+        return invitationsQueryBuilder;
       },
       limit: async () => {
         calls.push({ kind: "limit" });
@@ -241,10 +316,47 @@ describe("createSupabaseInvitationExpiryRepository", () => {
         };
       },
     };
+    const linkupsQueryBuilder = {
+      select() {
+        return linkupsQueryBuilder;
+      },
+      eq() {
+        return linkupsQueryBuilder;
+      },
+      async maybeSingle() {
+        return {
+          data: { state: "broadcasting" },
+          error: null,
+        };
+      },
+    };
+    const acceptedInvitationsQueryBuilder = {
+      select() {
+        return acceptedInvitationsQueryBuilder;
+      },
+      eq() {
+        return acceptedInvitationsQueryBuilder;
+      },
+      async order() {
+        return {
+          data: [{ id: "accepted-1" }, { id: "accepted-2" }],
+          error: null,
+        };
+      },
+    };
     const supabase = {
       from(table: string) {
         calls.push({ kind: "from", payload: { table } });
-        return queryBuilder;
+        if (table === "invitations" && calls.filter((call) => call.payload?.table === "invitations").length === 1) {
+          return invitationsQueryBuilder;
+        }
+        if (table === "invitations") {
+          return acceptedInvitationsQueryBuilder;
+        }
+        if (table === "linkups") {
+          return linkupsQueryBuilder;
+        }
+        throw new Error(`Unexpected table ${table}`);
       },
       async rpc(name: string, payload: Record<string, unknown>) {
         calls.push({ kind: "rpc", payload: { name, ...payload } });
@@ -268,12 +380,16 @@ describe("createSupabaseInvitationExpiryRepository", () => {
       correlationId: "99999999-9999-9999-9999-999999999999",
       nowIso: "2026-03-12T12:00:00.000Z",
     });
+    const shouldEvaluate = await repository.shouldEvaluateLinkupQuorum(
+      "55555555-5555-5555-5555-555555555555",
+    );
 
     expect(invitations).toHaveLength(1);
     expect(result).toEqual({
       expired: true,
       reason: "expired",
     });
+    expect(shouldEvaluate).toBe(true);
     expect(calls).toContainEqual({
       kind: "rpc",
       payload: {
@@ -286,14 +402,20 @@ describe("createSupabaseInvitationExpiryRepository", () => {
   });
 });
 
-function buildInvitation(id: string, userId: string): MutableInvitation {
+function buildInvitation(
+  id: string,
+  userId: string,
+  overrides: Partial<MutableInvitation> = {},
+): MutableInvitation {
   return {
     id,
     user_id: userId,
     invitation_type: "solo",
+    linkup_id: null,
     activity_key: "coffee_walk",
     proposed_time_window: "this Saturday afternoon",
     expires_at: "2026-03-12T11:00:00.000Z",
     state: "pending",
+    ...overrides,
   };
 }
