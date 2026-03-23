@@ -1,36 +1,121 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
-interface RegistrationProps {
-  onComplete?: () => void;
-}
+type Step = "form" | "otp";
 
-export function Registration({ onComplete }: RegistrationProps = {}) {
+export function Registration() {
+  const router = useRouter();
+  const [step, setStep] = useState<Step>("form");
+
+  // Form fields
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [email, setEmail] = useState("");
+  const [birthday, setBirthday] = useState("");
+  const [zipCode, setZipCode] = useState("");
   const [countryCode, setCountryCode] = useState("+1");
-  const [isSubmitted, setIsSubmitted] = useState(false);
+  const [smsConsent, setSmsConsent] = useState(false);
+  const [termsConsent, setTermsConsent] = useState(false);
+  const [privacyConsent, setPrivacyConsent] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // OTP
+  const [otp, setOtp] = useState(["", "", "", "", "", ""]);
+  const [otpError, setOtpError] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const isFormValid =
+    firstName.trim() &&
+    lastName.trim() &&
+    phoneNumber.trim() &&
+    email.trim() &&
+    birthday.trim() &&
+    zipCode.trim() &&
+    smsConsent &&
+    termsConsent &&
+    privacyConsent;
+
+  const otpValue = otp.join("");
+  const isOtpComplete = otpValue.length === 6;
+
+  // ── Form submit → send OTP ──────────────────────────────────────────────
+  const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmitted(true);
-    if (onComplete) onComplete();
+    // TODO: call API to create user + send OTP to countryCode + phoneNumber
+    setStep("otp");
+  };
+
+  // ── OTP digit input ─────────────────────────────────────────────────────
+  const handleOtpChange = (index: number, value: string) => {
+    if (!/^\d*$/.test(value)) return;
+    const next = [...otp];
+    next[index] = value.slice(-1);
+    setOtp(next);
+    setOtpError(false);
+    if (value && index < 5) otpRefs.current[index + 1]?.focus();
+  };
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent) => {
+    if (e.key === "Backspace" && !otp[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus();
+    }
+  };
+
+  // ── OTP verify → dashboard ───────────────────────────────────────────────
+  const handleOtpVerify = (e: React.FormEvent) => {
+    e.preventDefault();
+    // TODO: call API to verify OTP code
+    // Stub: any 6-digit code succeeds
+    if (isOtpComplete) {
+      router.push("/dashboard");
+    } else {
+      setOtpError(true);
+    }
+  };
+
+  const handleResend = () => {
+    if (resendCooldown > 0) return;
+    // TODO: call API to resend OTP
+    setResendCooldown(30);
+    const interval = setInterval(() => {
+      setResendCooldown((c) => {
+        if (c <= 1) { clearInterval(interval); return 0; }
+        return c - 1;
+      });
+    }, 1000);
   };
 
   const handleStartOver = () => {
-    setFirstName("");
-    setLastName("");
-    setPhoneNumber("");
-    setEmail("");
-    setIsSubmitted(false);
+    setStep("form");
+    setOtp(["", "", "", "", "", ""]);
+    setOtpError(false);
   };
 
-  const isFormValid =
-    firstName.trim() && lastName.trim() && phoneNumber.trim() && email.trim();
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    fontFamily: "var(--font-ui)",
+    fontSize: "var(--type-body-md)",
+    color: "var(--text-primary)",
+    background: "var(--surface-card)",
+    border: "1px solid var(--border-default)",
+    borderRadius: "var(--radius-input)",
+    padding: "var(--space-3)",
+    outline: "none",
+    transition: "border-color var(--transition-default)",
+  };
+
+  const labelStyle: React.CSSProperties = {
+    display: "block",
+    fontFamily: "var(--font-ui)",
+    fontSize: "var(--type-body-md)",
+    fontWeight: "500",
+    color: "var(--text-primary)",
+    marginBottom: "var(--space-2)",
+  };
 
   return (
     <div style={{ background: "var(--surface-landing)", minHeight: "100vh" }}>
@@ -58,7 +143,6 @@ export function Registration({ onComplete }: RegistrationProps = {}) {
         </div>
       </nav>
 
-      {/* Main Content */}
       <main
         style={{
           maxWidth: "480px",
@@ -66,9 +150,8 @@ export function Registration({ onComplete }: RegistrationProps = {}) {
           padding: "clamp(var(--space-7), 10vw, var(--space-8)) var(--space-5)",
         }}
       >
-        {!isSubmitted ? (
+        {step === "form" && (
           <div>
-            {/* Header */}
             <header style={{ marginBottom: "var(--space-7)" }}>
               <div
                 style={{
@@ -105,132 +188,41 @@ export function Registration({ onComplete }: RegistrationProps = {}) {
               </p>
             </header>
 
-            {/* Form */}
-            <form onSubmit={handleSubmit}>
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--space-4)",
-                }}
-              >
+            <form onSubmit={handleFormSubmit}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+
                 {/* First Name */}
                 <div>
-                  <label
-                    htmlFor="firstName"
-                    style={{
-                      display: "block",
-                      fontFamily: "var(--font-ui)",
-                      fontSize: "var(--type-body-md)",
-                      fontWeight: "500",
-                      color: "var(--text-primary)",
-                      marginBottom: "var(--space-2)",
-                    }}
-                  >
-                    First name
-                  </label>
+                  <label htmlFor="firstName" style={labelStyle}>First name</label>
                   <input
-                    id="firstName"
-                    type="text"
-                    value={firstName}
+                    id="firstName" type="text" value={firstName} placeholder="Sarah" required
                     onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="Sarah"
-                    required
-                    style={{
-                      width: "100%",
-                      fontFamily: "var(--font-ui)",
-                      fontSize: "var(--type-body-md)",
-                      color: "var(--text-primary)",
-                      background: "var(--surface-card)",
-                      border: "1px solid var(--border-default)",
-                      borderRadius: "var(--radius-input)",
-                      padding: "var(--space-3)",
-                      outline: "none",
-                      transition: "border-color var(--transition-default)",
-                    }}
-                    onFocus={(e) =>
-                      (e.target.style.borderColor = "var(--accent-700)")
-                    }
-                    onBlur={(e) =>
-                      (e.target.style.borderColor = "var(--border-default)")
-                    }
+                    style={inputStyle}
+                    onFocus={(e) => (e.target.style.borderColor = "var(--accent-700)")}
+                    onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
                   />
                 </div>
 
                 {/* Last Name */}
                 <div>
-                  <label
-                    htmlFor="lastName"
-                    style={{
-                      display: "block",
-                      fontFamily: "var(--font-ui)",
-                      fontSize: "var(--type-body-md)",
-                      fontWeight: "500",
-                      color: "var(--text-primary)",
-                      marginBottom: "var(--space-2)",
-                    }}
-                  >
-                    Last name
-                  </label>
+                  <label htmlFor="lastName" style={labelStyle}>Last name</label>
                   <input
-                    id="lastName"
-                    type="text"
-                    value={lastName}
+                    id="lastName" type="text" value={lastName} placeholder="Chen" required
                     onChange={(e) => setLastName(e.target.value)}
-                    placeholder="Chen"
-                    required
-                    style={{
-                      width: "100%",
-                      fontFamily: "var(--font-ui)",
-                      fontSize: "var(--type-body-md)",
-                      color: "var(--text-primary)",
-                      background: "var(--surface-card)",
-                      border: "1px solid var(--border-default)",
-                      borderRadius: "var(--radius-input)",
-                      padding: "var(--space-3)",
-                      outline: "none",
-                      transition: "border-color var(--transition-default)",
-                    }}
-                    onFocus={(e) =>
-                      (e.target.style.borderColor = "var(--accent-700)")
-                    }
-                    onBlur={(e) =>
-                      (e.target.style.borderColor = "var(--border-default)")
-                    }
+                    style={inputStyle}
+                    onFocus={(e) => (e.target.style.borderColor = "var(--accent-700)")}
+                    onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
                   />
                 </div>
 
                 {/* Mobile Number */}
                 <div>
-                  <label
-                    htmlFor="phoneNumber"
-                    style={{
-                      display: "block",
-                      fontFamily: "var(--font-ui)",
-                      fontSize: "var(--type-body-md)",
-                      fontWeight: "500",
-                      color: "var(--text-primary)",
-                      marginBottom: "var(--space-2)",
-                    }}
-                  >
-                    Mobile number
-                  </label>
+                  <label htmlFor="phoneNumber" style={labelStyle}>Mobile number</label>
                   <div style={{ display: "flex", gap: "var(--space-2)" }}>
                     <select
                       value={countryCode}
                       onChange={(e) => setCountryCode(e.target.value)}
-                      style={{
-                        fontFamily: "var(--font-ui)",
-                        fontSize: "var(--type-body-md)",
-                        color: "var(--text-primary)",
-                        background: "var(--surface-card)",
-                        border: "1px solid var(--border-default)",
-                        borderRadius: "var(--radius-input)",
-                        padding: "var(--space-3)",
-                        outline: "none",
-                        cursor: "pointer",
-                        minWidth: "80px",
-                      }}
+                      style={{ ...inputStyle, width: "auto", minWidth: "80px" }}
                     >
                       <option value="+1">+1</option>
                       <option value="+44">+44</option>
@@ -239,95 +231,113 @@ export function Registration({ onComplete }: RegistrationProps = {}) {
                       <option value="+86">+86</option>
                     </select>
                     <input
-                      id="phoneNumber"
-                      type="tel"
-                      value={phoneNumber}
+                      id="phoneNumber" type="tel" value={phoneNumber}
+                      placeholder="Your mobile number" required
                       onChange={(e) => setPhoneNumber(e.target.value)}
-                      placeholder="Your mobile number"
-                      required
-                      style={{
-                        flex: 1,
-                        fontFamily: "var(--font-ui)",
-                        fontSize: "var(--type-body-md)",
-                        color: "var(--text-primary)",
-                        background: "var(--surface-card)",
-                        border: "1px solid var(--border-default)",
-                        borderRadius: "var(--radius-input)",
-                        padding: "var(--space-3)",
-                        outline: "none",
-                        transition: "border-color var(--transition-default)",
-                      }}
-                      onFocus={(e) =>
-                        (e.target.style.borderColor = "var(--accent-700)")
-                      }
-                      onBlur={(e) =>
-                        (e.target.style.borderColor = "var(--border-default)")
-                      }
+                      style={{ ...inputStyle, flex: 1, width: "auto" }}
+                      onFocus={(e) => (e.target.style.borderColor = "var(--accent-700)")}
+                      onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
                     />
                   </div>
-                  <div
-                    style={{
-                      fontFamily: "var(--font-ui)",
-                      fontSize: "var(--type-body-sm)",
-                      color: "var(--text-secondary)",
-                      marginTop: "var(--space-2)",
-                    }}
-                  >
+                  <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--text-secondary)", marginTop: "var(--space-2)" }}>
                     JOSH communicates with you by text. This is the number it will use.
                   </div>
                 </div>
 
                 {/* Email */}
                 <div>
-                  <label
-                    htmlFor="email"
-                    style={{
-                      display: "block",
-                      fontFamily: "var(--font-ui)",
-                      fontSize: "var(--type-body-md)",
-                      fontWeight: "500",
-                      color: "var(--text-primary)",
-                      marginBottom: "var(--space-2)",
-                    }}
-                  >
-                    Email
-                  </label>
+                  <label htmlFor="email" style={labelStyle}>Email</label>
                   <input
-                    id="email"
-                    type="email"
-                    value={email}
+                    id="email" type="email" value={email}
+                    placeholder="sarah@email.com" required
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="sarah@email.com"
-                    required
-                    style={{
-                      width: "100%",
-                      fontFamily: "var(--font-ui)",
-                      fontSize: "var(--type-body-md)",
-                      color: "var(--text-primary)",
-                      background: "var(--surface-card)",
-                      border: "1px solid var(--border-default)",
-                      borderRadius: "var(--radius-input)",
-                      padding: "var(--space-3)",
-                      outline: "none",
-                      transition: "border-color var(--transition-default)",
-                    }}
-                    onFocus={(e) =>
-                      (e.target.style.borderColor = "var(--accent-700)")
-                    }
-                    onBlur={(e) =>
-                      (e.target.style.borderColor = "var(--border-default)")
-                    }
+                    style={inputStyle}
+                    onFocus={(e) => (e.target.style.borderColor = "var(--accent-700)")}
+                    onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
                   />
-                  <div
-                    style={{
-                      fontFamily: "var(--font-ui)",
-                      fontSize: "var(--type-body-sm)",
-                      color: "var(--text-secondary)",
-                      marginTop: "var(--space-2)",
-                    }}
-                  >
+                  <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--text-secondary)", marginTop: "var(--space-2)" }}>
                     For your account only. We don&apos;t send marketing email.
                   </div>
+                </div>
+
+                {/* Birthday */}
+                <div>
+                  <label htmlFor="birthday" style={labelStyle}>Birthday</label>
+                  <input
+                    id="birthday" type="date" value={birthday} required
+                    onChange={(e) => setBirthday(e.target.value)}
+                    style={inputStyle}
+                    onFocus={(e) => (e.target.style.borderColor = "var(--accent-700)")}
+                    onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
+                  />
+                </div>
+
+                {/* Zip Code */}
+                <div>
+                  <label htmlFor="zipCode" style={labelStyle}>Zip code</label>
+                  <input
+                    id="zipCode" type="text" value={zipCode} required
+                    onChange={(e) => setZipCode(e.target.value)}
+                    style={inputStyle}
+                    onFocus={(e) => (e.target.style.borderColor = "var(--accent-700)")}
+                    onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
+                  />
+                </div>
+
+                {/* Consent Checkboxes */}
+                <div
+                  style={{
+                    marginTop: "var(--space-5)",
+                    padding: "var(--space-4)",
+                    background: "var(--surface-card)",
+                    border: "1px solid var(--border-subtle)",
+                    borderRadius: "var(--radius-card)",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "var(--space-3)",
+                  }}
+                >
+                  {/* SMS consent */}
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", cursor: "pointer" }}>
+                    <input
+                      type="checkbox" checked={smsConsent} required
+                      onChange={(e) => setSmsConsent(e.target.checked)}
+                      style={{ marginTop: "4px", minWidth: "16px", cursor: "pointer" }}
+                    />
+                    <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--text-primary)", lineHeight: "1.5" }}>
+                      I agree to receive text messages from JOSH for social coordination and account updates. I understand JOSH is an SMS-first service.
+                    </span>
+                  </label>
+
+                  {/* Terms consent */}
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", cursor: "pointer" }}>
+                    <input
+                      type="checkbox" checked={termsConsent} required
+                      onChange={(e) => setTermsConsent(e.target.checked)}
+                      style={{ marginTop: "4px", minWidth: "16px", cursor: "pointer" }}
+                    />
+                    <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--text-primary)", lineHeight: "1.5" }}>
+                      I have read and agree to the{" "}
+                      <Link href="/terms-of-service" style={{ color: "var(--accent-700)" }}>
+                        Terms of Service
+                      </Link>
+                    </span>
+                  </label>
+
+                  {/* Privacy consent */}
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", cursor: "pointer" }}>
+                    <input
+                      type="checkbox" checked={privacyConsent} required
+                      onChange={(e) => setPrivacyConsent(e.target.checked)}
+                      style={{ marginTop: "4px", minWidth: "16px", cursor: "pointer" }}
+                    />
+                    <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--text-primary)", lineHeight: "1.5" }}>
+                      I have read and agree to the{" "}
+                      <Link href="/privacy-policy" style={{ color: "var(--accent-700)" }}>
+                        Privacy Policy
+                      </Link>
+                    </span>
+                  </label>
                 </div>
               </div>
 
@@ -342,9 +352,7 @@ export function Registration({ onComplete }: RegistrationProps = {}) {
                     fontSize: "var(--type-body-md)",
                     fontWeight: "500",
                     color: isFormValid ? "var(--neutral-50)" : "var(--text-tertiary)",
-                    background: isFormValid
-                      ? "var(--accent-700)"
-                      : "var(--neutral-300)",
+                    background: isFormValid ? "var(--accent-700)" : "var(--neutral-300)",
                     border: "none",
                     borderRadius: "var(--radius-button)",
                     padding: "var(--space-4)",
@@ -355,83 +363,126 @@ export function Registration({ onComplete }: RegistrationProps = {}) {
                 >
                   Create my account
                 </button>
-                <div
-                  style={{
-                    fontFamily: "var(--font-ui)",
-                    fontSize: "var(--type-body-sm)",
-                    color: "var(--text-secondary)",
-                    textAlign: "center",
-                    marginTop: "var(--space-3)",
-                  }}
-                >
-                  By continuing, you agree to our{" "}
-                  <Link
-                    href="/terms-of-service"
-                    style={{ color: "var(--accent-700)", textDecoration: "none" }}
-                  >
-                    Terms
-                  </Link>{" "}
-                  and{" "}
-                  <Link
-                    href="/privacy-policy"
-                    style={{ color: "var(--accent-700)", textDecoration: "none" }}
-                  >
-                    Privacy Policy
-                  </Link>
-                  .
-                </div>
               </div>
             </form>
           </div>
-        ) : (
-          /* Post-Submit State */
-          <div
-            style={{
-              textAlign: "center",
-              paddingTop: "var(--space-8)",
-              animation: "fadeIn 400ms ease-out",
-            }}
-          >
-            <h2
-              style={{
-                fontFamily: "var(--font-display)",
-                fontSize: "var(--type-display-md)",
-                lineHeight: "1.45",
-                color: "var(--text-primary)",
-                marginBottom: "var(--space-4)",
-              }}
-            >
-              Check your phone.
-            </h2>
-            <p
-              style={{
-                fontFamily: "var(--font-ui)",
-                fontSize: "var(--type-body-md)",
-                color: "var(--text-secondary)",
-                marginBottom: "var(--space-5)",
-              }}
-            >
-              We sent a text to {countryCode} {phoneNumber}. Reply YES to confirm
-              and you&apos;re in.
-            </p>
-            <button
-              onClick={handleStartOver}
-              style={{
-                fontFamily: "var(--font-ui)",
-                fontSize: "var(--type-body-sm)",
-                color: "var(--accent-700)",
-                background: "transparent",
-                border: "none",
-                padding: 0,
-                cursor: "pointer",
-              }}
-            >
-              Wrong number? Start over.
-            </button>
+        )}
+
+        {step === "otp" && (
+          <div style={{ animation: "fadeIn 400ms ease-out" }}>
+            <header style={{ marginBottom: "var(--space-7)", textAlign: "center" }}>
+              <h1
+                style={{
+                  fontFamily: "var(--font-display)",
+                  fontSize: "var(--type-display-lg)",
+                  lineHeight: "1.3",
+                  color: "var(--text-primary)",
+                  marginBottom: "12px",
+                }}
+              >
+                Check your phone.
+              </h1>
+              <p style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-md)", color: "var(--text-secondary)", margin: 0 }}>
+                We sent a 6-digit code to {countryCode} {phoneNumber}. Enter it below to verify your number.
+              </p>
+            </header>
+
+            <form onSubmit={handleOtpVerify}>
+              {/* OTP digit inputs */}
+              <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "center", marginBottom: "var(--space-3)" }}>
+                {otp.map((digit, i) => (
+                  <input
+                    key={i}
+                    ref={(el) => { otpRefs.current[i] = el; }}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleOtpChange(i, e.target.value)}
+                    onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                    style={{
+                      width: "52px",
+                      height: "56px",
+                      textAlign: "center",
+                      fontFamily: "var(--font-ui)",
+                      fontSize: "var(--type-display-sm)",
+                      fontWeight: "500",
+                      color: "var(--text-primary)",
+                      background: "var(--surface-card)",
+                      border: `1px solid ${otpError ? "var(--destructive-600)" : digit ? "var(--accent-700)" : "var(--border-default)"}`,
+                      borderRadius: "var(--radius-input)",
+                      outline: "none",
+                      transition: "border-color var(--transition-default)",
+                    }}
+                    onFocus={(e) => !otpError && (e.target.style.borderColor = "var(--accent-700)")}
+                    onBlur={(e) => !digit && !otpError && (e.target.style.borderColor = "var(--border-default)")}
+                  />
+                ))}
+              </div>
+
+              {otpError && (
+                <p style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--destructive-600)", textAlign: "center", marginBottom: "var(--space-3)" }}>
+                  Please enter the full 6-digit code.
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={!isOtpComplete}
+                style={{
+                  width: "100%",
+                  fontFamily: "var(--font-ui)",
+                  fontSize: "var(--type-body-md)",
+                  fontWeight: "500",
+                  color: isOtpComplete ? "var(--neutral-50)" : "var(--text-tertiary)",
+                  background: isOtpComplete ? "var(--accent-700)" : "var(--neutral-300)",
+                  border: "none",
+                  borderRadius: "var(--radius-button)",
+                  padding: "var(--space-4)",
+                  cursor: isOtpComplete ? "pointer" : "not-allowed",
+                  transition: "all var(--transition-default)",
+                  minHeight: "56px",
+                  marginBottom: "var(--space-4)",
+                }}
+              >
+                Verify my number
+              </button>
+            </form>
+
+            <div style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+              <button
+                onClick={handleResend}
+                disabled={resendCooldown > 0}
+                style={{
+                  fontFamily: "var(--font-ui)",
+                  fontSize: "var(--type-body-sm)",
+                  color: resendCooldown > 0 ? "var(--text-secondary)" : "var(--accent-700)",
+                  background: "transparent",
+                  border: "none",
+                  padding: 0,
+                  cursor: resendCooldown > 0 ? "not-allowed" : "pointer",
+                }}
+              >
+                {resendCooldown > 0 ? `Resend available in ${resendCooldown}s` : "Didn't get it? Send again."}
+              </button>
+              <button
+                onClick={handleStartOver}
+                style={{
+                  fontFamily: "var(--font-ui)",
+                  fontSize: "var(--type-body-sm)",
+                  color: "var(--text-secondary)",
+                  background: "transparent",
+                  border: "none",
+                  padding: 0,
+                  cursor: "pointer",
+                }}
+              >
+                Wrong number? Start over.
+              </button>
+            </div>
           </div>
         )}
 
-        {/* Footer */}
         <footer
           style={{
             marginTop: "var(--space-8)",
@@ -440,13 +491,7 @@ export function Registration({ onComplete }: RegistrationProps = {}) {
             textAlign: "center",
           }}
         >
-          <div
-            style={{
-              fontFamily: "var(--font-ui)",
-              fontSize: "var(--type-body-sm)",
-              color: "var(--text-secondary)",
-            }}
-          >
+          <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--text-secondary)" }}>
             JOSH is a Seattle-based beta. We review every registration personally.
           </div>
         </footer>
