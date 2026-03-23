@@ -3,6 +3,10 @@
 import { useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  DASHBOARD_PROFILE_STORAGE_KEY,
+  type DashboardRegistrationProfile,
+} from "@/app/lib/dashboard-registration-profile";
 
 type Step = "form" | "otp";
 
@@ -71,6 +75,19 @@ export function Registration() {
     // TODO: call API to verify OTP code
     // Stub: any 6-digit code succeeds
     if (isOtpComplete) {
+      const dashboardProfile: DashboardRegistrationProfile = {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim(),
+        birthday: birthday.trim(),
+        zipCode: zipCode.trim(),
+        phoneNumber: `${countryCode} ${phoneNumber.trim()}`.trim(),
+      };
+
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(DASHBOARD_PROFILE_STORAGE_KEY, JSON.stringify(dashboardProfile));
+      }
+
       router.push("/dashboard");
     } else {
       setOtpError(true);
