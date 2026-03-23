@@ -1,0 +1,110 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Typography — set via next/font CSS variables on <html> */
+    /* --font-display and --font-ui are injected by next/font */
+
+    /* Type Scale */
+    --type-display-xl: 96px;
+    --type-display-lg: 56px;
+    --type-display-md: 40px;
+    --type-display-sm: 28px;
+    --type-body-lg: 20px;
+    --type-body-md: 16px;
+    --type-body-sm: 13px;
+    --type-ui-label: 12px;
+
+    /* Line Heights */
+    --leading-display-xl: 1.05;
+    --leading-display-lg: 1.1;
+    --leading-display-md: 1.15;
+    --leading-body-lg: 1.6;
+    --leading-body-md: 1.5;
+    --leading-body-sm: 1.5;
+    --leading-ui-label: 1.4;
+
+    /* Letter Spacing */
+    --tracking-display: -0.02em;
+    --tracking-ui-label: 0.02em;
+    --tracking-normal: 0;
+
+    /* Neutrals */
+    --neutral-900: #1a1714;
+    --neutral-600: #6b6560;
+    --neutral-400: #a8a29d;
+    --neutral-200: #e0dcd7;
+    --neutral-100: #f0ece7;
+
+    /* Surfaces */
+    --surface-landing: #f7f4ef;
+    --surface-dashboard: #fafaf9;
+    --surface-card: #ffffff;
+
+    /* Accent — Dusty Terracotta */
+    --accent-900: #7a4539;
+    --accent-700: #a15d4d;
+    --accent-500: #c27961;
+    --accent-300: #d9a391;
+    --accent-100: #f0ddd6;
+
+    /* Semantic */
+    --text-primary: var(--neutral-900);
+    --text-secondary: var(--neutral-600);
+    --text-tertiary: var(--neutral-400);
+    --border-default: var(--neutral-200);
+    --border-subtle: var(--neutral-200);
+    --border-primary: var(--neutral-400);
+
+    /* Spacing — 8pt grid */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 16px;
+    --space-4: 24px;
+    --space-5: 32px;
+    --space-6: 48px;
+    --space-7: 64px;
+    --space-8: 96px;
+    --space-9: 128px;
+
+    /* Border Radius */
+    --radius-button: 8px;
+    --radius-input: 6px;
+    --radius-card: 10px;
+
+    /* Motion */
+    --transition-default: 200ms ease-out;
+    --transition-exit: 200ms ease-in;
+
+    /* Destructive */
+    --destructive-600: #9a4034;
+    --destructive-100: #f5e0dd;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+    font-size: var(--type-body-md);
+    line-height: var(--leading-body-md);
+    color: var(--text-primary);
+    background: var(--surface-dashboard);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display), Georgia, serif;
+    font-weight: 500;
+    letter-spacing: var(--tracking-display);
+  }
+
+  h1 { font-size: var(--type-display-xl); line-height: var(--leading-display-xl); }
+  h2 { font-size: var(--type-display-lg); line-height: var(--leading-display-lg); }
+  h3 { font-size: var(--type-display-md); line-height: var(--leading-display-md); }
+  p  { font-size: var(--type-body-md); line-height: var(--leading-body-md); }
+}
