@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -23,12 +23,19 @@ export function Registration() {
   const [zipCode, setZipCode] = useState("");
   const [countryCode, setCountryCode] = useState("+1");
   const [smsConsent, setSmsConsent] = useState(false);
+  const [ageConsent, setAgeConsent] = useState(false);
   const [termsConsent, setTermsConsent] = useState(false);
   const [privacyConsent, setPrivacyConsent] = useState(false);
+  const [registrationUserId, setRegistrationUserId] = useState<string | null>(null);
+  const [otpSessionId, setOtpSessionId] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [otpErrorMessage, setOtpErrorMessage] = useState<string | null>(null);
+  const [isSubmittingForm, setIsSubmittingForm] = useState(false);
+  const [isSubmittingOtp, setIsSubmittingOtp] = useState(false);
+  const [isResendingOtp, setIsResendingOtp] = useState(false);
 
   // OTP
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
-  const [otpError, setOtpError] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -36,30 +43,83 @@ export function Registration() {
     firstName.trim() &&
     lastName.trim() &&
     phoneNumber.trim() &&
-    email.trim() &&
     birthday.trim() &&
     zipCode.trim() &&
     smsConsent &&
+    ageConsent &&
     termsConsent &&
     privacyConsent;
 
   const otpValue = otp.join("");
   const isOtpComplete = otpValue.length === 6;
+  const hasOtpError = Boolean(otpErrorMessage);
 
-  // ── Form submit → send OTP ──────────────────────────────────────────────
-  const handleFormSubmit = (e: React.FormEvent) => {
+  useEffect(() => {
+    if (resendCooldown <= 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setResendCooldown((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [resendCooldown]);
+
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: call API to create user + send OTP to countryCode + phoneNumber
-    setStep("otp");
+    if (!isFormValid || isSubmittingForm) {
+      return;
+    }
+
+    setIsSubmittingForm(true);
+    setFormError(null);
+    setOtpErrorMessage(null);
+
+    try {
+      const registerResponse = await postJson<{
+        user: { id: string };
+      }>("/api/registration/register", {
+        firstName,
+        lastName,
+        countryCode,
+        phoneNumber,
+        email,
+        birthday,
+        zipCode,
+        smsConsent,
+        ageConsent,
+        termsConsent,
+        privacyConsent,
+      });
+
+      const sendOtpResponse = await postJson<{
+        otp_session: { id: string };
+        resend_available_in_seconds: number;
+      }>("/api/registration/send-otp", {
+        userId: registerResponse.user.id,
+      });
+
+      setRegistrationUserId(registerResponse.user.id);
+      setOtpSessionId(sendOtpResponse.otp_session.id);
+      setOtp(["", "", "", "", "", ""]);
+      setResendCooldown(sendOtpResponse.resend_available_in_seconds);
+      setStep("otp");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Unable to start registration.");
+    } finally {
+      setIsSubmittingForm(false);
+    }
   };
 
-  // ── OTP digit input ─────────────────────────────────────────────────────
   const handleOtpChange = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return;
     const next = [...otp];
     next[index] = value.slice(-1);
     setOtp(next);
-    setOtpError(false);
+    setOtpErrorMessage(null);
     if (value && index < 5) otpRefs.current[index + 1]?.focus();
   };
 
@@ -69,47 +129,102 @@ export function Registration() {
     }
   };
 
-  // ── OTP verify → dashboard ───────────────────────────────────────────────
-  const handleOtpVerify = (e: React.FormEvent) => {
+  const handleOtpVerify = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: call API to verify OTP code
-    // Stub: any 6-digit code succeeds
-    if (isOtpComplete) {
+    if (isSubmittingOtp) {
+      return;
+    }
+
+    if (!registrationUserId || !otpSessionId) {
+      setOtpErrorMessage("Your verification session expired. Please start over.");
+      return;
+    }
+
+    if (!isOtpComplete) {
+      setOtpErrorMessage("Please enter the full 6-digit code.");
+      return;
+    }
+
+    setIsSubmittingOtp(true);
+    setOtpErrorMessage(null);
+
+    try {
+      const verifyResponse = await postJson<{
+        state: {
+          user: {
+            first_name: string;
+            last_name: string;
+            email: string | null;
+            birthday: string;
+            phone_e164: string;
+          };
+        };
+      }>("/api/registration/verify-otp", {
+        userId: registrationUserId,
+        otpSessionId,
+        code: otpValue,
+      });
+
+      const verifiedUser = verifyResponse.state.user;
       const dashboardProfile: DashboardRegistrationProfile = {
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        email: email.trim(),
-        birthday: birthday.trim(),
+        firstName: verifiedUser.first_name,
+        lastName: verifiedUser.last_name,
+        email: verifiedUser.email ?? "",
+        birthday: verifiedUser.birthday,
         zipCode: zipCode.trim(),
-        phoneNumber: `${countryCode} ${phoneNumber.trim()}`.trim(),
+        phoneNumber: verifiedUser.phone_e164,
       };
 
       if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(DASHBOARD_PROFILE_STORAGE_KEY, JSON.stringify(dashboardProfile));
+        window.sessionStorage.setItem(
+          DASHBOARD_PROFILE_STORAGE_KEY,
+          JSON.stringify(dashboardProfile),
+        );
       }
 
       router.push("/dashboard");
-    } else {
-      setOtpError(true);
+    } catch (error) {
+      setOtpErrorMessage(error instanceof Error ? error.message : "Unable to verify that code.");
+    } finally {
+      setIsSubmittingOtp(false);
     }
   };
 
-  const handleResend = () => {
-    if (resendCooldown > 0) return;
-    // TODO: call API to resend OTP
-    setResendCooldown(30);
-    const interval = setInterval(() => {
-      setResendCooldown((c) => {
-        if (c <= 1) { clearInterval(interval); return 0; }
-        return c - 1;
+  const handleResend = async () => {
+    if (resendCooldown > 0 || isResendingOtp || !registrationUserId) {
+      return;
+    }
+
+    setIsResendingOtp(true);
+    setOtpErrorMessage(null);
+
+    try {
+      const response = await postJson<{
+        otp_session: { id: string };
+        resend_available_in_seconds: number;
+      }>("/api/registration/send-otp", {
+        userId: registrationUserId,
       });
-    }, 1000);
+
+      setOtpSessionId(response.otp_session.id);
+      setOtp(["", "", "", "", "", ""]);
+      setResendCooldown(response.resend_available_in_seconds);
+      otpRefs.current[0]?.focus();
+    } catch (error) {
+      setOtpErrorMessage(error instanceof Error ? error.message : "Unable to resend your code.");
+    } finally {
+      setIsResendingOtp(false);
+    }
   };
 
   const handleStartOver = () => {
     setStep("form");
+    setRegistrationUserId(null);
+    setOtpSessionId(null);
     setOtp(["", "", "", "", "", ""]);
-    setOtpError(false);
+    setOtpErrorMessage(null);
+    setFormError(null);
+    setResendCooldown(0);
   };
 
   const inputStyle: React.CSSProperties = {
@@ -136,7 +251,6 @@ export function Registration() {
 
   return (
     <div style={{ background: "var(--surface-landing)", minHeight: "100vh" }}>
-      {/* Navigation */}
       <nav
         style={{
           borderBottom: "1px solid var(--border-subtle)",
@@ -207,8 +321,6 @@ export function Registration() {
 
             <form onSubmit={handleFormSubmit}>
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
-
-                {/* First Name */}
                 <div>
                   <label htmlFor="firstName" style={labelStyle}>First name</label>
                   <input
@@ -220,7 +332,6 @@ export function Registration() {
                   />
                 </div>
 
-                {/* Last Name */}
                 <div>
                   <label htmlFor="lastName" style={labelStyle}>Last name</label>
                   <input
@@ -232,7 +343,6 @@ export function Registration() {
                   />
                 </div>
 
-                {/* Mobile Number */}
                 <div>
                   <label htmlFor="phoneNumber" style={labelStyle}>Mobile number</label>
                   <div style={{ display: "flex", gap: "var(--space-2)" }}>
@@ -261,23 +371,21 @@ export function Registration() {
                   </div>
                 </div>
 
-                {/* Email */}
                 <div>
                   <label htmlFor="email" style={labelStyle}>Email</label>
                   <input
                     id="email" type="email" value={email}
-                    placeholder="sarah@email.com" required
+                    placeholder="sarah@email.com"
                     onChange={(e) => setEmail(e.target.value)}
                     style={inputStyle}
                     onFocus={(e) => (e.target.style.borderColor = "var(--accent-700)")}
                     onBlur={(e) => (e.target.style.borderColor = "var(--border-default)")}
                   />
                   <div style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--text-secondary)", marginTop: "var(--space-2)" }}>
-                    For your account only. We don&apos;t send marketing email.
+                    Optional. We only use this for your account and launch updates.
                   </div>
                 </div>
 
-                {/* Birthday */}
                 <div>
                   <label htmlFor="birthday" style={labelStyle}>Birthday</label>
                   <input
@@ -289,7 +397,6 @@ export function Registration() {
                   />
                 </div>
 
-                {/* Zip Code */}
                 <div>
                   <label htmlFor="zipCode" style={labelStyle}>Zip code</label>
                   <input
@@ -301,7 +408,6 @@ export function Registration() {
                   />
                 </div>
 
-                {/* Consent Checkboxes */}
                 <div
                   style={{
                     marginTop: "var(--space-5)",
@@ -314,7 +420,6 @@ export function Registration() {
                     gap: "var(--space-3)",
                   }}
                 >
-                  {/* SMS consent */}
                   <label style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", cursor: "pointer" }}>
                     <input
                       type="checkbox" checked={smsConsent} required
@@ -326,7 +431,17 @@ export function Registration() {
                     </span>
                   </label>
 
-                  {/* Terms consent */}
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", cursor: "pointer" }}>
+                    <input
+                      type="checkbox" checked={ageConsent} required
+                      onChange={(e) => setAgeConsent(e.target.checked)}
+                      style={{ marginTop: "4px", minWidth: "16px", cursor: "pointer" }}
+                    />
+                    <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--text-primary)", lineHeight: "1.5" }}>
+                      I confirm that I am at least 18 years old.
+                    </span>
+                  </label>
+
                   <label style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", cursor: "pointer" }}>
                     <input
                       type="checkbox" checked={termsConsent} required
@@ -335,13 +450,12 @@ export function Registration() {
                     />
                     <span style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--text-primary)", lineHeight: "1.5" }}>
                       I have read and agree to the{" "}
-                      <Link href="/terms-of-service" style={{ color: "var(--accent-700)" }}>
+                      <Link href="/terms" style={{ color: "var(--accent-700)" }}>
                         Terms of Service
                       </Link>
                     </span>
                   </label>
 
-                  {/* Privacy consent */}
                   <label style={{ display: "flex", alignItems: "flex-start", gap: "var(--space-2)", cursor: "pointer" }}>
                     <input
                       type="checkbox" checked={privacyConsent} required
@@ -358,27 +472,40 @@ export function Registration() {
                 </div>
               </div>
 
-              {/* Submit */}
+              {formError ? (
+                <p
+                  style={{
+                    fontFamily: "var(--font-ui)",
+                    fontSize: "var(--type-body-sm)",
+                    color: "var(--destructive-600)",
+                    marginTop: "var(--space-4)",
+                    marginBottom: 0,
+                  }}
+                >
+                  {formError}
+                </p>
+              ) : null}
+
               <div style={{ marginTop: "var(--space-6)" }}>
                 <button
                   type="submit"
-                  disabled={!isFormValid}
+                  disabled={!isFormValid || isSubmittingForm}
                   style={{
                     width: "100%",
                     fontFamily: "var(--font-ui)",
                     fontSize: "var(--type-body-md)",
                     fontWeight: "500",
-                    color: isFormValid ? "var(--neutral-50)" : "var(--text-tertiary)",
-                    background: isFormValid ? "var(--accent-700)" : "var(--neutral-300)",
+                    color: isFormValid && !isSubmittingForm ? "var(--neutral-50)" : "var(--text-tertiary)",
+                    background: isFormValid && !isSubmittingForm ? "var(--accent-700)" : "var(--neutral-300)",
                     border: "none",
                     borderRadius: "var(--radius-button)",
                     padding: "var(--space-4)",
-                    cursor: isFormValid ? "pointer" : "not-allowed",
+                    cursor: isFormValid && !isSubmittingForm ? "pointer" : "not-allowed",
                     transition: "all var(--transition-default)",
                     minHeight: "56px",
                   }}
                 >
-                  Create my account
+                  {isSubmittingForm ? "Sending your code..." : "Create my account"}
                 </button>
               </div>
             </form>
@@ -405,7 +532,6 @@ export function Registration() {
             </header>
 
             <form onSubmit={handleOtpVerify}>
-              {/* OTP digit inputs */}
               <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "center", marginBottom: "var(--space-3)" }}>
                 {otp.map((digit, i) => (
                   <input
@@ -426,61 +552,65 @@ export function Registration() {
                       fontWeight: "500",
                       color: "var(--text-primary)",
                       background: "var(--surface-card)",
-                      border: `1px solid ${otpError ? "var(--destructive-600)" : digit ? "var(--accent-700)" : "var(--border-default)"}`,
+                      border: `1px solid ${hasOtpError ? "var(--destructive-600)" : digit ? "var(--accent-700)" : "var(--border-default)"}`,
                       borderRadius: "var(--radius-input)",
                       outline: "none",
                       transition: "border-color var(--transition-default)",
                     }}
-                    onFocus={(e) => !otpError && (e.target.style.borderColor = "var(--accent-700)")}
-                    onBlur={(e) => !digit && !otpError && (e.target.style.borderColor = "var(--border-default)")}
+                    onFocus={(e) => !hasOtpError && (e.target.style.borderColor = "var(--accent-700)")}
+                    onBlur={(e) => !digit && !hasOtpError && (e.target.style.borderColor = "var(--border-default)")}
                   />
                 ))}
               </div>
 
-              {otpError && (
+              {otpErrorMessage ? (
                 <p style={{ fontFamily: "var(--font-ui)", fontSize: "var(--type-body-sm)", color: "var(--destructive-600)", textAlign: "center", marginBottom: "var(--space-3)" }}>
-                  Please enter the full 6-digit code.
+                  {otpErrorMessage}
                 </p>
-              )}
+              ) : null}
 
               <button
                 type="submit"
-                disabled={!isOtpComplete}
+                disabled={!isOtpComplete || isSubmittingOtp}
                 style={{
                   width: "100%",
                   fontFamily: "var(--font-ui)",
                   fontSize: "var(--type-body-md)",
                   fontWeight: "500",
-                  color: isOtpComplete ? "var(--neutral-50)" : "var(--text-tertiary)",
-                  background: isOtpComplete ? "var(--accent-700)" : "var(--neutral-300)",
+                  color: isOtpComplete && !isSubmittingOtp ? "var(--neutral-50)" : "var(--text-tertiary)",
+                  background: isOtpComplete && !isSubmittingOtp ? "var(--accent-700)" : "var(--neutral-300)",
                   border: "none",
                   borderRadius: "var(--radius-button)",
                   padding: "var(--space-4)",
-                  cursor: isOtpComplete ? "pointer" : "not-allowed",
+                  cursor: isOtpComplete && !isSubmittingOtp ? "pointer" : "not-allowed",
                   transition: "all var(--transition-default)",
                   minHeight: "56px",
                   marginBottom: "var(--space-4)",
                 }}
               >
-                Verify my number
+                {isSubmittingOtp ? "Verifying..." : "Verify my number"}
               </button>
             </form>
 
             <div style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
               <button
                 onClick={handleResend}
-                disabled={resendCooldown > 0}
+                disabled={resendCooldown > 0 || isResendingOtp}
                 style={{
                   fontFamily: "var(--font-ui)",
                   fontSize: "var(--type-body-sm)",
-                  color: resendCooldown > 0 ? "var(--text-secondary)" : "var(--accent-700)",
+                  color: resendCooldown > 0 || isResendingOtp ? "var(--text-secondary)" : "var(--accent-700)",
                   background: "transparent",
                   border: "none",
                   padding: 0,
-                  cursor: resendCooldown > 0 ? "not-allowed" : "pointer",
+                  cursor: resendCooldown > 0 || isResendingOtp ? "not-allowed" : "pointer",
                 }}
               >
-                {resendCooldown > 0 ? `Resend available in ${resendCooldown}s` : "Didn't get it? Send again."}
+                {isResendingOtp
+                  ? "Sending another code..."
+                  : resendCooldown > 0
+                  ? `Resend available in ${resendCooldown}s`
+                  : "Didn't get it? Send again."}
               </button>
               <button
                 onClick={handleStartOver}
@@ -522,4 +652,24 @@ export function Registration() {
       `}</style>
     </div>
   );
+}
+
+async function postJson<TResponse>(url: string, body: Record<string, unknown>): Promise<TResponse> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const payload = await response.json().catch(() => null) as
+    | { error?: string }
+    | null;
+
+  if (!response.ok) {
+    throw new Error(payload?.error ?? "Request failed.");
+  }
+
+  return payload as TResponse;
 }
