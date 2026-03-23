@@ -5,11 +5,7 @@ import Link from "next/link";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { Button } from "@/components/Button";
 
-interface LandingHeroProps {
-  onLoginClick?: () => void;
-}
-
-export function LandingHero({ onLoginClick }: LandingHeroProps = {}) {
+export function LandingHero() {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -50,22 +46,20 @@ export function LandingHero({ onLoginClick }: LandingHeroProps = {}) {
           JOSH
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-4)" }}>
-          <button
-            onClick={onLoginClick}
+          <Link
+            href="/login"
             style={{
               fontFamily: "var(--font-ui)",
               fontSize: "var(--type-body-md)",
               fontWeight: "500",
               color: scrolled ? "var(--text-primary)" : "var(--surface-landing)",
-              background: "transparent",
-              border: "none",
+              textDecoration: "none",
               padding: "var(--space-2) var(--space-3)",
-              cursor: "pointer",
               transition: "all var(--transition-default)",
             }}
           >
             Log in
-          </button>
+          </Link>
           <Button variant="primary" size="medium">
             Get started
           </Button>

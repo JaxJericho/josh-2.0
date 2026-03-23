@@ -33,8 +33,10 @@
     --neutral-900: #1a1714;
     --neutral-600: #6b6560;
     --neutral-400: #a8a29d;
+    --neutral-300: #c8c4bf;
     --neutral-200: #e0dcd7;
     --neutral-100: #f0ece7;
+    --neutral-50:  #fafaf9;
 
     /* Surfaces */
     --surface-landing: #f7f4ef;
