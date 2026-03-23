@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ImageWithFallback } from "@/components/figma/ImageWithFallback";
 import { Button } from "@/components/Button";
 
 export function LandingHero() {
+  const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -60,7 +62,7 @@ export function LandingHero() {
           >
             Log in
           </Link>
-          <Button variant="primary" size="medium">
+          <Button variant="primary" size="medium" onClick={() => router.push("/register")}>
             Get started
           </Button>
         </div>
@@ -171,7 +173,7 @@ export function LandingHero() {
                   outline: "none",
                 }}
               />
-              <Button variant="primary" style={{ borderRadius: 0 }}>
+              <Button variant="primary" style={{ borderRadius: 0 }} onClick={() => router.push("/register")}>
                 Get started
               </Button>
             </div>
@@ -378,7 +380,7 @@ export function LandingHero() {
             No feed to check. No profile to maintain. No one reaches out to you
             and you don&apos;t reach out to anyone.
           </p>
-          <Button variant="secondary" size="medium">
+          <Button variant="secondary" size="medium" onClick={() => router.push("/register")}>
             Get started
           </Button>
         </div>
@@ -453,6 +455,7 @@ export function LandingHero() {
                 }}
               />
               <button
+                onClick={() => router.push("/register")}
                 style={{
                   padding: "0 var(--space-5)",
                   background: "var(--text-primary)",
